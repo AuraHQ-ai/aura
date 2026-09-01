@@ -44,7 +44,7 @@ import { safePostMessage } from "./lib/slack-messaging.js";
 import crypto from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { db } from "./db/client.js";
-import { errorEvents, notes, feedback } from "@aura/db/schema";
+import { errorEvents, notes, feedback, stopEvents } from "@aura/db/schema";
 
 // ── Config ──────────────────────────────────────────────────────────────────
 
@@ -357,17 +357,49 @@ app.post("/api/slack/events", async (c) => {
         let stopError: string | null = null;
         try {
           const { stopInvocation } = await import("./lib/invocation-lock.js");
-          displaced = await stopInvocation(
+          const workspaceId = process.env.DEFAULT_WORKSPACE_ID || "default";
+          const eventTs = String(event.event_ts ?? threadTs);
+          // Assign to the outer `displaced` (declared `boolean | null` above)
+          // so the post-try receipt can distinguish "stopInvocation threw"
+          // (null) from "ran, displaced nothing" (false).
+          const stopResult = await stopInvocation(
             channelId,
             threadTs,
-            String(event.event_ts ?? threadTs),
-            process.env.DEFAULT_WORKSPACE_ID || "default",
+            eventTs,
+            workspaceId,
           );
+          displaced = stopResult.displaced;
+          const stopId = stopResult.stopId;
+          // Append-only stop receipt (issue #1359) — the durable audit trail
+          // for "did the Stop press reach us?". Non-fatal: a failed receipt
+          // must never break the stop itself or the 200 ack.
+          try {
+            await db.insert(stopEvents).values({
+              workspaceId,
+              channelId,
+              threadTs,
+              userId: event.user ? String(event.user) : null,
+              eventTs,
+              streamingMessageTs: event.streaming_message_ts
+                ? Array.isArray(event.streaming_message_ts)
+                  ? event.streaming_message_ts.join(",")
+                  : String(event.streaming_message_ts)
+                : null,
+              displaced,
+              stopId,
+            });
+          } catch (receiptErr) {
+            recordError("stop_event_receipt", receiptErr, {
+              userId: event.user,
+              channelId,
+            });
+          }
           logger.info("agent_session_stopped handled", {
             channelId,
             threadTs,
             userId: event.user,
             displaced,
+            stopId,
             haltedStreams: event.streaming_message_ts,
           });
         } catch (err) {

@@ -85,14 +85,15 @@ export type SupersedeReason = "stopped" | "newer_message";
  * If no lock exists there is nothing running; the sentinel is still written
  * so a cold-start straggler for an older message cannot resurrect the turn.
  *
- * Returns true when a live invocation was actually displaced.
+ * Returns whether a live invocation was actually displaced, plus the
+ * `stop:` sentinel written to the lock (recorded in `stop_events` receipts).
  */
 export async function stopInvocation(
   channelId: string,
   threadTs: string,
   eventTs: string,
   workspaceId: string = "default",
-): Promise<boolean> {
+): Promise<{ displaced: boolean; stopId: string }> {
   const stopId = `${STOP_INVOCATION_PREFIX}${crypto.randomUUID()}`;
   const result = await db.execute(sql`
     INSERT INTO conversation_locks (workspace_id, channel_id, thread_ts, invocation_id, message_ts, started_at)
@@ -105,7 +106,7 @@ export async function stopInvocation(
   const rows = ((result as any).rows ?? []) as Array<{ displaced?: boolean }>;
   const displaced = rows[0]?.displaced === true;
   logger.info("Stop requested for conversation", { channelId, threadTs, displaced, stopId });
-  return displaced;
+  return { displaced, stopId };
 }
 
 /**

@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { WebClient } from "@slack/web-api";
 import { eq, and, lt, lte, gte, sql, isNull, or, inArray, desc } from "drizzle-orm";
 import { CronExpressionParser } from "cron-parser";
+import { waitUntil } from "@vercel/functions";
 import { db } from "../db/client.js";
 import { jobs, notes, jobExecutions, jobOutcomes } from "@aura/db/schema";
 import type { FrequencyConfig } from "@aura/db/schema";
@@ -14,8 +15,96 @@ import { sweepStaleTurnMarkers } from "./turn-watchdog.js";
 import { sweepStuckJobs } from "./job-watchdog.js";
 import { sweepStaleDetachedCommands } from "./detached-command-watchdog.js";
 
-/** Max jobs to process per heartbeat sweep */
-const MAX_JOBS_PER_SWEEP = 10;
+/**
+ * Max jobs dispatched per heartbeat sweep.
+ *
+ * Jobs are fanned out to separate `/api/execute-now` invocations (each with its
+ * own Vercel maxDuration budget), so this is a dispatch-rate cap, not a
+ * concurrency-of-work cap as it was when execution ran inline.
+ */
+const MAX_JOBS_PER_SWEEP = 25;
+
+/** Base stagger between fan-out dispatches, plus up to the same again of random jitter. */
+const FANOUT_STAGGER_MS = 150;
+
+/** How long to wait for a fan-out target to ACK (it replies 202 immediately, before working). */
+const FANOUT_ACK_TIMEOUT_MS = 8_000;
+
+/**
+ * Soft wall-clock budget for this sweep before we stop dispatching (or
+ * inline-fallback-executing) any new jobs.  Vercel's maxDuration is 800s;
+ * the headroom lets the sweep finish, log, and respond instead of being
+ * hard-killed mid-loop.  Jobs left pending are picked up on the next sweep.
+ */
+const INLINE_EXECUTION_BUDGET_MS = 600_000;
+
+const DEFAULT_PUBLIC_URL = "https://aura-alpha-five.vercel.app";
+
+function heartbeatPublicBaseUrl(): string {
+  if (process.env.AURA_PUBLIC_URL) return process.env.AURA_PUBLIC_URL.replace(/\/+$/, "");
+  if (process.env.VERCEL_PROJECT_PRODUCTION_URL) {
+    return `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}`.replace(/\/+$/, "");
+  }
+  return DEFAULT_PUBLIC_URL;
+}
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/**
+ * Fan a single due job out to its own serverless invocation via
+ * `POST /api/execute-now`.
+ *
+ * Returns true when the dispatch was ACKed (202) and the job will run there.
+ * Returns false when the caller should fall back to running the job inline.
+ * Never throws.
+ */
+async function dispatchJobFanout(
+  jobId: string,
+  jobName: string,
+  trigger: "heartbeat" | "recovery",
+): Promise<boolean> {
+  const cronSecret = process.env.CRON_SECRET;
+  if (!cronSecret) return false;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FANOUT_ACK_TIMEOUT_MS);
+
+  try {
+    const res = await fetch(`${heartbeatPublicBaseUrl()}/api/execute-now`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${cronSecret}`,
+      },
+      body: JSON.stringify({ jobId, trigger }),
+      signal: controller.signal,
+    });
+
+    if (res.status === 202) return true;
+
+    // 409 = job already claimed by a concurrent invocation — treat as handled.
+    if (res.status === 409) {
+      logger.info("Heartbeat: fan-out target reports job already claimed", { jobId, jobName });
+      return true;
+    }
+
+    logger.warn("Heartbeat: fan-out dispatch returned non-2xx, falling back to inline", {
+      jobId,
+      jobName,
+      status: res.status,
+    });
+    return false;
+  } catch (error: any) {
+    logger.warn("Heartbeat: fan-out dispatch failed, falling back to inline", {
+      jobId,
+      jobName,
+      error: error?.message,
+    });
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /** Threshold for recovering jobs stuck in "running" (15 minutes) */
 const STALE_RUNNING_THRESHOLD_MS = 15 * 60 * 1000;
@@ -374,6 +463,8 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
   logger.info("Heartbeat starting");
 
   let executed = 0;
+  let dispatched = 0;
+  let deferred = 0;
   let failed = 0;
   let plansExpired = 0;
   let plansAbandoned = 0;
@@ -420,7 +511,7 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
         sql`${jobs.executeAt} ASC NULLS LAST`,
       );
 
-    // ── 2. Filter to due jobs ────────────────────────────────────────────
+    // ── 2. Filter to due jobs (dispatch follows in section 8) ────────────
 
     const dueJobs: (typeof jobs.$inferSelect)[] = [];
 
@@ -440,26 +531,6 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
 
     if (dueJobs.length > 0) {
       logger.info(`Heartbeat: ${dueJobs.length} jobs due (of ${pendingJobs.length} pending)`);
-
-      for (const job of dueJobs) {
-        try {
-          // Recurring jobs re-entering via a requeued executeAt (supervisor
-          // retry, stale recovery) run as "recovery" so they don't consume
-          // the min_interval/cooldown budget (issue #1238).
-          const trigger =
-            job.executeAt && (job.cronSchedule || job.frequencyConfig)
-              ? classifyRecurringPickupTrigger(job)
-              : "heartbeat";
-          const ran = await executeJob(job, trigger);
-          if (ran) executed++;
-        } catch (error: any) {
-          logger.error("Heartbeat: job execution error", {
-            jobName: job.name,
-            error: error.message,
-          });
-          failed++;
-        }
-      }
     } else {
       logger.info(`Heartbeat: no jobs due (${pendingJobs.length} pending)`);
     }
@@ -514,7 +585,7 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
     stuckJobsFailed = stuckJobsResult.markedFailed;
     stuckJobsRequeued = stuckJobsResult.requeued;
 
-    // ── 5. Recover jobs stuck in "running" ─────────────────────────────
+    // ── 5. Recover jobs stuck in "running" ──────────────────────────────
 
     const staleRunningCutoff = new Date(now.getTime() - STALE_RUNNING_THRESHOLD_MS);
     const staleRunning = await db
@@ -709,14 +780,14 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       });
     }
 
-    // ── 6. Stream-death watchdog: recover hard-killed Slack turns ───────
+    // ── 6. Stream-death watchdog: recover hard-killed Slack turns ────────
     // (issue #1109 — see cron/turn-watchdog.ts; never throws)
 
     const turnWatchdogResult = await sweepStaleTurnMarkers(slackClient, now);
     staleTurnsDetected = turnWatchdogResult.detected;
     staleTurnsRecovered = turnWatchdogResult.recovered;
 
-    // ── 7. Detached-command watchdog: fail lost webhook continuations ───
+    // ── 7. Detached-command watchdog: fail lost webhook continuations ────
     // (issue #1281 — see cron/detached-command-watchdog.ts; never throws)
 
     const detachedWatchdogResult = await sweepStaleDetachedCommands(slackClient, now);
@@ -724,11 +795,80 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
     staleDetachedCommandsFailed = detachedWatchdogResult.failed;
     staleDetachedJobExecutionsFailed = detachedWatchdogResult.jobExecutionsFailed;
 
+    // ── 8. Fan-out job dispatch ──────────────────────────────────────────
+    // Each due job is dispatched to its own /api/execute-now invocation so it
+    // runs with a fresh Vercel maxDuration budget.  On dispatch failure the
+    // job falls back to inline execution, but only while the wall-clock budget
+    // for this sweep allows — an orphaned "running" row is worse than a
+    // one-sweep delay on a job that stays "pending".
+
+    for (const [index, job] of dueJobs.entries()) {
+      // Wall-clock budget guard: skip dispatch (and inline fallback) for any
+      // job we can't plausibly finish before Vercel hard-kills this function.
+      const elapsed = Date.now() - sweepStart;
+      if (elapsed > INLINE_EXECUTION_BUDGET_MS) {
+        logger.warn("Heartbeat: wall-clock budget exhausted, deferring remaining jobs", {
+          skippedJob: job.name,
+          elapsedMs: elapsed,
+          remaining: dueJobs.length - index,
+        });
+        deferred++;
+        continue;
+      }
+
+      // Stagger dispatches so a large sweep doesn't thunder the DB / model
+      // gateway simultaneously.
+      if (index > 0) {
+        await sleep(FANOUT_STAGGER_MS + Math.floor(Math.random() * FANOUT_STAGGER_MS));
+      }
+
+      // Recurring jobs re-entering via a requeued executeAt (supervisor
+      // retry, stale recovery) run as "recovery" so they don't consume
+      // the min_interval/cooldown budget (issue #1238).
+      const trigger =
+        job.executeAt && (job.cronSchedule || job.frequencyConfig)
+          ? classifyRecurringPickupTrigger(job)
+          : "heartbeat";
+
+      const fanned = await dispatchJobFanout(job.id, job.name, trigger);
+      if (fanned) {
+        dispatched++;
+        continue;
+      }
+
+      // Dispatch failed — fall back to inline execution if budget still allows.
+      const elapsedAfterDispatch = Date.now() - sweepStart;
+      if (elapsedAfterDispatch > INLINE_EXECUTION_BUDGET_MS) {
+        logger.warn(
+          "Heartbeat: fan-out failed and budget exhausted, deferring job to next sweep",
+          { jobName: job.name, elapsedMs: elapsedAfterDispatch },
+        );
+        deferred++;
+        continue;
+      }
+
+      logger.warn("Heartbeat: fan-out failed, falling back to inline execution", {
+        jobName: job.name,
+      });
+      try {
+        const ran = await executeJob(job, trigger);
+        if (ran) executed++;
+      } catch (error: any) {
+        logger.error("Heartbeat: inline fallback execution error", {
+          jobName: job.name,
+          error: error.message,
+        });
+        failed++;
+      }
+    }
+
     // ── Done ─────────────────────────────────────────────────────────────
 
     const duration = Date.now() - sweepStart;
     logger.info(`Heartbeat completed in ${duration}ms`, {
       executed,
+      dispatched,
+      deferred,
       failed,
       plansExpired,
       plansAbandoned,
@@ -750,6 +890,8 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
     return c.json({
       ok: true,
       executed,
+      dispatched,
+      deferred,
       failed,
       plansExpired,
       plansAbandoned,
@@ -776,6 +918,9 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
 
 // ── Execute Now (on-demand dispatch) ─────────────────────────────────────────
 
+const VALID_EXECUTE_NOW_TRIGGERS = ["heartbeat", "recovery", "dispatch"] as const;
+type ExecuteNowTrigger = (typeof VALID_EXECUTE_NOW_TRIGGERS)[number];
+
 heartbeatApp.post("/api/execute-now", async (c) => {
   const authHeader = c.req.header("authorization");
   const cronSecret = process.env.CRON_SECRET;
@@ -785,9 +930,17 @@ heartbeatApp.post("/api/execute-now", async (c) => {
     return c.json({ error: "Unauthorized" }, 401);
   }
 
-  const { jobId } = await c.req.json<{ jobId?: string }>();
+  const body = await c.req.json<{ jobId?: string; trigger?: string }>();
+  const { jobId } = body;
 
   if (!jobId) return c.json({ error: "jobId required" }, 400);
+
+  const rawTrigger = body.trigger;
+  const trigger: ExecuteNowTrigger =
+    rawTrigger !== undefined &&
+    (VALID_EXECUTE_NOW_TRIGGERS as readonly string[]).includes(rawTrigger)
+      ? (rawTrigger as ExecuteNowTrigger)
+      : "dispatch";
 
   const [job] = await db.select().from(jobs).where(eq(jobs.id, jobId)).limit(1);
   if (!job) return c.json({ error: "Job not found" }, 404);
@@ -799,17 +952,24 @@ heartbeatApp.post("/api/execute-now", async (c) => {
     );
   }
 
-  try {
-    const executed = await executeJob(job, "dispatch");
+  // Kick off execution in the background so this function can return 202
+  // immediately.  The heartbeat's fan-out fetch then unblocks quickly and can
+  // dispatch the next job without eating into its own 800s budget.
+  waitUntil(
+    (async () => {
+      try {
+        const executed = await executeJob(job, trigger);
+        if (!executed) {
+          logger.info("execute-now: job was not executed (already claimed)", { jobId });
+        }
+      } catch (err: any) {
+        logger.error("execute-now: background execution failed", {
+          jobId,
+          error: err.message,
+        });
+      }
+    })(),
+  );
 
-    if (!executed) {
-      return c.json({ ok: false, jobId, message: "Job was not executed (already claimed)" }, 409);
-    }
-
-    return c.json({ ok: true, jobId, message: "Execution completed" });
-  } catch (err: any) {
-    logger.error("execute-now failed", { jobId, error: err.message });
-    return c.json({ ok: false, jobId, error: err.message }, 500);
-  }
+  return c.json({ ok: true, jobId, message: "Execution started" }, 202);
 });
-

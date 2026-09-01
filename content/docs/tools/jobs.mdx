@@ -96,7 +96,7 @@ Create a one-shot task, recurring job, or follow-up.
 | `channel_name` | string | no | Channel to post results in |
 | `priority` | enum | no | `high`, `normal` (default), or `low` |
 | `max_per_day` | number | no | Max executions per day (recurring jobs) |
-| `min_interval_hours` | number | no | Minimum hours between executions |
+| `min_interval_hours` | number | no | Minimum hours between executions. Anchored to the job's *scheduled* fire time, not wall-clock execution time -- an off-schedule run (e.g. a manual trigger or recovery re-run) never pushes back the next scheduled fire (#1238). |
 | `script` | string | no | Shell command to run before/instead of LLM. See [execution modes](#execution-modes) below. |
 | `model` | enum | no | Model catalog category to execute with: `fast` (cheap, mechanical tasks), `medium` (Sonnet-class — the default and standard tier for jobs), `main` (frontier), or `escalation` (exceptionally hard work) |
 | `env_allowlist` | string[] | no | Restrict the job's sandbox env to only these credential env var names (plus core infra vars). Omit for full inheritance. |
