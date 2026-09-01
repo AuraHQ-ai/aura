@@ -287,6 +287,42 @@ export function filterEnvsByAllowlist(
 }
 
 /**
+ * Restrict a set of credential *names* to those whose sandbox env name (or
+ * uppercased credential name) appears in the given allowlist. Mirrors
+ * filterEnvsByAllowlist(): core infra vars always pass, matching is
+ * case-insensitive, and GITHUB_TOKEN/GH_TOKEN alias each other.
+ *
+ * Used to gate credential-backed typed tools (bq_execute_query, Gmail tools,
+ * web_search, …) the same way sandbox env vars are gated (issue #1312): a
+ * job's env_allowlist must narrow EVERY credential-resolution path, not just
+ * `run_command` envs. Narrows only — a null/undefined allowlist returns the
+ * set unchanged.
+ */
+export function filterCredentialNamesByEnvAllowlist(
+  credentialNames: ReadonlySet<string>,
+  allowlist: readonly string[] | null | undefined,
+  /** Credential name → explicit sandbox env name (credentials.sandbox_env_name). */
+  envNameByCredential?: ReadonlyMap<string, string>,
+): Set<string> {
+  if (allowlist == null) return new Set(credentialNames);
+
+  const allowed = new Set(
+    [...allowlist, ...CORE_SANDBOX_ENV_NAMES].map((name) => name.toUpperCase()),
+  );
+  if (allowed.has("GITHUB_TOKEN")) allowed.add("GH_TOKEN");
+  if (allowed.has("GH_TOKEN")) allowed.add("GITHUB_TOKEN");
+
+  const filtered = new Set<string>();
+  for (const name of credentialNames) {
+    const envName = (envNameByCredential?.get(name) || name).toUpperCase();
+    if (allowed.has(envName) || allowed.has(name.toUpperCase())) {
+      filtered.add(name);
+    }
+  }
+  return filtered;
+}
+
+/**
  * Read the env allowlist for the current execution from AsyncLocalStorage.
  * Set by executeJob for jobs with an `env_allowlist`; undefined everywhere
  * else (interactive turns, unscoped jobs) — meaning full inheritance.

@@ -2,6 +2,7 @@ import { eq, isNull, and } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { users, credentials, credentialGrants, oauthTokens } from "@aura/db/schema";
 import { executionContext } from "./tool.js";
+import { filterCredentialNamesByEnvAllowlist } from "./sandbox.js";
 import { logger } from "./logger.js";
 
 const ROLE_HIERARCHY = {
@@ -132,6 +133,10 @@ export async function resolveUserCredentials(
   const userRole = await getUserRole(effectiveUserId);
   const userLevel = ROLE_HIERARCHY[userRole] ?? 0;
 
+  // Credential name → explicit sandbox env name, so an active env allowlist
+  // (which lists env var names) can be matched against credential names.
+  const envNameByCredential = new Map<string, string>();
+
   try {
     const grants = await db
       .select({ credentialId: credentialGrants.credentialId, credentialName: credentials.name })
@@ -152,10 +157,14 @@ export async function resolveUserCredentials(
         name: credentials.name,
         scope: credentials.scope,
         ownerId: credentials.ownerId,
+        sandboxEnvName: credentials.sandboxEnvName,
       })
       .from(credentials);
 
     for (const cred of allCreds) {
+      if (cred.sandboxEnvName) {
+        envNameByCredential.set(cred.name, cred.sandboxEnvName);
+      }
       const scope = cred.scope || "member";
       if (scope === "owner") {
         if (cred.ownerId === effectiveUserId) {
@@ -208,6 +217,26 @@ export async function resolveUserCredentials(
     }
   } catch {
     // oauthTokens table may not exist yet; skip
+  }
+
+  // Scoped job execution (issue #1312): when the active execution context
+  // carries an env allowlist, intersect the resolved credential names with it
+  // so credential-gated typed tools (bq_execute_query, Gmail tools, …) are
+  // narrowed exactly like sandbox env vars. Narrows only — never widens.
+  const envAllowlist = executionContext.getStore()?.envAllowlist;
+  if (envAllowlist != null) {
+    const filtered = filterCredentialNamesByEnvAllowlist(
+      result,
+      envAllowlist,
+      envNameByCredential,
+    );
+    logger.info("resolveUserCredentials: env allowlist applied", {
+      userId: effectiveUserId,
+      allowlistSize: envAllowlist.length,
+      before: result.size,
+      after: filtered.size,
+    });
+    return filtered;
   }
 
   return result;
