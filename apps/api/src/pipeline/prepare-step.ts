@@ -1,7 +1,7 @@
 import { pruneMessages } from "ai";
 import type { LanguageModel, ModelMessage } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
-import { compactMessages } from "./compact-messages.js";
+import { compactMessages, summarizeEvictedToolResult } from "./compact-messages.js";
 import { sanitizeToolCallIds } from "./sanitize-tool-ids.js";
 import { getModelCapabilities } from "../lib/model-catalog.js";
 import { isInvocationCurrent } from "../lib/invocation-lock.js";
@@ -61,6 +61,8 @@ export type EffortLevel = "low" | "medium" | "high";
 export interface CompactionStepStats {
   stepNumber: number;
   compactedCount: number;
+  /** How many compacted results were replaced by an LLM summary (issue #1330). */
+  summarizedCount?: number;
   estimatedTokensSaved: number;
 }
 
@@ -258,6 +260,11 @@ export function createPrepareStep(opts: {
   let softDeadlineNudgeInjected = false;
   let hardDeadlineTripped = false;
   let continuationJobSpawned = false;
+
+  // Per-turn memo for summarize-on-evict (issue #1330): compaction reruns on
+  // every step past the threshold, so summaries are keyed by toolCallId and
+  // computed at most once per turn.
+  const evictSummaryCache = new Map<string, string>();
 
   // Cache providerOptions per model/budget for this prepareStep instance.
   // Catalog lookups are also in-memory cached, but this avoids repeated work
@@ -510,17 +517,27 @@ export function createPrepareStep(opts: {
     // toolName, so the model still sees what it already did (no #499 re-run
     // loops) and no tool-call is orphaned from its tool-result. Only the
     // in-flight array is modified — the persisted trace stays complete.
-    const compaction = compactMessages(sanitization.messages, stepNumber);
+    // Summarize-on-evict (issue #1330): large evicted results are compressed
+    // by the fast tier instead of hard-truncated; evictSummaryCache memoizes
+    // per toolCallId so each result is summarized at most once per turn.
+    // Runs on the sanitized array (#1390) so compaction never re-introduces
+    // orphaned tool blocks.
+    const compaction = await compactMessages(sanitization.messages, stepNumber, {
+      summarize: summarizeEvictedToolResult,
+      summaryCache: evictSummaryCache,
+    });
     if (compaction.compactedCount > 0) {
       logger.info("prepareStep: compacting messages", {
         stepNumber,
         totalMessages: messages.length,
         compactedCount: compaction.compactedCount,
+        summarizedCount: compaction.summarizedCount,
         estimatedTokensSaved: compaction.estimatedTokensSaved,
       });
       opts.recordCompaction?.({
         stepNumber,
         compactedCount: compaction.compactedCount,
+        summarizedCount: compaction.summarizedCount,
         estimatedTokensSaved: compaction.estimatedTokensSaved,
       });
     }

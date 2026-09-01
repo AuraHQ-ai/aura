@@ -72,6 +72,15 @@ const sandboxMock = vi.hoisted(() => ({
 }));
 
 const createHeadlessAgentMock = vi.hoisted(() => vi.fn());
+const resolveUserCredentialsMock = vi.hoisted(() =>
+  vi.fn(async (_userId?: string) => new Set<string>()),
+);
+const sendJobOpsNoticeMock = vi.hoisted(() =>
+  vi.fn(async (_notice: Record<string, unknown>) => ({
+    ok: true,
+    target: "ops_channel" as const,
+  })),
+);
 const buildStablePrefixMock = vi.hoisted(() =>
   vi.fn(async () => "full stable prefix"),
 );
@@ -113,6 +122,14 @@ vi.mock("../lib/temporal.js", () => ({
 
 vi.mock("../lib/agents.js", () => ({
   createHeadlessAgent: createHeadlessAgentMock,
+}));
+
+vi.mock("../lib/permissions.js", () => ({
+  resolveUserCredentials: resolveUserCredentialsMock,
+}));
+
+vi.mock("./job-notifications.js", () => ({
+  sendJobOpsNotice: sendJobOpsNoticeMock,
 }));
 
 vi.mock("./persist-conversation.js", () => ({
@@ -840,6 +857,40 @@ describe("executeJob scoped execution (issue #1302)", () => {
     expect(storeDuringGenerate?.envAllowlist).toEqual(["META_ADMIN_TOKEN"]);
   });
 
+  it("activates the env allowlist and job-owner scoping during agent/tool construction (issue #1312)", async () => {
+    const { executionContext } = await import("../lib/tool.js");
+    let storeDuringAgentCreation: Record<string, any> | undefined;
+    createHeadlessAgentMock.mockImplementation(async () => {
+      storeDuringAgentCreation = executionContext.getStore() as Record<string, any>;
+      return {
+        agent: {
+          generate: vi.fn(async () => {
+            throw new Error("stop-after-capture");
+          }),
+        },
+        modelId: "test-model",
+        getStepModelIds: () => [],
+      };
+    });
+    queueDbResults([{ id: "job-1" }], [{ id: "exec-1" }]);
+
+    const { executeJob } = await import("./execute-job.js");
+    await expect(
+      executeJob(
+        baseJob({ script: null, envAllowlist: ["META_ADMIN_TOKEN"] }) as any,
+        "heartbeat",
+      ),
+    ).rejects.toThrow("stop-after-capture");
+
+    // Tool building (createSlackTools → resolveUserCredentials) runs inside
+    // the job execution context, so credential-gated typed tools are filtered
+    // against the allowlist and resolve as the job owner — not any ambient
+    // dispatcher context.
+    expect(storeDuringAgentCreation?.envAllowlist).toEqual(["META_ADMIN_TOKEN"]);
+    expect(storeDuringAgentCreation?.callingUserId).toBe("U_REQUESTER");
+    expect(storeDuringAgentCreation?.jobExecutionId).toBe("exec-1");
+  });
+
   it("filters script-layer envs through the job's allowlist", async () => {
     sandboxMock.getSandboxEnvs.mockResolvedValue({
       META_ADMIN_TOKEN: "meta-secret",
@@ -902,6 +953,138 @@ describe("executeJob scoped execution (issue #1302)", () => {
         },
       }),
     );
+  });
+});
+
+describe("executeJob required-credential availability (issue #1344)", () => {
+  beforeEach(() => {
+    dbMock.results = [];
+    dbMock.operations = [];
+    vi.clearAllMocks();
+    sandboxMock.getSandboxEnvs.mockResolvedValue({});
+    sandboxMock.getOrCreateSandbox.mockResolvedValue({
+      commands: { run: sandboxMock.commandRun },
+    });
+  });
+
+  it("fails the run before executing anything and sends an ops notice naming the credential and the owner", async () => {
+    // The job owner (a non-admin) cannot access the admin-scoped credential.
+    resolveUserCredentialsMock.mockResolvedValue(new Set(["tavily_api_key"]));
+    queueDbResults(
+      [{ id: "job-1" }], // claim
+      [{ id: "exec-1" }], // execution trace insert
+      [{ id: "cred-admin", name: "meta_admin_token", scope: "admin", ownerId: "U_ADMIN" }],
+    );
+
+    const { executeJob } = await import("./execute-job.js");
+    await expect(
+      executeJob(
+        baseJob({ requiredCredentialIds: ["cred-admin"] }) as any,
+        "heartbeat",
+      ),
+    ).rejects.toThrow(/meta_admin_token/);
+
+    // Ops notice is actionable: names the credential AND the job owner.
+    expect(sendJobOpsNoticeMock).toHaveBeenCalledTimes(1);
+    const notice = sendJobOpsNoticeMock.mock.calls[0][0] as Record<string, any>;
+    expect(notice).toMatchObject({
+      jobId: "job-1",
+      jobName: "test-job",
+      requestedBy: "U_REQUESTER",
+    });
+    expect(notice.text).toContain("meta_admin_token");
+    expect(notice.text).toContain("U_REQUESTER");
+    expect(notice.text).toContain("U_ADMIN");
+
+    // Fails closed: neither the script layer nor the agent ever ran.
+    expect(sandboxMock.getOrCreateSandbox).not.toHaveBeenCalled();
+    expect(sandboxMock.commandRun).not.toHaveBeenCalled();
+    expect(createHeadlessAgentMock).not.toHaveBeenCalled();
+
+    // The execution trace records the failure with the same actionable error.
+    const failedUpdate = dbMock.operations
+      .filter((operation) => operation.kind === "update")
+      .map((operation) => operation.setArg ?? {})
+      .find((setArg) => setArg.status === "failed" && "error" in setArg);
+    expect(String(failedUpdate?.error)).toContain("meta_admin_token");
+  });
+
+  it("pins credential resolution to the job owner", async () => {
+    resolveUserCredentialsMock.mockResolvedValue(new Set<string>());
+    queueDbResults(
+      [{ id: "job-1" }],
+      [{ id: "exec-1" }],
+      [{ id: "cred-admin", name: "meta_admin_token", scope: "admin", ownerId: "U_ADMIN" }],
+    );
+
+    const { executeJob } = await import("./execute-job.js");
+    await expect(
+      executeJob(
+        baseJob({ requiredCredentialIds: ["cred-admin"] }) as any,
+        "heartbeat",
+      ),
+    ).rejects.toThrow(/not available to job owner U_REQUESTER/);
+
+    expect(resolveUserCredentialsMock).toHaveBeenCalledWith("U_REQUESTER");
+  });
+
+  it("fails with an explicit message when a required credential no longer exists", async () => {
+    resolveUserCredentialsMock.mockResolvedValue(new Set(["anything"]));
+    queueDbResults(
+      [{ id: "job-1" }],
+      [{ id: "exec-1" }],
+      [], // credential lookup finds nothing — deleted credential
+    );
+
+    const { executeJob } = await import("./execute-job.js");
+    await expect(
+      executeJob(
+        baseJob({ requiredCredentialIds: ["cred-gone"] }) as any,
+        "heartbeat",
+      ),
+    ).rejects.toThrow(/cred-gone no longer exists/);
+
+    expect(sendJobOpsNoticeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("proceeds normally when all required credentials are accessible to the job owner", async () => {
+    resolveUserCredentialsMock.mockResolvedValue(new Set(["meta_admin_token"]));
+    createHeadlessAgentMock.mockResolvedValue({
+      agent: {
+        generate: vi.fn(async () => {
+          throw new Error("stop-after-capture");
+        }),
+      },
+      modelId: "test-model",
+      getStepModelIds: () => [],
+    });
+    queueDbResults(
+      [{ id: "job-1" }],
+      [{ id: "exec-1" }],
+      [{ id: "cred-admin", name: "meta_admin_token", scope: "admin", ownerId: "U_ADMIN" }],
+    );
+
+    const { executeJob } = await import("./execute-job.js");
+    await expect(
+      executeJob(
+        baseJob({ script: null, requiredCredentialIds: ["cred-admin"] }) as any,
+        "heartbeat",
+      ),
+    ).rejects.toThrow("stop-after-capture");
+
+    expect(sendJobOpsNoticeMock).not.toHaveBeenCalled();
+    expect(createHeadlessAgentMock).toHaveBeenCalled();
+  });
+
+  it("skips the check entirely for jobs without required credentials", async () => {
+    sandboxMock.commandRun.mockResolvedValue({ exitCode: 0, stdout: "ok", stderr: "" });
+    queueDbResults([{ id: "job-1" }], [{ id: "exec-1" }]);
+
+    const { executeJob } = await import("./execute-job.js");
+    await expect(executeJob(baseJob() as any, "heartbeat")).resolves.toBe(true);
+
+    expect(resolveUserCredentialsMock).not.toHaveBeenCalled();
+    expect(sendJobOpsNoticeMock).not.toHaveBeenCalled();
   });
 });
 

@@ -8,7 +8,13 @@ import {
   storeMemories, supersedeMemory, toDbChannelType, checkDuplicates,
   fetchThreadMessages, updateMemoryContent, archiveMemory,
   findContradictionCandidates, canSupersede,
+  disputeMemory, findAssistantClaimMatches,
 } from "./store.js";
+import {
+  CORRECTION_CONFIDENCE,
+  CORRECTION_DISPUTE_SIM_FLOOR,
+  detectCorrectionSignal,
+} from "./provenance.js";
 import { retrieveMemories } from "./retrieve.js";
 import { resolveEntities, linkMemoryEntities } from "./entity-resolution.js";
 import { logger } from "../lib/logger.js";
@@ -1156,6 +1162,13 @@ async function processCreateOperations(
     return;
   }
 
+  // Correction-signal detection (#949): when the triggering user message
+  // explicitly contradicts a prior assertion ("no, actually…", "you DO have
+  // access to X"), the corrected fact is written with elevated confidence and
+  // the assistant-sourced claims it corrects are marked disputed immediately
+  // (see the sweep after storage) instead of waiting for daily consolidation.
+  const correctionSignal = detectCorrectionSignal(context.userMessage ?? "");
+
   const newMemories: NewMemory[] = survivingIndices.map((i) => {
     // Per-memory attribution: the LLM tags each memory with the role it
     // originated from. The trigger role (extractionSourceRole) is the fallback
@@ -1165,7 +1178,11 @@ async function processCreateOperations(
     // never overwrites a user fact — preventing self-reinforcing delusion
     // loops. undefined keeps the column default (0.8).
     const memorySourceRole = sourceRoles[i];
-    const confidence = memorySourceRole === "assistant" ? 0.6 : undefined;
+    const confidence = memorySourceRole === "assistant"
+      ? 0.6
+      : correctionSignal
+        ? CORRECTION_CONFIDENCE
+        : undefined;
     return {
     content: normalizedMemories[i].content,
     type: normalizedMemories[i].type,
@@ -1234,6 +1251,45 @@ async function processCreateOperations(
     logger.warn("Contradiction detection pass failed — continuing without it", {
       error: String(error).slice(0, 200),
     });
+  }
+
+  // Correction-signal sweep (#949): the user explicitly contradicted a prior
+  // assertion, so retroactively quarantine the assistant-sourced claims that
+  // semantically match each corrected (user-sourced) fact. Disputed — not
+  // deleted or superseded — so the next contradiction sweep can finalize, and
+  // retrieval demotes them via DISPUTED_STATUS_MULTIPLIER in the meantime.
+  if (correctionSignal) {
+    try {
+      for (let j = 0; j < survivingIndices.length; j++) {
+        const i = survivingIndices[j];
+        if (sourceRoles[i] === "assistant") continue;
+        const embedding = embeddings[i];
+        if (!embedding || !memoryIds[j]) continue;
+
+        const matches = await findAssistantClaimMatches(
+          embedding,
+          workspaceId,
+          CORRECTION_DISPUTE_SIM_FLOOR,
+          memoryIds.filter(Boolean),
+        );
+        for (const match of matches) {
+          logger.info("Correction signal — disputing prior assistant-sourced claim", {
+            disputedId: match.id,
+            correctedById: memoryIds[j],
+            similarity: match.similarity,
+          });
+          await disputeMemory(
+            match.id,
+            `correction signal: contradicted by user-sourced memory ${memoryIds[j]}`,
+            context.createdAt,
+          );
+        }
+      }
+    } catch (error) {
+      logger.warn("Correction-signal dispute sweep failed — continuing without it", {
+        error: String(error).slice(0, 200),
+      });
+    }
   }
 
   for (let j = 0; j < survivingIndices.length; j++) {

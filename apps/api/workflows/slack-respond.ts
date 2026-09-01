@@ -33,6 +33,19 @@ import type { MessageContext } from "../src/pipeline/context.js";
 import type { ToolCallRecord } from "../src/pipeline/respond.js";
 import type { AnyChunk } from "../src/lib/slack-chunks.js";
 
+// Summarize-on-evict memo (issue #1330), keyed by toolCallId. Module scope
+// (not workflow scope) because each model-call step is its own invocation:
+// within a warm process, later steps of the same turn reuse the summaries
+// instead of re-paying the fast-tier call. Cleared when it grows too large —
+// toolCallIds are globally unique, so stale entries are only a memory concern.
+const EVICT_SUMMARY_CACHE_MAX_ENTRIES = 1_000;
+const evictSummaryCache = new Map<string, string>();
+function pruneEvictSummaryCache(): void {
+  if (evictSummaryCache.size > EVICT_SUMMARY_CACHE_MAX_ENTRIES) {
+    evictSummaryCache.clear();
+  }
+}
+
 export interface SlackRespondWorkflowInput {
   /** Prompt layers (already assembled by the pipeline). */
   stablePrefix: string;
@@ -245,7 +258,9 @@ async function runSlackAgentStep(
   const { executionContext } = await import("../src/lib/tool.js");
   const { getSlackMeta } = await import("../src/lib/tool.js");
   const { pruneMessages } = await import("ai");
-  const { compactMessages } = await import("../src/pipeline/compact-messages.js");
+  const { compactMessages, summarizeEvictedToolResult } = await import(
+    "../src/pipeline/compact-messages.js"
+  );
   const { logger } = await import("../src/lib/logger.js");
 
   const { logError } = await import("../src/lib/error-logger.js");
@@ -584,12 +599,20 @@ async function runSlackAgentStep(
   // Context compaction (issue #1328), mirroring prepare-step.ts: past the
   // step threshold, old large tool results become stubs (toolCallId/toolName
   // kept) so long turns stop replaying full tool output on every model call.
-  const compaction = compactMessages(messages, stepIndex);
+  // Summarize-on-evict (issue #1330): large evicted results are compressed by
+  // the fast tier; evictSummaryCache memoizes by toolCallId so a warm process
+  // does not re-summarize the same result on every workflow step.
+  pruneEvictSummaryCache();
+  const compaction = await compactMessages(messages, stepIndex, {
+    summarize: summarizeEvictedToolResult,
+    summaryCache: evictSummaryCache,
+  });
   if (compaction.compactedCount > 0) {
     logger.info("slackRespondWorkflow: compacting messages", {
       stepNumber: stepIndex,
       totalMessages: messages.length,
       compactedCount: compaction.compactedCount,
+      summarizedCount: compaction.summarizedCount,
       estimatedTokensSaved: compaction.estimatedTokensSaved,
     });
   }
