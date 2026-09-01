@@ -1213,7 +1213,7 @@ export function createGmailEATools(context?: ScheduleContext) {
 
     generate_gmail_auth_url: defineTool({
       description:
-        "Generate a Google OAuth consent URL for a user to connect their Gmail account to Aura. DM the resulting URL to the user — they click it, authorize in Google, and their Gmail is connected for reading and drafting.",
+        "Generate a Google OAuth consent URL for a user to connect their Gmail account to Aura. DM the returned slack_link value verbatim to the user (it is pre-wrapped as a clickable Slack hyperlink; the raw URL breaks across lines in Slack) — they click it, authorize in Google, and their Gmail is connected for reading and drafting.",
       inputSchema: z.object({
         user_name: z
           .string()
@@ -1255,8 +1255,9 @@ export function createGmailEATools(context?: ScheduleContext) {
           return {
             ok: true,
             url,
+            slack_link: `<${url}|Connect your Google account>`,
             user_id: resolvedUserId,
-            message: `OAuth consent URL generated. DM this link to the user — they click it, authorize in Google, and their Gmail is connected.`,
+            message: `OAuth consent URL generated. Send the slack_link value verbatim — never paste the raw URL, it breaks into unclickable fragments in Slack.`,
           };
         } catch (err: any) {
           logger.error("generate_gmail_auth_url failed", { error: err?.message || String(err) });
