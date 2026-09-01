@@ -1,8 +1,10 @@
 import { WebClient } from "@slack/web-api";
-import { eq, and, sql } from "drizzle-orm";
+import { eq, and, sql, inArray } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { jobs, notes, jobExecutions } from "@aura/db/schema";
+import { jobs, notes, jobExecutions, credentials } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
+import { resolveUserCredentials } from "../lib/permissions.js";
+import { sendJobOpsNotice } from "./job-notifications.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
 import { createHeadlessAgent } from "../lib/agents.js";
 import { executionContext } from "../lib/tool.js";
@@ -188,6 +190,79 @@ async function loadPlanNote(topic: string): Promise<string | null> {
   return rows[0]?.content ?? null;
 }
 
+// ── Required-credential availability (issue #1344) ──────────────────────────
+
+export interface MissingJobCredential {
+  id: string;
+  name: string | null;
+  scope: string | null;
+  ownerId: string | null;
+  reason: "not_found" | "not_accessible";
+}
+
+/**
+ * Resolve which of a job's required credentials are NOT available to the job
+ * owner (job.requestedBy).
+ *
+ * Sandbox envs and typed tools are deliberately caller-scoped to the job
+ * owner (see getSandboxEnvs), so a job that requires a credential its owner
+ * can't access — e.g. an admin-scoped credential on a job owned by a
+ * non-admin — would otherwise run with a silently incomplete env. executeJob
+ * uses this to make that loss explicit: it fails the run before doing any
+ * work instead of proceeding. Detection only — never widens anyone's scope.
+ */
+export async function findMissingJobCredentials(
+  requiredCredentialIds: string[],
+  jobOwnerId: string,
+): Promise<MissingJobCredential[]> {
+  const uniqueIds = [...new Set(requiredCredentialIds)];
+  if (uniqueIds.length === 0) return [];
+
+  const rows = await db
+    .select({
+      id: credentials.id,
+      name: credentials.name,
+      scope: credentials.scope,
+      ownerId: credentials.ownerId,
+    })
+    .from(credentials)
+    .where(inArray(credentials.id, uniqueIds));
+  const rowById = new Map(rows.map((row) => [row.id, row]));
+
+  // Pin credential resolution to the job owner: when a job is dispatched from
+  // an interactive turn, the ambient execution context would otherwise leak
+  // the dispatcher's identity into resolveUserCredentials.
+  const accessibleNames = await executionContext.run(
+    {
+      triggeredBy: jobOwnerId,
+      triggerType: "scheduled_job",
+      callingUserId: jobOwnerId,
+    },
+    () => resolveUserCredentials(jobOwnerId),
+  );
+
+  const missing: MissingJobCredential[] = [];
+  for (const id of uniqueIds) {
+    const row = rowById.get(id);
+    if (!row) {
+      missing.push({ id, name: null, scope: null, ownerId: null, reason: "not_found" });
+    } else if (!accessibleNames.has(row.name)) {
+      missing.push({ ...row, reason: "not_accessible" });
+    }
+  }
+  return missing;
+}
+
+/** Human-readable, actionable description of one missing job credential. */
+export function describeMissingJobCredential(cred: MissingJobCredential): string {
+  if (cred.reason === "not_found") {
+    return `credential ${cred.id} no longer exists (deleted?)`;
+  }
+  const scopePart = cred.scope ? `scope ${cred.scope}` : "unknown scope";
+  const ownerPart = cred.ownerId ? `, owned by ${cred.ownerId}` : "";
+  return `"${cred.name}" (${cred.id}, ${scopePart}${ownerPart})`;
+}
+
 // ── Job Execution ────────────────────────────────────────────────────────────
 
 /**
@@ -264,6 +339,36 @@ export async function executeJob(
     let systemPrompt: string;
 
     const credentialIds = job.requiredCredentialIds ?? [];
+
+    // Fail closed when a required credential is not available to the job
+    // owner (issue #1344). Credential resolution is deliberately scoped to
+    // job.requestedBy; running anyway would silently drop the credential.
+    if (credentialIds.length > 0) {
+      const missingCredentials = await findMissingJobCredentials(
+        credentialIds,
+        job.requestedBy,
+      );
+      if (missingCredentials.length > 0) {
+        const detail = missingCredentials
+          .map(describeMissingJobCredential)
+          .join("; ");
+        const message =
+          `Required credential(s) not available to job owner ${job.requestedBy}: ${detail}. ` +
+          `Credential resolution is deliberately scoped to the job owner, so the run was ` +
+          `aborted instead of executing with a silently incomplete credential set. ` +
+          `Fix: grant the credential to ${job.requestedBy}, or transfer the job to a user ` +
+          `with access. Credential scope was NOT widened.`;
+        await sendJobOpsNotice({
+          jobId,
+          jobName: job.name,
+          requestedBy: job.requestedBy,
+          text: `:no_entry: ${message}`,
+          logContext: { missingCredentials },
+        });
+        throw new Error(message);
+      }
+    }
+
     const credentialNote =
       credentialIds.length > 0
         ? `\n\nAuthorized credential IDs for this job: ${credentialIds.join(", ")}`
@@ -487,20 +592,37 @@ export async function executeJob(
       prompt = `## Pre-computed data (from script)\n\n\`\`\`json\n${scriptOutput}\n\`\`\`\n\n---\n\n${prompt}`;
     }
 
-    const { agent, modelId, getStepModelIds, getCompactionTotals } = await createHeadlessAgent({
-      slackClient,
-      context: {
-        userId: job.requestedBy,
-        channelId: job.channelId || undefined,
-        threadTs: job.threadTs || undefined,
-      },
-      systemPrompt,
-      invocationId,
-      modelCategory,
-      // Depth of the chain this job belongs to (issue #1320): a hard-deadline
-      // respawn from inside this run continues at depth + 1, capped at 3.
-      continuationDepth: continuationTag?.depth ?? 0,
-    });
+    // Job-scoped execution context, active during BOTH agent/tool
+    // construction and generation. Building the tool set inside it means
+    // credential-gated typed tools are filtered against the job's env
+    // allowlist (issue #1312) and credential resolution is pinned to the job
+    // owner rather than any ambient dispatcher context.
+    const jobExecutionContext = {
+      triggeredBy: job.requestedBy,
+      triggerType: "scheduled_job" as const,
+      callingUserId: job.requestedBy,
+      jobId: job.id,
+      envAllowlist,
+      jobExecutionId: executionId,
+    };
+
+    const { agent, modelId, getStepModelIds, getCompactionTotals } =
+      await executionContext.run(jobExecutionContext, () =>
+        createHeadlessAgent({
+          slackClient,
+          context: {
+            userId: job.requestedBy,
+            channelId: job.channelId || undefined,
+            threadTs: job.threadTs || undefined,
+          },
+          systemPrompt,
+          invocationId,
+          modelCategory,
+          // Depth of the chain this job belongs to (issue #1320): a hard-deadline
+          // respawn from inside this run continues at depth + 1, capped at 3.
+          continuationDepth: continuationTag?.depth ?? 0,
+        }),
+      );
 
     // Create a conversation trace for this job execution
     conversationId = await createConversationTrace({
@@ -518,14 +640,7 @@ export async function executeJob(
     );
 
     const generateResult = await executionContext.run(
-      {
-        triggeredBy: job.requestedBy,
-        triggerType: "scheduled_job",
-        callingUserId: job.requestedBy,
-        jobId: job.id,
-        envAllowlist,
-        jobExecutionId: executionId,
-      },
+      jobExecutionContext,
       () =>
         withTrace(
           {

@@ -8,6 +8,7 @@ import {
 } from "../lib/browser.js";
 import { logger } from "../lib/logger.js";
 import type { ScheduleContext } from "@aura/db/schema";
+import type { WebClient } from "@slack/web-api";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -52,12 +53,12 @@ function setupConsoleCollector(page: any): string[] {
 
 // ── Tool Definition ──────────────────────────────────────────────────────────
 
-export function createBrowserTools(context?: ScheduleContext): Record<string, any> {
+export function createBrowserTools(context?: ScheduleContext, client?: WebClient): Record<string, any> {
   try {
     return {
       browse: defineTool({
       description:
-        "Browse a webpage or automate browser interactions using Browserbase (remote Chromium). Two modes: (1) Simple: provide a URL to navigate, take screenshots, and extract content. (2) Code: provide Playwright JS code for multi-step automation (variables `page`, `context`, `browser` are available). Returns screenshot as base64, extracted text/HTML/accessibility tree, and console errors.",
+        "Browse a webpage or automate browser interactions using Browserbase (remote Chromium). Two modes: (1) Simple: provide a URL to navigate, take screenshots, and extract content. (2) Code: provide Playwright JS code for multi-step automation (variables `page`, `context`, `browser` are available). Returns screenshot as base64, extracted text/HTML/accessibility tree, and console errors. To share the screenshot in Slack, pass upload_channel (and optionally upload_thread_ts) — the screenshot is uploaded directly and file_id/file_url are returned instead of base64; never copy screenshot base64 into upload_file.",
       requiredCredentials: ["browserbase_api_key"],
       // Deliberate override: html extraction below caps at 32k, so the
       // generic defineTool default (12k) would double-truncate. The
@@ -93,6 +94,18 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
           .boolean()
           .default(true)
           .describe("Take a screenshot after navigation (default true)."),
+        upload_channel: z
+          .string()
+          .optional()
+          .describe(
+            "Slack destination to upload the screenshot to: channel name ('general'), channel ID ('C0BNVKS77'), DM channel ID, or username/display name ('Joan'). When set, the screenshot is uploaded to Slack and screenshot_file_id/screenshot_file_url are returned instead of screenshot_base64.",
+          ),
+        upload_thread_ts: z
+          .string()
+          .optional()
+          .describe(
+            "Thread timestamp to attach the uploaded screenshot to. Requires upload_channel.",
+          ),
         extract: z
           .enum(["text", "accessibility", "html"])
           .optional()
@@ -122,6 +135,8 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
         session_id,
         release_session,
         screenshot,
+        upload_channel,
+        upload_thread_ts,
         extract,
         headers,
         stealth,
@@ -183,6 +198,7 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
           let resultUrl = page.url();
           let resultTitle = "";
           let screenshotBase64: string | undefined;
+          let screenshotBuffer: Buffer | undefined;
           let extractedContent: string | undefined;
           let codeResult: unknown;
 
@@ -209,6 +225,7 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
                 type: "png",
                 fullPage: false,
               });
+              screenshotBuffer = buf;
               screenshotBase64 = bufferToBase64(buf);
             }
 
@@ -251,6 +268,7 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
                 type: "png",
                 fullPage: false,
               });
+              screenshotBuffer = buf;
               screenshotBase64 = bufferToBase64(buf);
             }
 
@@ -267,7 +285,46 @@ export function createBrowserTools(context?: ScheduleContext): Record<string, an
             console_errors: consoleErrors.slice(0, 10),
           };
 
-          if (screenshotBase64) {
+          if (screenshotBase64 && screenshotBuffer && upload_channel) {
+            // Upload the screenshot to Slack instead of returning a giant
+            // base64 blob for the LLM to (unreliably) pass to upload_file.
+            if (!client) {
+              result.screenshot_base64 = screenshotBase64;
+              result.upload_error =
+                "Screenshot upload is unavailable in this context (no Slack connection); returning base64 instead.";
+            } else {
+              try {
+                const { resolveSlackDestination, uploadFileToSlack } =
+                  await import("./slack.js");
+                const channelId = await resolveSlackDestination(
+                  client,
+                  upload_channel,
+                );
+                if (!channelId) {
+                  result.screenshot_base64 = screenshotBase64;
+                  result.upload_error = `Could not find channel or user "${upload_channel}". Use list_channels to see available channels.`;
+                } else {
+                  const { fileId, fileUrl } = await uploadFileToSlack(client, {
+                    buffer: screenshotBuffer,
+                    filename: "screenshot.png",
+                    title: resultTitle || resultUrl || "Screenshot",
+                    channelId,
+                    threadTs: upload_thread_ts,
+                  });
+                  result.screenshot_file_id = fileId;
+                  result.screenshot_file_url = fileUrl;
+                  result.screenshot_uploaded_to = upload_channel;
+                }
+              } catch (uploadErr: any) {
+                logger.error("browse tool: screenshot upload failed", {
+                  error: uploadErr.message,
+                  channel: upload_channel,
+                });
+                result.screenshot_base64 = screenshotBase64;
+                result.upload_error = `Screenshot upload failed: ${uploadErr.message}. Returning base64 instead.`;
+              }
+            }
+          } else if (screenshotBase64) {
             result.screenshot_base64 = screenshotBase64;
           }
           if (extractedContent) {

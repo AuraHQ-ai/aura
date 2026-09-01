@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 process.env.DATABASE_URL ??= "postgresql://user:pass@example.com/db";
 
@@ -10,7 +10,12 @@ vi.mock("./logger.js", () => ({
   },
 }));
 
+vi.mock("./credentials.js", () => ({
+  resolveCredentialValue: vi.fn(async () => "cursor-api-key"),
+}));
+
 const {
+  launchCursorAgent,
   markPullRequestReadyForReview,
   parseGitHubPullRequestUrl,
   resolveCursorAgentPrUrl,
@@ -27,6 +32,63 @@ function jsonResponse(data: unknown): Response {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe("launchCursorAgent model param", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function launchFetchMock() {
+    const fetchMock = vi.fn(async (_url: string, _init?: RequestInit) =>
+      jsonResponse({ id: "agent-1", status: "CREATING" }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  const baseParams = {
+    prompt: "do the thing",
+    repository: "https://github.com/AuraHQ-ai/aura",
+    ref: "main",
+    branchName: "cursor/do-the-thing",
+  };
+
+  it("sends model in the request body when provided", async () => {
+    const fetchMock = launchFetchMock();
+
+    await launchCursorAgent({ ...baseParams, model: "claude-sonnet-4.5" });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.model).toBe("claude-sonnet-4.5");
+  });
+
+  it("omits model from the request body when not provided", async () => {
+    const fetchMock = launchFetchMock();
+
+    await launchCursorAgent(baseParams);
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body).not.toHaveProperty("model");
+  });
+
+  it("treats an empty/whitespace model as omitted", async () => {
+    const fetchMock = launchFetchMock();
+
+    await launchCursorAgent({ ...baseParams, model: "  " });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body).not.toHaveProperty("model");
+  });
+
+  it("trims the model value before sending it", async () => {
+    const fetchMock = launchFetchMock();
+
+    await launchCursorAgent({ ...baseParams, model: " gpt-5 " });
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body));
+    expect(body.model).toBe("gpt-5");
+  });
 });
 
 describe("resolveCursorAgentPrUrl", () => {

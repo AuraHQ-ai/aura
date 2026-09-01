@@ -607,8 +607,22 @@
     {
       "idx": 86,
       "version": "7",
+      "when": 1788275948019,
+      "tag": "0086_github_pull_requests",
+      "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1788361200000,
+      "tag": "0087_backfill_null_cost_usd",
+      "breakpoints": true
+    },
+    {
+      "idx": 88,
+      "version": "7",
       "when": 1788275895992,
-      "tag": "0086_retire_known_facts",
+      "tag": "0088_retire_known_facts",
       "breakpoints": true
     }
   ]

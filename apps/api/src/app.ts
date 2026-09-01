@@ -7,6 +7,7 @@ import { supervisorApp } from "./cron/supervisor.js";
 import { evalResponsesApp } from "./cron/eval-responses.js";
 import { elevenlabsWebhookApp } from "./webhook/elevenlabs.js";
 import { createSandboxCommandWebhookApp } from "./webhook/sandbox-command.js";
+import { createGitHubWebhookApp } from "./webhook/github.js";
 import { dashboardApp } from "./routes/dashboard/index.js";
 import { runPipeline } from "./pipeline/index.js";
 import {
@@ -1040,6 +1041,10 @@ app.get("/api/oauth/google/callback", async (c) => {
 // ── Sandbox Command Webhook ─────────────────────────────────────────────────
 
 app.route("/api/webhook/sandbox-command", createSandboxCommandWebhookApp(slackClient));
+
+// ── GitHub Webhook (issue #271) ──────────────────────────────────────────────
+
+app.route("/api/webhook/github", createGitHubWebhookApp());
 
 // ── Cursor Agent Webhook ───────────────────────────────────────────────────
 

@@ -165,3 +165,79 @@ describe("send_voice_note quota", () => {
     expect(dbMocks.insertValues).not.toHaveBeenCalled();
   });
 });
+
+describe("place_call callback routing", () => {
+  beforeEach(() => {
+    vi.useRealTimers();
+    dbMocks.selectRows = [[{ count: "0", oldestCreatedAt: null }]];
+    dbMocks.insertValues.mockClear();
+    dbMocks.onConflictDoNothing.mockClear();
+    getConfigMock.mockImplementation(async (key: string, fallback?: string) => {
+      if (key === "elevenlabs_agent_id") return "agent-1";
+      if (key === "elevenlabs_voice_id") return "voice-1";
+      if (key === "elevenlabs_from_number") return "+41790000000";
+      if (key === "elevenlabs_phone_number_id") return "pn-1";
+      return fallback ?? "";
+    });
+    resolveCredentialValueMock.mockResolvedValue("elevenlabs-key");
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () =>
+        new Response(JSON.stringify({ conversation_id: "conv-1" }), {
+          status: 200,
+        }),
+      ),
+    );
+  });
+
+  it("persists the originating channel/thread in the call record metadata", async () => {
+    const tools = createVoiceTools(undefined, {
+      userId: "U123",
+      channelId: "C42",
+      threadTs: "1712.34",
+    });
+
+    const result = await tools.place_call.execute({
+      to_number: "+34612345678",
+    });
+
+    expect(result).toMatchObject({ ok: true, conversation_id: "conv-1" });
+    expect(dbMocks.insertValues).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: "conv-1",
+        metadata: {
+          callback_channel: "C42",
+          callback_thread_ts: "1712.34",
+        },
+      }),
+    );
+  });
+
+  it("prefers an explicit callback_channel and does not inherit the context thread", async () => {
+    const tools = createVoiceTools(undefined, {
+      userId: "U123",
+      channelId: "C42",
+      threadTs: "1712.34",
+    });
+
+    await tools.place_call.execute({
+      to_number: "+34612345678",
+      callback_channel: "C99",
+    });
+
+    expect(dbMocks.insertValues).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: { callback_channel: "C99" },
+      }),
+    );
+  });
+
+  it("omits callback metadata when no thread context or params exist", async () => {
+    const tools = createVoiceTools(undefined, undefined);
+
+    await tools.place_call.execute({ to_number: "+34612345678" });
+
+    const values = dbMocks.insertValues.mock.calls[0][0];
+    expect(values.metadata).toBeUndefined();
+  });
+});

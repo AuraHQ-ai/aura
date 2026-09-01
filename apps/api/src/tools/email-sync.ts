@@ -18,6 +18,7 @@ const RECENT_EMAIL_SYNC_QUERY = "newer_than:30d";
 const RECENT_EMAIL_SYNC_MAX_MESSAGES = 100;
 const UPDATE_FALLBACK_MAX_MESSAGES = 200;
 const EMAIL_SYNC_STALE_AFTER_MS = 6 * 60 * 60 * 1000;
+const MAX_ARCHIVE_THREADS_PER_CALL = 50;
 
 type EmailSyncRefresh = {
   attempted: boolean;
@@ -683,6 +684,136 @@ export function createEmailSyncTools(
         }
       },
       slack: { status: "Updating email threads...", output: (r) => "error" in r ? r.error : ("message" in r && r.ok === false ? r.message : `${r.updated} threads updated`) },
+    }),
+
+    archive_emails: defineTool({
+      requiredCredentials: ["google_oauth"],
+      description:
+        "Archive email threads in the user's REAL Gmail mailbox by removing the INBOX label (messages stay in All Mail — nothing is deleted). Use this when the user wants emails actually cleared from their Gmail inbox; update_email_thread only changes Aura's internal triage state and does NOT touch Gmail. Get gmail_thread_id values from email_digest or search_emails. Users may archive their own threads; admins may archive another user's threads. Archived threads are also marked 'resolved' in the local triage pipeline. Returns an explicit per-thread result (archived / failed / not_found) — only report threads with status 'archived' as archived.",
+      inputSchema: z.object({
+        user_name: z
+          .string()
+          .describe(
+            "Display name, username, or user ID of the Gmail account owner",
+          ),
+        gmail_thread_ids: z
+          .array(z.string())
+          .min(1)
+          .max(MAX_ARCHIVE_THREADS_PER_CALL)
+          .describe(
+            `Gmail thread IDs to archive (max ${MAX_ARCHIVE_THREADS_PER_CALL} per call)`,
+          ),
+        reason: z
+          .string()
+          .optional()
+          .describe("Why the threads are being archived (stored in triage state)"),
+      }),
+      execute: async ({ user_name, gmail_thread_ids, reason }) => {
+        try {
+          const user = await resolveUserByName(client, user_name);
+          if (!user) {
+            return {
+              ok: false as const,
+              error: `Could not resolve user '${user_name}'.`,
+            };
+          }
+
+          const userId = user.id;
+          const access = await assertCanAccessUserEmail(context?.userId, userId);
+          if (!access.ok) return access;
+
+          const { archiveThreads } = await import("../lib/gmail.js");
+          const results = await archiveThreads(userId, gmail_thread_ids);
+
+          if (!results) {
+            return {
+              ok: false as const,
+              error:
+                "No Gmail access for the resolved user. They need to authorize Aura via OAuth first.",
+            };
+          }
+
+          const archivedThreadIds = results
+            .filter((r) => r.status === "archived")
+            .map((r) => r.threadId);
+
+          // Keep the internal triage pipeline in sync: archived in Gmail
+          // means resolved locally.
+          if (archivedThreadIds.length > 0) {
+            await db
+              .update(emailsRaw)
+              .set({
+                threadState: "resolved",
+                threadStateReason: reason ?? "Archived in Gmail",
+                threadStateUpdatedAt: new Date(),
+                updatedAt: new Date(),
+              })
+              .where(
+                and(
+                  eq(emailsRaw.userId, userId),
+                  inArray(emailsRaw.gmailThreadId, archivedThreadIds),
+                ),
+              );
+          }
+
+          const archived = archivedThreadIds.length;
+          const failed = results.filter((r) => r.status === "failed").length;
+          const notFound = results.filter((r) => r.status === "not_found").length;
+
+          logger.info("archive_emails", {
+            userId,
+            requested: gmail_thread_ids.length,
+            archived,
+            failed,
+            notFound,
+          });
+
+          const details = results.map((r) => ({
+            gmail_thread_id: r.threadId,
+            status: r.status,
+            ...(r.error ? { error: r.error } : {}),
+          }));
+
+          if (archived === 0) {
+            return {
+              ok: false as const,
+              archived,
+              failed,
+              not_found: notFound,
+              details,
+              error: `No threads were archived (${failed} failed, ${notFound} not found). Do NOT report these threads as archived.`,
+            };
+          }
+
+          return {
+            ok: true as const,
+            archived,
+            failed,
+            not_found: notFound,
+            details,
+            message: `Archived ${archived} thread(s) in Gmail (removed from inbox, kept in All Mail)${
+              failed > 0 ? `, ${failed} failed` : ""
+            }${notFound > 0 ? `, ${notFound} not found` : ""}. Archived threads were marked 'resolved' in the triage pipeline.`,
+          };
+        } catch (error: any) {
+          logger.error("archive_emails failed", {
+            userName: user_name,
+            error: error.message,
+          });
+          return {
+            ok: false as const,
+            error: `Archive failed: ${error.message}`,
+          };
+        }
+      },
+      slack: {
+        status: "Archiving emails...",
+        detail: (i) => `${i.gmail_thread_ids.length} thread(s)`,
+        output: (r) =>
+          "error" in r && r.error
+            ? r.error
+            : `${(r as any).archived ?? 0} archived`,
+      },
     }),
 
     search_emails: defineTool({

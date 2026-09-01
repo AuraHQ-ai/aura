@@ -120,6 +120,10 @@ function computeStepCost(
 /**
  * Build per-step usage data from raw AI SDK steps.
  * Filters to steps that have both a modelId and usage, then maps to StepUsage[].
+ *
+ * When the provider response carries no `response.modelId` (issue #1325),
+ * the step still gets priced via the canonical/fallback model id instead of
+ * being dropped — otherwise cost_usd would silently stay NULL for the turn.
  */
 export function buildStepUsages(
   rawSteps: any[],
@@ -141,7 +145,11 @@ export function buildStepUsages(
         resolvedModelId: step.response?.modelId,
         fallbackModelId,
       })!,
-      resolvedModelId: step.response.modelId,
+      // Optional chaining matters: a step can pass the filter via the
+      // fallback model id while carrying no `response` at all. A bare
+      // `step.response.modelId` here threw and dropped the WHOLE turn's
+      // step usages (cost_usd = NULL) — see issue #1325.
+      resolvedModelId: step.response?.modelId,
       usage: {
         inputTokens: step.usage.inputTokens ?? 0,
         outputTokens: step.usage.outputTokens ?? 0,

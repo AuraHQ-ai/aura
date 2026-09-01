@@ -42,6 +42,21 @@ vi.mock("./turn-deadline.js", () => ({
   spawnTurnContinuationJob: turnDeadlineMocks.spawnTurnContinuationJob,
 }));
 
+// Summarize-on-evict (issue #1330) dynamically imports the fast model inside
+// summarizeEvictedToolResult; reject so tests exercise the truncation
+// fallback instead of making a real model call.
+const aiLibMocks = vi.hoisted(() => ({
+  getFastModel: vi.fn().mockRejectedValue(new Error("no model in tests")),
+}));
+
+vi.mock("../lib/ai.js", () => ({
+  getFastModel: aiLibMocks.getFastModel,
+}));
+
+vi.mock("../lib/langfuse.js", () => ({
+  aiTelemetry: vi.fn(() => undefined),
+}));
+
 import {
   createPrepareStep,
   getProviderThinkingOptions,
@@ -434,6 +449,7 @@ describe("createPrepareStep context compaction (issue #1328)", () => {
     expect(recordCompaction).toHaveBeenCalledWith({
       stepNumber: 40,
       compactedCount: expect.any(Number),
+      summarizedCount: expect.any(Number),
       estimatedTokensSaved: expect.any(Number),
     });
     expect(recordCompaction.mock.calls[0][0].compactedCount).toBeGreaterThan(0);

@@ -60,11 +60,13 @@ vi.mock("./metrics.js", () => ({
 import { logger } from "./logger.js";
 import { getSetting } from "./settings.js";
 import { executionContext } from "./tool.js";
+import { filterToolsByCredentials } from "./tool.js";
 import {
-  bootstrapToolsRepo,
+  ensureAuraTools,
   getSandboxEnvs,
   getSandboxEnvNames,
   filterEnvsByAllowlist,
+  filterCredentialNamesByEnvAllowlist,
 } from "./sandbox.js";
 
 const getSettingMock = vi.mocked(getSetting);
@@ -278,6 +280,72 @@ describe("filterEnvsByAllowlist", () => {
   });
 });
 
+describe("filterCredentialNamesByEnvAllowlist (issue #1312)", () => {
+  it("keeps credentials whose uppercased name is allowlisted, drops the rest", () => {
+    const filtered = filterCredentialNamesByEnvAllowlist(
+      new Set(["meta_admin_token", "tavily_api_key", "google_bq_credentials"]),
+      ["TAVILY_API_KEY"],
+    );
+
+    expect(filtered).toEqual(new Set(["tavily_api_key"]));
+  });
+
+  it("matches through the credential's explicit sandbox env name", () => {
+    const filtered = filterCredentialNamesByEnvAllowlist(
+      new Set(["meta_ads_system_user", "tavily_api_key"]),
+      ["META_ADMIN_TOKEN"],
+      new Map([["meta_ads_system_user", "META_ADMIN_TOKEN"]]),
+    );
+
+    expect(filtered).toEqual(new Set(["meta_ads_system_user"]));
+  });
+
+  it("keeps core infra credentials and the GH_TOKEN alias", () => {
+    const filtered = filterCredentialNamesByEnvAllowlist(
+      new Set(["e2b_api_key", "github_token", "slack_bot_token"]),
+      ["GH_TOKEN"],
+    );
+
+    // e2b_api_key maps to core infra env E2B_API_KEY; github_token via alias.
+    expect(filtered).toEqual(new Set(["e2b_api_key", "github_token"]));
+  });
+
+  it("returns the set unchanged for a null allowlist (full inheritance)", () => {
+    const names = new Set(["github_token", "tavily_api_key"]);
+    expect(filterCredentialNamesByEnvAllowlist(names, null)).toEqual(names);
+    expect(filterCredentialNamesByEnvAllowlist(names, undefined)).toEqual(names);
+  });
+
+  it("an empty allowlist keeps only core-infra-backed credentials (fail closed)", () => {
+    const filtered = filterCredentialNamesByEnvAllowlist(
+      new Set(["google_bq_credentials", "google_oauth", "e2b_api_key"]),
+      [],
+    );
+
+    expect(filtered).toEqual(new Set(["e2b_api_key"]));
+  });
+
+  it("gates credential-backed typed tools when combined with filterToolsByCredentials", () => {
+    // Plain objects standing in for defineTool() output — filterToolsByCredentials
+    // only reads the __requiredCredentials metadata.
+    const tools = {
+      bq_execute_query: { __requiredCredentials: ["google_bq_credentials"] },
+      web_search: { __requiredCredentials: ["tavily_api_key"] },
+      read_note: {},
+    };
+    const userCredentials = new Set(["google_bq_credentials", "tavily_api_key"]);
+
+    const scoped = filterCredentialNamesByEnvAllowlist(userCredentials, [
+      "TAVILY_API_KEY",
+    ]);
+    const filtered = filterToolsByCredentials(tools, scoped);
+
+    // bq_execute_query's backing credential is outside the allowlist → omitted.
+    // Credential-free tools are unaffected.
+    expect(Object.keys(filtered).sort()).toEqual(["read_note", "web_search"]);
+  });
+});
+
 describe("getSandboxEnvNames", () => {
   beforeEach(() => {
     queueDbResults();
@@ -481,9 +549,24 @@ describe("getSandboxEnvNames", () => {
   });
 });
 
-describe("bootstrapToolsRepo", () => {
+describe("ensureAuraTools", () => {
   const checkoutPath = `/home/user/${["aura", "tools"].join("-")}`;
-  const repoProbe = `git -C '${checkoutPath}' rev-parse --is-inside-work-tree 2>/dev/null && echo AURA_REPO_OK || echo AURA_REPO_MISSING`;
+  const markerPath = `${checkoutPath}/.aura-tools-synced`;
+  const repoProbe = `if [ -f '${markerPath}' ] && [ -n "$(find '${markerPath}' -mmin -30 2>/dev/null)" ]; then echo AURA_TOOLS_FRESH; elif git -C '${checkoutPath}' rev-parse --is-inside-work-tree >/dev/null 2>&1; then echo AURA_TOOLS_PRESENT; else echo AURA_TOOLS_MISSING; fi`;
+  const installAndTouch = `if [ -f '${checkoutPath}/requirements.txt' ]; then python3 -m pip install --quiet --disable-pip-version-check -r '${checkoutPath}/requirements.txt' || echo AURA_TOOLS_DEPS_FAILED; fi; touch '${markerPath}'`;
+  const touchOnly = `touch '${markerPath}'`;
+
+  // The session cache in sandbox.ts is module state keyed on sandbox id, so
+  // every test needs a unique id to stay isolated.
+  let sandboxIdCounter = 0;
+  function makeSandbox(
+    run: (
+      command: string,
+      options?: { timeoutMs?: number; envs?: Record<string, string> },
+    ) => Promise<{ exitCode?: number; stdout?: string; stderr?: string }>,
+  ) {
+    return { sandboxId: `sbx-test-${sandboxIdCounter++}`, commands: { run } };
+  }
 
   /**
    * Mirrors the real E2B SDK behavior: `commands.run()` THROWS a
@@ -525,12 +608,21 @@ describe("bootstrapToolsRepo", () => {
     getSettingMock.mockResolvedValue(null);
   });
 
-  it("skips cleanly when tools_repo is not configured", async () => {
-    const run = vi.fn();
+  it("clones the default realadvisor/aura-tools repo when tools_repo is not configured (issue #960)", async () => {
+    const run = vi.fn(async (command: string, _options?: unknown) => {
+      if (command.startsWith("if [ -f")) {
+        return commandResult({ stdout: "AURA_TOOLS_MISSING\n" });
+      }
+      return commandResult({});
+    });
 
-    await bootstrapToolsRepo({ commands: { run } }, { GITHUB_TOKEN: "token" });
+    await ensureAuraTools(makeSandbox(run), { GITHUB_TOKEN: "token" });
 
-    expect(run).not.toHaveBeenCalled();
+    expect(run.mock.calls.map(([command]) => command)).toEqual([
+      repoProbe,
+      `git clone --depth=1 "https://x-access-token:$GITHUB_TOKEN@github.com/realadvisor/aura-tools.git" '${checkoutPath}'`,
+      installAndTouch,
+    ]);
     expect(loggerWarnMock).not.toHaveBeenCalled();
     expect(recordErrorMock).not.toHaveBeenCalled();
   });
@@ -538,23 +630,25 @@ describe("bootstrapToolsRepo", () => {
   it("clones the configured repository when the checkout is missing", async () => {
     getSettingMock.mockResolvedValue("acme/tools");
     const run = vi.fn(async (command: string, _options?: unknown) => {
-      if (command.includes("rev-parse")) {
+      if (command.startsWith("if [ -f")) {
         // The shell guard absorbs git's non-zero exit — the command exits 0.
-        return commandResult({ stdout: "AURA_REPO_MISSING\n" });
+        return commandResult({ stdout: "AURA_TOOLS_MISSING\n" });
       }
       return commandResult({});
     });
 
-    await bootstrapToolsRepo({ commands: { run } }, { GITHUB_TOKEN: "token" });
+    await ensureAuraTools(makeSandbox(run), { GITHUB_TOKEN: "token" });
 
-    expect(run).toHaveBeenCalledTimes(2);
+    expect(run).toHaveBeenCalledTimes(3);
     expect(run.mock.calls[1][0]).toContain(
-      'git clone "https://x-access-token:$GITHUB_TOKEN@github.com/acme/tools.git"',
+      'git clone --depth=1 "https://x-access-token:$GITHUB_TOKEN@github.com/acme/tools.git"',
     );
     expect(run.mock.calls[1][0]).not.toContain("token@");
     expect(run.mock.calls[1][1]).toMatchObject({
       envs: { GITHUB_TOKEN: "token" },
     });
+    // Python deps install after the clone, then the freshness marker is set.
+    expect(run.mock.calls[2][0]).toBe(installAndTouch);
     expect(loggerWarnMock).not.toHaveBeenCalled();
     expect(recordErrorMock).not.toHaveBeenCalled();
   });
@@ -562,38 +656,66 @@ describe("bootstrapToolsRepo", () => {
   it("still clones when the existence probe THROWS like the real SDK (issue #1363)", async () => {
     getSettingMock.mockResolvedValue("acme/tools");
     const run = vi.fn(async (command: string, _options?: unknown) => {
-      if (command.includes("rev-parse")) {
-        // Real SDK behavior for a missing checkout without the shell guard:
-        // rev-parse exits 128 and commands.run() throws CommandExitError.
+      if (command.startsWith("if [ -f")) {
+        // Real SDK behavior for a failing probe without the shell guard:
+        // the command exits non-zero and commands.run() throws CommandExitError.
         return commandResult({ exitCode: 128, stderr: "fatal: not a git repository" });
       }
       return commandResult({});
     });
 
-    await bootstrapToolsRepo({ commands: { run } }, { GITHUB_TOKEN: "token" });
+    await ensureAuraTools(makeSandbox(run), { GITHUB_TOKEN: "token" });
 
     const cloneCall = run.mock.calls.find(([command]) =>
       command.startsWith("git clone"),
     );
     expect(cloneCall).toBeDefined();
     expect(cloneCall![0]).toContain(
-      'git clone "https://x-access-token:$GITHUB_TOKEN@github.com/acme/tools.git"',
+      'git clone --depth=1 "https://x-access-token:$GITHUB_TOKEN@github.com/acme/tools.git"',
     );
     expect(recordErrorMock).not.toHaveBeenCalled();
   });
 
-  it("pulls on re-acquire when the checkout is already a git repository", async () => {
-    getSettingMock.mockResolvedValue("https://github.com/acme/tools.git");
-    let checkoutExists = false;
+  it("is a single probe with no git traffic when the sync marker is fresh", async () => {
     const run = vi.fn(async (command: string, _options?: unknown) => {
-      if (command.includes("rev-parse")) {
-        return commandResult({
-          stdout: checkoutExists ? "AURA_REPO_OK\n" : "AURA_REPO_MISSING\n",
-        });
+      if (command.startsWith("if [ -f")) {
+        return commandResult({ stdout: "AURA_TOOLS_FRESH\n" });
       }
-      if (command.startsWith("git clone")) {
-        checkoutExists = true;
-        return commandResult({});
+      return commandResult({});
+    });
+
+    await ensureAuraTools(makeSandbox(run), { GITHUB_TOKEN: "token" });
+
+    expect(run.mock.calls.map(([command]) => command)).toEqual([repoProbe]);
+    expect(loggerWarnMock).not.toHaveBeenCalled();
+    expect(recordErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("syncs only once per session per sandbox id", async () => {
+    const run = vi.fn(async (command: string, _options?: unknown) => {
+      if (command.startsWith("if [ -f")) {
+        return commandResult({ stdout: "AURA_TOOLS_MISSING\n" });
+      }
+      return commandResult({});
+    });
+    const sandbox = makeSandbox(run);
+
+    await ensureAuraTools(sandbox, { GITHUB_TOKEN: "token" });
+    await ensureAuraTools(sandbox, { GITHUB_TOKEN: "token" });
+
+    // Second acquisition of the same sandbox issues zero commands.
+    expect(run.mock.calls.map(([command]) => command)).toEqual([
+      repoProbe,
+      `git clone --depth=1 "https://x-access-token:$GITHUB_TOKEN@github.com/realadvisor/aura-tools.git" '${checkoutPath}'`,
+      installAndTouch,
+    ]);
+  });
+
+  it("pulls when the checkout exists but the marker is stale, skipping pip when unchanged", async () => {
+    getSettingMock.mockResolvedValue("https://github.com/acme/tools.git");
+    const run = vi.fn(async (command: string, _options?: unknown) => {
+      if (command.startsWith("if [ -f")) {
+        return commandResult({ stdout: "AURA_TOOLS_PRESENT\n" });
       }
       if (command.includes("pull --ff-only")) {
         return commandResult({ stdout: "Already up to date." });
@@ -601,24 +723,77 @@ describe("bootstrapToolsRepo", () => {
       return commandResult({});
     });
 
-    await bootstrapToolsRepo({ commands: { run } }, { GITHUB_TOKEN: "token" });
-    await bootstrapToolsRepo({ commands: { run } }, { GITHUB_TOKEN: "token" });
+    await ensureAuraTools(makeSandbox(run), { GITHUB_TOKEN: "token" });
 
     expect(run.mock.calls.map(([command]) => command)).toEqual([
       repoProbe,
-      `git clone "https://x-access-token:$GITHUB_TOKEN@github.com/acme/tools.git" '${checkoutPath}'`,
-      repoProbe,
       `git -C '${checkoutPath}' pull --ff-only`,
+      touchOnly,
     ]);
     expect(loggerWarnMock).not.toHaveBeenCalled();
     expect(recordErrorMock).not.toHaveBeenCalled();
   });
 
+  it("reinstalls Python deps when the pull brought new commits", async () => {
+    const run = vi.fn(async (command: string, _options?: unknown) => {
+      if (command.startsWith("if [ -f")) {
+        return commandResult({ stdout: "AURA_TOOLS_PRESENT\n" });
+      }
+      if (command.includes("pull --ff-only")) {
+        return commandResult({ stdout: "Updating 1a2b3c..4d5e6f\nFast-forward\n" });
+      }
+      return commandResult({});
+    });
+
+    await ensureAuraTools(makeSandbox(run), { GITHUB_TOKEN: "token" });
+
+    expect(run.mock.calls.map(([command]) => command)).toEqual([
+      repoProbe,
+      `git -C '${checkoutPath}' pull --ff-only`,
+      installAndTouch,
+    ]);
+  });
+
+  it("does not touch the marker when the pull fails, so the next acquisition retries", async () => {
+    const run = vi.fn(async (command: string, _options?: unknown) => {
+      if (command.startsWith("if [ -f")) {
+        return commandResult({ stdout: "AURA_TOOLS_PRESENT\n" });
+      }
+      if (command.includes("pull --ff-only")) {
+        return commandResult({ exitCode: 1, stderr: "fatal: unable to access" });
+      }
+      return commandResult({});
+    });
+
+    await ensureAuraTools(makeSandbox(run), { GITHUB_TOKEN: "token" });
+
+    expect(run.mock.calls.map(([command]) => command)).toEqual([
+      repoProbe,
+      `git -C '${checkoutPath}' pull --ff-only`,
+    ]);
+    expect(loggerWarnMock).toHaveBeenCalled();
+  });
+
+  it("records an error and issues no commands when GITHUB_TOKEN is unavailable", async () => {
+    const run = vi.fn(async (_command: string, _options?: unknown) =>
+      commandResult({}),
+    );
+
+    await ensureAuraTools(makeSandbox(run), {});
+
+    expect(run).not.toHaveBeenCalled();
+    expect(recordErrorMock).toHaveBeenCalledWith(
+      "sandbox.ensureAuraTools",
+      expect.any(Error),
+      { toolsRepo: "realadvisor/aura-tools" },
+    );
+  });
+
   it("records an error but does not throw when clone fails", async () => {
     getSettingMock.mockResolvedValue("acme/tools");
     const run = vi.fn(async (command: string, _options?: unknown) => {
-      if (command.includes("rev-parse")) {
-        return commandResult({ stdout: "AURA_REPO_MISSING\n" });
+      if (command.startsWith("if [ -f")) {
+        return commandResult({ stdout: "AURA_TOOLS_MISSING\n" });
       }
       if (command.startsWith("git clone")) {
         return commandResult({ exitCode: 128, stderr: "repository not found" });
@@ -627,11 +802,11 @@ describe("bootstrapToolsRepo", () => {
     });
 
     await expect(
-      bootstrapToolsRepo({ commands: { run } }, { GITHUB_TOKEN: "token" }),
+      ensureAuraTools(makeSandbox(run), { GITHUB_TOKEN: "token" }),
     ).resolves.toBeUndefined();
 
     expect(recordErrorMock).toHaveBeenCalledWith(
-      "sandbox.bootstrapToolsRepo",
+      "sandbox.ensureAuraTools",
       expect.any(Error),
       expect.objectContaining({
         toolsRepo: "acme/tools",
@@ -650,12 +825,12 @@ describe("bootstrapToolsRepo", () => {
     });
 
     await expect(
-      bootstrapToolsRepo({ commands: { run } }, { GITHUB_TOKEN: "token" }),
+      ensureAuraTools(makeSandbox(run), { GITHUB_TOKEN: "token" }),
     ).resolves.toBeUndefined();
 
     expect(run.mock.calls.map(([command]) => command)).toEqual([repoProbe]);
     expect(recordErrorMock).toHaveBeenCalledWith(
-      "sandbox.bootstrapToolsRepo",
+      "sandbox.ensureAuraTools",
       expect.objectContaining({ message: "sandbox connection lost" }),
       { toolsRepo: "acme/tools", checkoutPath },
     );
