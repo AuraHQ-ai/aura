@@ -163,7 +163,6 @@ export function createCursorAgentTools(context?: ScheduleContext) {
             autoCreatePr: true,
             webhookUrl,
             webhookSecret: webhookSecret || undefined,
-            model,
           });
 
           const trackingContent = [

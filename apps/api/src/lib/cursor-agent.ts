@@ -36,12 +36,6 @@ export interface LaunchCursorAgentParams {
   webhookUrl?: string;
   /** Must be at least 32 characters if provided */
   webhookSecret?: string;
-  /**
-   * Cursor model id (e.g. "claude-sonnet-4.5"). Omitted/empty means Cursor's
-   * auto-selection — the API rejects `model: ""` and `model: "auto"`, so those
-   * values are never sent (#1031).
-   */
-  model?: string;
 }
 
 export interface CursorAgentResponse {
