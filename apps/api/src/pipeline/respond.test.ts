@@ -592,7 +592,10 @@ describe("generateResponse Slack stream handling", () => {
 
     await vi.advanceTimersByTimeAsync(75_000);
 
-    expect(slackClient.chatStream).toHaveBeenCalledTimes(2);
+    // Issue #1012: the continuation stream is NOT opened at split time — the
+    // old stream is tombstoned + stopped, and the fresh one only comes into
+    // existence when there is real content for it.
+    expect(slackClient.chatStream).toHaveBeenCalledTimes(1);
     expect(firstStream.append).toHaveBeenCalledWith({
       chunks: expect.arrayContaining([
         expect.objectContaining({
@@ -615,6 +618,9 @@ describe("generateResponse Slack stream handling", () => {
       raw: "Done.",
       alreadyPosted: true,
     });
+    // The tool result is the first real content after the split — it lazily
+    // created the continuation stream.
+    expect(slackClient.chatStream).toHaveBeenCalledTimes(2);
     expect(secondStream.append).toHaveBeenCalledWith({
       chunks: [expect.objectContaining({
         type: "task_update",
@@ -1476,7 +1482,9 @@ describe("generateResponse Slack stream handling", () => {
     const responsePromise = generateResponse(baseOptions(slackClient));
     await vi.advanceTimersByTimeAsync(0);
     await vi.advanceTimersByTimeAsync(75_000);
-    expect(slackClient.chatStream).toHaveBeenCalledTimes(2);
+    // Issue #1012: the continuation stream is deferred until real content
+    // arrives — at split time only the original stream exists.
+    expect(slackClient.chatStream).toHaveBeenCalledTimes(1);
 
     finishTool.resolve();
     await vi.advanceTimersByTimeAsync(0);
@@ -1484,6 +1492,7 @@ describe("generateResponse Slack stream handling", () => {
       raw: "Starting the job.\n",
       alreadyPosted: true,
     });
+    expect(slackClient.chatStream).toHaveBeenCalledTimes(2);
 
     const logErrorMock = vi.mocked(logError);
     const continuationLogs = logErrorMock.mock.calls.filter(
@@ -1588,12 +1597,17 @@ describe("generateResponse Slack stream handling", () => {
         segmentIndex: 0,
       },
     });
-    expect(stream.stop).toHaveBeenCalledWith({
-      chunks: [expect.objectContaining({
-        type: "markdown_text",
+    // Issue #1012: the model never produced content, so no stream was ever
+    // opened — there is no bubble to tombstone. The abort marker is posted
+    // as a regular message instead.
+    expect(slackClient.chatStream).not.toHaveBeenCalled();
+    expect(stream.stop).not.toHaveBeenCalled();
+    expect(slackClient.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "C123",
         text: expect.stringContaining("[stream aborted: inactivity]"),
-      })],
-    });
+      }),
+    );
   });
 });
 
@@ -1896,5 +1910,282 @@ describe("generateResponse turn markers (stream-death watchdog, issue #1109)", (
 
     expect(turnMarkerMocks.startTurnMarker).not.toHaveBeenCalled();
     expect(turnMarkerMocks.finishTurnMarker).not.toHaveBeenCalled();
+  });
+});
+
+describe("generateResponse duplicate final message suppression (issue #1343)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    toolStateMocks.detachedSuspendState = undefined;
+    invocationLockMocks.isInvocationCurrent.mockResolvedValue(true);
+    invocationLockMocks.getSupersedeReason.mockResolvedValue("newer_message");
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const postedMessage =
+    "Numbers are internally consistent: 26 agencies with ranking data, 14 with a paid " +
+    "subscription, and the ranking rule only counts agencies with 3+ listings.";
+  const duplicateFinalText =
+    "*Posted in-thread.* Numbers are internally consistent — 26 agencies with ranking data, " +
+    "14 with a paid subscription; the ranking rule only counts agencies with 3+ listings.";
+
+  function sameThreadPostTurn(finalText: string) {
+    return (async function* () {
+      yield {
+        type: "tool-call",
+        toolCallId: "call-post-1",
+        toolName: "send_thread_reply",
+        input: {
+          channel: "C123",
+          thread_ts: "1710000000.000000",
+          message: postedMessage,
+        },
+      };
+      yield {
+        type: "tool-result",
+        toolCallId: "call-post-1",
+        toolName: "send_thread_reply",
+        output: { ok: true, message: "Reply sent in thread in #bugs", timestamp: "1710000009.000000" },
+      };
+      yield { type: "text-delta", text: finalText };
+    })();
+  }
+
+  it("suppresses a final message that duplicates a send_thread_reply into the same thread", async () => {
+    const streamer = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([streamer]);
+
+    mockAgentStream(sameThreadPostTurn(duplicateFinalText));
+
+    const result = await generateResponse(baseOptions(slackClient));
+    expect(result.alreadyPosted).toBe(true);
+    // The raw trace still contains what the model said…
+    expect(result.raw).toBe(duplicateFinalText);
+
+    // …but the duplicate never reached the Slack stream, and nothing was
+    // posted as a fallback either.
+    const appendedPayloads = streamer.append.mock.calls
+      .map(([payload]) => JSON.stringify(payload))
+      .join("\n");
+    expect(appendedPayloads).not.toContain("Posted in-thread");
+    expect(slackClient.chat.postMessage).not.toHaveBeenCalled();
+
+    expect(logError).toHaveBeenCalledWith(expect.objectContaining({
+      errorName: "DuplicateFinalMessageSuppressed",
+      errorCode: "duplicate_final_message_suppressed",
+      channelId: "C123",
+    }));
+  });
+
+  it("still delivers a final message that does NOT duplicate the tool post", async () => {
+    const streamer = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([streamer]);
+
+    const distinctFinalText =
+      "I also opened issue #1344 to track the subscription mismatch and pinged the data " +
+      "team about backfilling the missing rows tomorrow morning.";
+    mockAgentStream(sameThreadPostTurn(distinctFinalText));
+
+    const result = await generateResponse(baseOptions(slackClient));
+    expect(result.raw).toBe(distinctFinalText);
+
+    const appendedPayloads = streamer.append.mock.calls
+      .map(([payload]) => JSON.stringify(payload))
+      .join("\n");
+    expect(appendedPayloads).toContain("opened issue #1344");
+    expect(streamer.stop).toHaveBeenCalledTimes(1);
+
+    const suppressionLogs = vi.mocked(logError).mock.calls.filter(
+      ([entry]) => entry.errorCode === "duplicate_final_message_suppressed",
+    );
+    expect(suppressionLogs).toHaveLength(0);
+  });
+
+  it("streams text immediately when the tool post targeted a different thread", async () => {
+    const streamer = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([streamer]);
+
+    mockAgentStream((async function* () {
+      yield {
+        type: "tool-call",
+        toolCallId: "call-post-2",
+        toolName: "send_thread_reply",
+        input: { channel: "C0OTHER99", thread_ts: "1700000000.000042", message: "elsewhere" },
+      };
+      yield {
+        type: "tool-result",
+        toolCallId: "call-post-2",
+        toolName: "send_thread_reply",
+        output: { ok: true, message: "Reply sent in thread in #other", timestamp: "1700000001.000000" },
+      };
+      yield { type: "text-delta", text: "Cross-posted the fix to #other as requested." };
+    })());
+
+    await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
+      raw: "Cross-posted the fix to #other as requested.",
+      alreadyPosted: true,
+    });
+
+    expect(streamer.append).toHaveBeenCalledWith({
+      chunks: [expect.objectContaining({
+        type: "markdown_text",
+        text: "Cross-posted the fix to #other as requested.",
+      })],
+    });
+  });
+
+  it("suppresses the duplicate on the headless postMessage fallback path too", async () => {
+    const slackClient = createSlackClient([]);
+
+    mockAgentStream(sameThreadPostTurn(duplicateFinalText));
+
+    const result = await generateResponse({
+      ...baseOptions(slackClient),
+      isHeadless: true,
+    });
+    expect(result.raw).toBe(duplicateFinalText);
+
+    // The only undelivered content was the duplicate — no fallback post.
+    expect(slackClient.chat.postMessage).not.toHaveBeenCalled();
+    expect(logError).toHaveBeenCalledWith(expect.objectContaining({
+      errorCode: "duplicate_final_message_suppressed",
+    }));
+  });
+});
+
+describe("generateResponse deferred stream creation (issue #1012)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    toolStateMocks.detachedSuspendState = undefined;
+    invocationLockMocks.isInvocationCurrent.mockResolvedValue(true);
+    invocationLockMocks.getSupersedeReason.mockResolvedValue("newer_message");
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("does not create the Slack stream before the first text delta", async () => {
+    const streamer = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([streamer]);
+
+    let chatStreamCallsBeforeFirstDelta = -1;
+    mockAgentStream((async function* () {
+      // Simulates the post-tool reasoning phase: generation has started but
+      // no content exists yet — there must be no stream (no empty bubble).
+      chatStreamCallsBeforeFirstDelta = slackClient.chatStream.mock.calls.length;
+      yield { type: "text-delta", text: "Here is the answer." };
+    })());
+
+    await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
+      raw: "Here is the answer.",
+      alreadyPosted: true,
+    });
+
+    expect(chatStreamCallsBeforeFirstDelta).toBe(0);
+    expect(slackClient.chatStream).toHaveBeenCalledTimes(1);
+    expect(streamer.append).toHaveBeenCalledWith({
+      chunks: [expect.objectContaining({
+        type: "markdown_text",
+        text: "Here is the answer.",
+      })],
+    });
+    expect(streamer.stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("never opens a stream (and never stops one) when the model produces no output", async () => {
+    const streamer = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([streamer]);
+
+    mockAgentStream((async function* () {})(), { text: "" });
+
+    await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
+      raw: "",
+      alreadyPosted: true,
+    });
+
+    expect(slackClient.chatStream).not.toHaveBeenCalled();
+    expect(streamer.append).not.toHaveBeenCalled();
+    expect(streamer.stop).not.toHaveBeenCalled();
+    expect(slackClient.chat.postMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not let a keepalive open the continuation stream after a long-tool split", async () => {
+    vi.useFakeTimers();
+    const finishTool = deferred<void>();
+    const firstStream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const secondStream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([firstStream, secondStream]);
+
+    mockAgentStream((async function* () {
+      yield {
+        type: "tool-call",
+        toolCallId: "call-1",
+        toolName: "run_command",
+        input: { command: "sleep 300", timeout_seconds: 300 },
+      };
+      await finishTool.promise;
+      yield {
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "run_command",
+        output: { ok: true, exit_code: 0, stdout: "", stderr: "" },
+      };
+      yield { type: "text-delta", text: "Done." };
+    })());
+
+    const responsePromise = generateResponse(baseOptions(slackClient));
+    await vi.advanceTimersByTimeAsync(0);
+    // The tool task card opened the first stream.
+    expect(slackClient.chatStream).toHaveBeenCalledTimes(1);
+
+    // Past LONG_TOOL_SPLIT_MS the stream splits; the tool is still running,
+    // so keepalive ticks keep firing — none of them may open the new stream
+    // (that empty bubble was the ghost-Aura effect).
+    await vi.advanceTimersByTimeAsync(75_000);
+    expect(slackClient.chatStream).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(slackClient.chatStream).toHaveBeenCalledTimes(1);
+    expect(secondStream.append).not.toHaveBeenCalled();
+
+    finishTool.resolve();
+    await vi.advanceTimersByTimeAsync(0);
+    await expect(responsePromise).resolves.toMatchObject({
+      raw: "Done.",
+      alreadyPosted: true,
+    });
+    // Real content (the tool result card) finally created the second stream.
+    expect(slackClient.chatStream).toHaveBeenCalledTimes(2);
+    expect(secondStream.append).toHaveBeenCalledWith({
+      chunks: [expect.objectContaining({
+        type: "task_update",
+        id: "call-1",
+        status: "complete",
+      })],
+    });
   });
 });

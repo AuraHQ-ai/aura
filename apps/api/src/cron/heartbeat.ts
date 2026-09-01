@@ -14,6 +14,7 @@ import { sendJobOpsNotice } from "./job-notifications.js";
 import { sweepStaleTurnMarkers } from "./turn-watchdog.js";
 import { sweepStuckJobs } from "./job-watchdog.js";
 import { sweepStaleDetachedCommands } from "./detached-command-watchdog.js";
+import { scanJobFailureHealth } from "./job-health.js";
 
 /**
  * Max jobs dispatched per heartbeat sweep.
@@ -481,6 +482,8 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
   let staleDetachedCommandsDetected = 0;
   let staleDetachedCommandsFailed = 0;
   let staleDetachedJobExecutionsFailed = 0;
+  let jobHealthScanned = 0;
+  let jobHealthAlerted = 0;
 
   try {
     const now = new Date();
@@ -586,8 +589,14 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
     stuckJobsRequeued = stuckJobsResult.requeued;
 
     // ── 5. Recover jobs stuck in "running" ──────────────────────────────
+    // Webhook-suspended jobs (issue #1326) are legitimately parked, not hung:
+    // while jobs.suspendedUntil is in the future the row is excluded from
+    // both stale branches. The shield expires on its own (longer timeout) or
+    // is cleared early by the detached-command watchdog when the command's
+    // completion webhook is declared lost.
 
     const staleRunningCutoff = new Date(now.getTime() - STALE_RUNNING_THRESHOLD_MS);
+    const notSuspended = or(isNull(jobs.suspendedUntil), lte(jobs.suspendedUntil, now));
     const staleRunning = await db
       .update(jobs)
       .set({
@@ -607,6 +616,7 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
         // classifies this run as trigger "recovery" (issue #1238) so it does
         // not consume the min_interval/cooldown budget.
         executeAt: now,
+        suspendedUntil: null,
         updatedAt: new Date(),
       })
       .where(
@@ -614,6 +624,7 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
           eq(jobs.status, "running"),
           lt(jobs.updatedAt, staleRunningCutoff),
           lt(jobs.retries, MAX_RETRIES),
+          notSuspended,
         ),
       )
       .returning({ id: jobs.id, name: jobs.name, workspaceId: jobs.workspaceId });
@@ -626,6 +637,7 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
           eq(jobs.status, "running"),
           lt(jobs.updatedAt, staleRunningCutoff),
           gte(jobs.retries, MAX_RETRIES),
+          notSuspended,
         ),
       );
 
@@ -643,6 +655,7 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
               status: "pending",
               retries: 0,
               executeAt,
+              suspendedUntil: null,
               updatedAt: new Date(),
             })
             .where(eq(jobs.id, job.id));
@@ -795,6 +808,14 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
     staleDetachedCommandsFailed = detachedWatchdogResult.failed;
     staleDetachedJobExecutionsFailed = detachedWatchdogResult.jobExecutionsFailed;
 
+    // ── 7a. Job failure health scan ──────────────────────────────────────
+    // (issue #762 — see cron/job-health.ts; never throws). Runs after the
+    // watchdogs so failures they just wrote are visible to the same sweep.
+
+    const jobHealthResult = await scanJobFailureHealth(now);
+    jobHealthScanned = jobHealthResult.scanned;
+    jobHealthAlerted = jobHealthResult.alerted;
+
     // ── 8. Fan-out job dispatch ──────────────────────────────────────────
     // Each due job is dispatched to its own /api/execute-now invocation so it
     // runs with a fresh Vercel maxDuration budget.  On dispatch failure the
@@ -885,6 +906,8 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       staleDetachedCommandsDetected,
       staleDetachedCommandsFailed,
       staleDetachedJobExecutionsFailed,
+      jobHealthScanned,
+      jobHealthAlerted,
     });
 
     return c.json({
@@ -908,6 +931,8 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       staleDetachedCommandsDetected,
       staleDetachedCommandsFailed,
       staleDetachedJobExecutionsFailed,
+      jobHealthScanned,
+      jobHealthAlerted,
       duration,
     });
   } catch (error: any) {
