@@ -78,12 +78,14 @@ vi.mock("./prepare-step.js", () => ({
   },
 }));
 
-vi.mock("../lib/invocation-lock.js", () => ({
-  isInvocationCurrent: invocationLockMocks.isInvocationCurrent,
-  getSupersedeReason: invocationLockMocks.getSupersedeReason,
-  interruptionNote: (reason: string) =>
-    reason === "stopped" ? "_[stopped]_" : "_[interrupted — new message received]_",
-}));
+vi.mock("../lib/invocation-lock.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../lib/invocation-lock.js")>();
+  return {
+    ...actual,
+    isInvocationCurrent: invocationLockMocks.isInvocationCurrent,
+    getSupersedeReason: invocationLockMocks.getSupersedeReason,
+  };
+});
 
 import { generateResponse } from "./respond.js";
 import { logError } from "../lib/error-logger.js";
@@ -1297,6 +1299,148 @@ describe("generateResponse Slack stream handling", () => {
         toolCallCount: 1,
       }),
     });
+
+    // newer_message has no native Slack indicator — the markdown note is
+    // still appended on the stream close (issue #1355 removes it only for
+    // "stopped", where Slack renders its own grey "(stopped)").
+    expect(stream.stop).toHaveBeenCalledWith(expect.objectContaining({
+      chunks: expect.arrayContaining([
+        expect.objectContaining({
+          type: "markdown_text",
+          text: expect.stringContaining("_[interrupted — new message received]_"),
+        }),
+      ]),
+    }));
+  });
+
+  it("skips the postMessage fallback stub when Slack already halted the bubble with its native stopped indicator (issue #1355)", async () => {
+    const streamer = {
+      // Slack refuses every append once the user pressed Stop.
+      append: vi.fn().mockRejectedValue(Object.assign(
+        new Error("An API error occurred: stopped_by_user"),
+        { data: { ok: false, error: "stopped_by_user" } },
+      )),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([streamer]);
+
+    mockAgentStream((async function* () {
+      yield { type: "text-delta", text: "Partial answer the user stopped." };
+    })());
+
+    const result = await generateResponse(baseOptions(slackClient));
+
+    // The halted bubble carries Slack's native "(stopped)" indicator
+    // (ai_context.result_status = "stopped_by_user") — no `_[stopped]_`
+    // stub, no "nothing to say" junk, no re-post of the stopped answer.
+    expect(slackClient.chat.postMessage).not.toHaveBeenCalled();
+    expect(JSON.stringify(streamer.stop.mock.calls)).not.toContain("_[stopped]_");
+    expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
+      "Stop press rendered natively by Slack — skipping fallback delivery",
+      expect.objectContaining({ channelId: "C123" }),
+    );
+    expect(result.alreadyPosted).toBe(true);
+  });
+
+  it("aborts a long-running tool within one toolKeepAlive tick after Stop without duplicating Slack's native stopped indicator (issue #1355)", async () => {
+    vi.useFakeTimers();
+    try {
+      // The lock is already displaced (stop:* sentinel) by the time the
+      // keepalive tick re-checks it mid-tool.
+      invocationLockMocks.isInvocationCurrent.mockResolvedValue(false);
+      invocationLockMocks.getSupersedeReason.mockResolvedValue("stopped");
+
+      const streamer = {
+        append: vi.fn().mockResolvedValue(undefined),
+        stop: vi.fn().mockResolvedValue(undefined),
+      };
+      const slackClient = createSlackClient([streamer]);
+
+      // A model call that starts a tool and then hangs until the abort
+      // signal fires — simulating a 120s sandbox command in flight.
+      const streamMock = vi.fn().mockImplementation(async (callOptions: any) =>
+        createAgentStreamResult((async function* () {
+          yield { type: "text-delta", text: "Kicking off a slow command." };
+          yield {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "run_command",
+            input: { command: "sleep 120" },
+          };
+          await new Promise<never>((_, reject) => {
+            callOptions.abortSignal.addEventListener("abort", () =>
+              reject(Object.assign(new Error("This operation was aborted"), {
+                name: "AbortError",
+              })),
+            );
+          });
+        })()),
+      );
+      agentMocks.createInteractiveAgent.mockResolvedValue({
+        agent: { stream: streamMock },
+        tools: {
+          run_command: {
+            slack: {
+              status: "Running a command in the sandbox...",
+              detail: (input: any) => input.command,
+            },
+          },
+        },
+        modelId: "test-model",
+        getStepModelIds: () => ["test-model"],
+      });
+
+      const responsePromise = generateResponse({
+        ...baseOptions(slackClient),
+        invocationId: "inv-live",
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      // No mid-tool check before the keepalive fires.
+      expect(invocationLockMocks.isInvocationCurrent).not.toHaveBeenCalled();
+
+      // One 60s toolKeepAlive tick: lock re-checked, abort fired, turn unwinds.
+      await vi.advanceTimersByTimeAsync(60_000);
+
+      const result = await responsePromise;
+      expect(result.interrupted).toBe(true);
+      // raw is the internal record of the turn — the marker stays there…
+      expect(result.raw.endsWith("_[stopped]_")).toBe(true);
+      expect(invocationLockMocks.isInvocationCurrent).toHaveBeenCalledWith(
+        "C123",
+        "1710000000.000000",
+        "inv-live",
+      );
+
+      // The abort resolved to the superseded outcome — never a raw abort
+      // tombstone or a generic stream error.
+      const supersededLogs = vi.mocked(logError).mock.calls.filter(
+        ([entry]) => entry.errorCode === "superseded_while_streaming",
+      );
+      expect(supersededLogs).toHaveLength(1);
+      expect(supersededLogs[0]?.[0]).toMatchObject({
+        context: expect.objectContaining({ abortReason: "superseded" }),
+      });
+      expect(vi.mocked(logError).mock.calls.some(
+        ([entry]) => entry.errorCode === "stream_aborted_by_watchdog",
+      )).toBe(false);
+
+      // …but NOTHING delivered to Slack carries our own `_[stopped]_`: Slack
+      // renders the native grey "(stopped)" indicator on the halted bubble
+      // itself, and appending ours would show the marker twice.
+      const deliveredPayloads = [
+        ...streamer.append.mock.calls,
+        ...streamer.stop.mock.calls,
+        ...slackClient.chat.postMessage.mock.calls,
+      ].flat();
+      expect(JSON.stringify(deliveredPayloads)).not.toContain("_[stopped]_");
+      // The stream was still closed.
+      expect(streamer.stop).toHaveBeenCalled();
+    } finally {
+      invocationLockMocks.isInvocationCurrent.mockReset();
+      invocationLockMocks.isInvocationCurrent.mockResolvedValue(true);
+      invocationLockMocks.getSupersedeReason.mockReset();
+      invocationLockMocks.getSupersedeReason.mockResolvedValue("newer_message");
+    }
   });
 
   it("logs empty completions for tool-error-only continuation segments", async () => {

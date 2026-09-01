@@ -759,6 +759,45 @@ export async function generateResponse(
     )
   );
 
+  // ── Mid-tool cancellation (issue #1355) ─────────────────────────────
+  // prepareStep checks the lock once per model call, so a Stop press during
+  // a long tool used to burn until the tool returned. The toolKeepAlive tick
+  // (armed while a tool is pending) re-checks the lock here and aborts. The
+  // abort is normalized back to InvocationSupersededError in the catch below
+  // so it takes the same superseded unwind (`_[stopped]_`) as the
+  // prepareStep path, never a raw AbortError.
+  let supersedeCheckInFlight = false;
+  let midToolSupersedeAbort = false;
+  async function abortIfSuperseded(): Promise<void> {
+    // Same guard as prepareStep: only turns that actually claimed the lock
+    // participate (headless jobs get a random fallback invocationId and must
+    // never be aborted by a stale lock row from an interactive turn).
+    if (!options.invocationId || !threadTs) return;
+    if (supersedeCheckInFlight || abortController.signal.aborted) return;
+    supersedeCheckInFlight = true;
+    try {
+      const current = await isInvocationCurrent(channelId, threadTs, invocationId);
+      if (!current && !abortController.signal.aborted) {
+        logger.info("Invocation superseded mid-tool — aborting", {
+          invocationId,
+          channelId,
+          pendingToolCount: pendingToolInputs.size,
+        });
+        supersededDuringStream = true;
+        midToolSupersedeAbort = true;
+        lastAbortReason = "superseded";
+        abortController.abort("superseded");
+      }
+    } catch (err: any) {
+      logger.warn("Mid-tool invocation check failed, assuming still current", {
+        invocationId,
+        error: err?.message,
+      });
+    } finally {
+      supersedeCheckInFlight = false;
+    }
+  }
+
   const baseStreamCallOptions: Record<string, any> = {
     abortSignal: abortController.signal,
     onError: ({ error }: { error: unknown }) => {
@@ -1412,9 +1451,14 @@ export async function generateResponse(
           optimisticToolCards.delete(chunk.toolCallId);
           startLongToolSplitTimer();
 
-          // Keep resetting inactivity timer during long tool execution
+          // Keep resetting inactivity timer during long tool execution;
+          // each tick also re-checks the invocation lock so a Stop press
+          // mid-tool aborts promptly (issue #1355).
           if (toolKeepAlive) clearInterval(toolKeepAlive);
-          toolKeepAlive = setInterval(() => resetTimer(), 60_000);
+          toolKeepAlive = setInterval(() => {
+            resetTimer();
+            void abortIfSuperseded();
+          }, 60_000);
 
           // Keep Slack stream alive during long tool execution (~30s idle timeout)
           if (!streamingFailed && streamKeepAlive == null) {
@@ -1732,8 +1776,16 @@ export async function generateResponse(
       // already been streamed (pure tool-call tail), the unsent buffer is
       // empty and the fallback would post an effectively empty block list.
       // Post a short stub instead so the user knows the turn was cut short.
+      //
+      // Stop press (issue #1355): when a Slack streaming bubble exists,
+      // Slack halted it and renders its own native grey "(stopped)"
+      // indicator (ai_context.result_status = "stopped_by_user") — posting
+      // our `_[stopped]_` stub as a NEW message would show the marker twice.
+      // The stub survives only when streaming never happened (no bubble, no
+      // native indicator); with a live bubble nothing more is delivered.
+      const stopRenderedNativelyBySlack = stoppedByUser && streamer != null;
       const interruptedStubText = stoppedByUser
-        ? "_[stopped]_"
+        ? stopRenderedNativelyBySlack ? null : "_[stopped]_"
         : !emptyCompletionDetected && !formattedUnsent && toolCallRecords.length > 0
           ? `_Turn interrupted after ${toolCallRecords.length} tool call${toolCallRecords.length === 1 ? "" : "s"} — rerun?_`
           : null;
@@ -1771,67 +1823,75 @@ export async function generateResponse(
         ? emptyCompletionFallbackText
         : interruptedStubText ?? (formattedUnsent || "_I processed your request but had nothing to say._");
 
-      // Issue #1342: skip the fallback post entirely when a newer message has
-      // taken over the thread — unwind through the existing supersede path.
-      if (!(await isCurrentAtFinalDelivery("post_message_fallback"))) {
-        throw new InvocationSupersededError(invocationId);
-      }
-
-      try {
-        const fallbackResult = await safePostMessage(slackClient, {
-          channel: channelId,
-          text: fallbackText,
-          thread_ts: threadTs,
-          blocks,
-          ...(toolMeta && { metadata: toolMeta }),
-        });
-
-        if (!fallbackResult.ok) {
-          flushPendingMessageNotInStreamingStateError(false);
-          logger.warn("LLM response lost — channel does not support posting", {
-            channelId,
-            rawLength: finalText.length,
-            usage: { inputTokens, outputTokens, totalTokens },
-          });
-          logChannelTypeUnsupportedFallbackFailure("safePostMessage_returned_not_ok");
-        } else {
-          flushPendingMessageNotInStreamingStateError(true);
-          pendingChannelTypeUnsupportedFallback = null;
-          if (pendingNativeBlocks.length > 0) {
-            logger.info("NativeBlockDelivered", {
-              toolCallIds: pendingNativeBlockToolCallIds,
-              path: "post_message_fallback",
-            });
-            pendingNativeBlocks = [];
-            pendingNativeBlockToolCallIds = [];
-          }
-          logger.info(`LLM completed in ${llmMs}ms (fallback postMessage)`, {
-            rawLength: finalText.length,
-            channelId,
-            usage: { inputTokens, outputTokens, totalTokens },
-          });
-        }
-      } catch (fallbackErr: any) {
-        flushPendingMessageNotInStreamingStateError(false);
-        logger.error("Fallback safePostMessage also failed — posting plain text", {
+      if (stopRenderedNativelyBySlack) {
+        // Nothing left to deliver: the unsent buffer is suppressed on a Stop
+        // press and Slack's own indicator marks the halted bubble.
+        logger.info("Stop press rendered natively by Slack — skipping fallback delivery", {
           channelId,
-          error: fallbackErr?.message || String(fallbackErr),
-          slackError: fallbackErr?.data?.error,
         });
+      } else {
+        // Issue #1342: skip the fallback post entirely when a newer message has
+        // taken over the thread — unwind through the existing supersede path.
+        if (!(await isCurrentAtFinalDelivery("post_message_fallback"))) {
+          throw new InvocationSupersededError(invocationId);
+        }
+
         try {
-          await slackClient.chat.postMessage({
+          const fallbackResult = await safePostMessage(slackClient, {
             channel: channelId,
-            text: fallbackText || "I generated a response but couldn't deliver it. Please try again.",
+            text: fallbackText,
             thread_ts: threadTs,
+            blocks,
+            ...(toolMeta && { metadata: toolMeta }),
           });
-          pendingChannelTypeUnsupportedFallback = null;
-        } catch (plainPostErr: any) {
-          logChannelTypeUnsupportedFallbackFailure("plain_post_failed", plainPostErr);
-          logger.error("All message delivery paths failed", {
+
+          if (!fallbackResult.ok) {
+            flushPendingMessageNotInStreamingStateError(false);
+            logger.warn("LLM response lost — channel does not support posting", {
+              channelId,
+              rawLength: finalText.length,
+              usage: { inputTokens, outputTokens, totalTokens },
+            });
+            logChannelTypeUnsupportedFallbackFailure("safePostMessage_returned_not_ok");
+          } else {
+            flushPendingMessageNotInStreamingStateError(true);
+            pendingChannelTypeUnsupportedFallback = null;
+            if (pendingNativeBlocks.length > 0) {
+              logger.info("NativeBlockDelivered", {
+                toolCallIds: pendingNativeBlockToolCallIds,
+                path: "post_message_fallback",
+              });
+              pendingNativeBlocks = [];
+              pendingNativeBlockToolCallIds = [];
+            }
+            logger.info(`LLM completed in ${llmMs}ms (fallback postMessage)`, {
+              rawLength: finalText.length,
+              channelId,
+              usage: { inputTokens, outputTokens, totalTokens },
+            });
+          }
+        } catch (fallbackErr: any) {
+          flushPendingMessageNotInStreamingStateError(false);
+          logger.error("Fallback safePostMessage also failed — posting plain text", {
             channelId,
-            error: plainPostErr?.message || String(plainPostErr),
-            slackError: plainPostErr?.data?.error,
+            error: fallbackErr?.message || String(fallbackErr),
+            slackError: fallbackErr?.data?.error,
           });
+          try {
+            await slackClient.chat.postMessage({
+              channel: channelId,
+              text: fallbackText || "I generated a response but couldn't deliver it. Please try again.",
+              thread_ts: threadTs,
+            });
+            pendingChannelTypeUnsupportedFallback = null;
+          } catch (plainPostErr: any) {
+            logChannelTypeUnsupportedFallbackFailure("plain_post_failed", plainPostErr);
+            logger.error("All message delivery paths failed", {
+              channelId,
+              error: plainPostErr?.message || String(plainPostErr),
+              slackError: plainPostErr?.data?.error,
+            });
+          }
         }
       }
     } else {
@@ -2081,6 +2141,14 @@ export async function generateResponse(
     if (streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
     clearLongToolSplitTimer();
 
+    // A mid-tool supersede abort (issue #1355) surfaces from the SDK as an
+    // AbortError / AI_NoOutputGeneratedError, not as the error prepareStep
+    // throws at step boundaries. Normalize it so the superseded unwind below
+    // (and its `_[stopped]_` note) handles it instead of the abort tombstone.
+    if (midToolSupersedeAbort && !(error instanceof InvocationSupersededError)) {
+      error = new InvocationSupersededError(invocationId);
+    }
+
     if (error instanceof InvocationSupersededError) {
       logger.info("Stream interrupted — invocation superseded", {
         invocationId: error.invocationId,
@@ -2111,14 +2179,20 @@ export async function generateResponse(
       const interruptedNote = interruptionNote(supersedeReason);
       if (streamer && !streamingFailed) {
         try {
-          await streamer.stop({
-            chunks: [
-              ...buildOptimisticToolErrorChunks(
-                supersedeReason === "stopped" ? "Stopped by user" : "Interrupted by a newer message",
-              ),
-              toChunkMarkdownText(`\n\n${interruptedNote}`),
-            ],
-          });
+          // On a Stop press Slack renders its own native grey "(stopped)"
+          // indicator on the halted bubble (ai_context.result_status =
+          // "stopped_by_user") — appending our `_[stopped]_` too would show
+          // the marker twice (issue #1355). Only "newer_message" keeps the
+          // markdown note; Slack has no native indicator for that.
+          const closingChunks = [
+            ...buildOptimisticToolErrorChunks(
+              supersedeReason === "stopped" ? "Stopped by user" : "Interrupted by a newer message",
+            ),
+            ...(supersedeReason !== "stopped"
+              ? [toChunkMarkdownText(`\n\n${interruptedNote}`)]
+              : []),
+          ];
+          await streamer.stop(closingChunks.length > 0 ? { chunks: closingChunks } : undefined);
           optimisticToolCards.clear();
         } catch {
           // Stream may already be closed

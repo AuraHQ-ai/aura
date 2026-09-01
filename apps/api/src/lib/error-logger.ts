@@ -294,15 +294,21 @@ async function postToSlack(params: LogErrorParams): Promise<void> {
 /**
  * Fire-and-forget error logger. Writes to DB + posts to #aura-errors Slack
  * channel with in-memory rate limiting. Never throws.
+ *
+ * Returns a promise that settles when the DB write completes (it never
+ * rejects). Most callers can ignore it; serverless paths that need the row
+ * to be durable before the function freezes (e.g. the agent_session_stopped
+ * receipt inside waitUntil, issue #1355) should await it.
  */
-export function logError(params: LogErrorParams): void {
+export function logError(params: LogErrorParams): Promise<void> {
   const code = params.errorCode || params.errorName;
   const rateLimit = getRateLimit(code);
 
+  let write: Promise<void> = Promise.resolve();
   if (!rateLimit.limited) {
     recordWrite(code);
 
-    db.insert(errorEvents)
+    write = db.insert(errorEvents)
       .values({
         errorName: params.errorName,
         errorMessage: sanitizeErrorText(params.errorMessage),
@@ -313,7 +319,10 @@ export function logError(params: LogErrorParams): void {
         context: params.context,
         stackTrace: sanitizeErrorText(params.stackTrace),
       })
-      .catch(() => {});
+      .then(
+        () => undefined,
+        () => undefined,
+      );
   } else {
     recordDrop(code, rateLimit.reason);
   }
@@ -321,4 +330,6 @@ export function logError(params: LogErrorParams): void {
   if (!globalCircuitOpen) {
     postToSlack(params).catch(() => {});
   }
+
+  return write;
 }

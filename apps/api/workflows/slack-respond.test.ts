@@ -93,8 +93,16 @@ vi.mock("../src/lib/model-catalog.js", () => ({
   })),
 }));
 
-vi.mock("../src/lib/invocation-lock.js", () => ({
+const lockMocks = vi.hoisted(() => ({
   isInvocationCurrent: vi.fn(async () => true),
+  getSupersedeReason: vi.fn(async () => "newer_message"),
+}));
+
+vi.mock("../src/lib/invocation-lock.js", () => ({
+  isInvocationCurrent: lockMocks.isInvocationCurrent,
+  getSupersedeReason: lockMocks.getSupersedeReason,
+  interruptionNote: (reason: string) =>
+    reason === "stopped" ? "_[stopped]_" : "_[interrupted — new message received]_",
 }));
 
 vi.mock("../src/lib/tool.js", () => ({
@@ -375,5 +383,112 @@ describe("slackRespondWorkflow turn wall-clock budget (issue #1320)", () => {
     expect(dynamicContextOfCall(1)).not.toContain(
       TURN_HARD_DEADLINE_MESSAGE_WITH_CONTINUATION,
     );
+  });
+});
+
+describe("mid-tool cancellation via Stop (issue #1355)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    turnDeadlineMocks.resolveTurnDeadlines.mockReturnValue({
+      softDeadlineMs: 600_000,
+      hardDeadlineMs: 1_200_000,
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    // mockResolvedValue* persists across clearAllMocks — restore the defaults
+    // so later tests see a live lock again.
+    lockMocks.isInvocationCurrent.mockReset();
+    lockMocks.isInvocationCurrent.mockResolvedValue(true);
+    lockMocks.getSupersedeReason.mockReset();
+    lockMocks.getSupersedeReason.mockResolvedValue("newer_message");
+  });
+
+  /**
+   * Drive one mid-tool supersede: step-boundary lock check passes, a tool
+   * starts and hangs (simulating a 120s sandbox command), the keepalive tick
+   * discovers the displaced lock and aborts. Returns the workflow result and
+   * the markdown texts appended to the Slack stream.
+   */
+  async function runMidToolSupersede(reason: "stopped" | "newer_message") {
+    lockMocks.isInvocationCurrent
+      .mockResolvedValueOnce(true)
+      .mockResolvedValue(false);
+    lockMocks.getSupersedeReason.mockResolvedValue(reason);
+
+    aiMocks.streamText.mockImplementation((opts: any) => ({
+      stream: (async function* () {
+        yield {
+          type: "tool-call",
+          toolCallId: "tool-1",
+          toolName: "some_tool",
+          input: { command: "sleep 120" },
+        };
+        await new Promise<never>((_, reject) => {
+          opts.abortSignal.addEventListener("abort", () =>
+            reject(
+              Object.assign(new Error("This operation was aborted"), {
+                name: "AbortError",
+              }),
+            ),
+          );
+        });
+      })(),
+      response: Promise.resolve({ messages: [], modelId: "test-model" }),
+      finishReason: Promise.resolve("tool-calls"),
+      usage: Promise.resolve({ inputTokens: 0, outputTokens: 0, totalTokens: 0 }),
+    }));
+
+    const run = slackRespondWorkflow(buildInput());
+    // Let the step start, the tool-call land, and the stream bubble open.
+    await vi.advanceTimersByTimeAsync(0);
+    expect(lockMocks.isInvocationCurrent).toHaveBeenCalledTimes(1);
+
+    // One 20s keepalive tick: lock re-checked, abort fired, turn unwinds.
+    await vi.advanceTimersByTimeAsync(20_000);
+    const result = await run;
+
+    const appendedMarkdownTexts = (slackMocks.apiCall.mock.calls as any[][])
+      .filter(([method]) => method === "chat.appendStream")
+      .flatMap(([, params]) => params?.chunks ?? [])
+      .filter((chunk: any) => chunk.type === "markdown_text")
+      .map((chunk: any) => chunk.text as string);
+    return { result, appendedMarkdownTexts };
+  }
+
+  it("aborts within one keepalive tick on Stop WITHOUT duplicating Slack's native stopped indicator", async () => {
+    const { result, appendedMarkdownTexts } = await runMidToolSupersede("stopped");
+
+    expect(result).toEqual({ interrupted: true, text: "" });
+    expect(lockMocks.isInvocationCurrent).toHaveBeenCalledTimes(2);
+
+    // Slack renders its own grey "(stopped)" on the halted bubble
+    // (ai_context.result_status = "stopped_by_user") — we must NOT append
+    // our own marker on top of it.
+    expect(appendedMarkdownTexts.some((t) => t.includes("_[stopped]_"))).toBe(false);
+    // The stream is still closed cleanly.
+    expect(slackMocks.apiCall).toHaveBeenCalledWith(
+      "chat.stopStream",
+      expect.objectContaining({ ts: "111.222" }),
+    );
+
+    // Never surfaced as a step failure / model error.
+    expect(errorLoggerMocks.logError).not.toHaveBeenCalled();
+    // Not a completed turn: no background persistence.
+    expect(backgroundMocks.runBackgroundTasks).not.toHaveBeenCalled();
+  });
+
+  it("still appends the interrupted note when superseded by a newer message (no native indicator)", async () => {
+    const { result, appendedMarkdownTexts } = await runMidToolSupersede("newer_message");
+
+    expect(result).toEqual({ interrupted: true, text: "" });
+    expect(
+      appendedMarkdownTexts.some((t) =>
+        t.includes("_[interrupted — new message received]_"),
+      ),
+    ).toBe(true);
+    expect(appendedMarkdownTexts.some((t) => t.includes("_[stopped]_"))).toBe(false);
   });
 });
