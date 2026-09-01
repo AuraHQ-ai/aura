@@ -137,7 +137,7 @@ describe("trySetAgentSessionStatus", () => {
         threadTs: "1.2",
         status: "processing",
       }),
-    ).resolves.toBeUndefined();
+    ).resolves.toBe(false);
 
     // A bad payload / transient error must not switch the loading UX off for
     // the whole channel — that is what hid the status-enum regression.

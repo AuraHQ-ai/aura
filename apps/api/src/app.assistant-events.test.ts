@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => {
     stopInvocationMock: vi.fn(),
     trySetAgentSessionStatusMock: vi.fn(),
     runPipelineMock: vi.fn(),
+    logErrorMock: vi.fn(),
     dbInsertValuesMock,
     dbInsertMock: vi.fn(() => ({ values: dbInsertValuesMock })),
     waitUntilPromises: [] as Array<Promise<unknown>>,
@@ -146,6 +147,10 @@ vi.mock("./lib/metrics.js", () => ({
   recordError: mocks.recordErrorMock,
 }));
 
+vi.mock("./lib/error-logger.js", () => ({
+  logError: mocks.logErrorMock,
+}));
+
 vi.mock("./lib/slack-messaging.js", () => ({
   safePostMessage: vi.fn(),
 }));
@@ -184,7 +189,10 @@ function slackHeaders(rawBody: string): Record<string, string> {
   };
 }
 
-async function postSlackEvent(event: Record<string, unknown>) {
+async function postSlackEvent(
+  event: Record<string, unknown>,
+  extraHeaders: Record<string, string> = {},
+) {
   const rawBody = JSON.stringify({
     type: "event_callback",
     team_id: "T123",
@@ -192,7 +200,7 @@ async function postSlackEvent(event: Record<string, unknown>) {
   });
   const response = await app.request("/api/slack/events", {
     method: "POST",
-    headers: slackHeaders(rawBody),
+    headers: { ...slackHeaders(rawBody), ...extraHeaders },
     body: rawBody,
   });
   await Promise.all(mocks.waitUntilPromises);
@@ -284,7 +292,8 @@ describe("agent_session_stopped (Stop button)", () => {
       displaced: true,
       stopId: "stop:11111111-2222-3333-4444-555555555555",
     });
-    mocks.trySetAgentSessionStatusMock.mockResolvedValue(undefined);
+    mocks.trySetAgentSessionStatusMock.mockResolvedValue(true);
+    mocks.logErrorMock.mockResolvedValue(undefined);
   });
 
   it("stops the running invocation, clears the session status, and never hits the pipeline", async () => {
@@ -314,6 +323,34 @@ describe("agent_session_stopped (Stop button)", () => {
     expect(mocks.recordErrorMock).not.toHaveBeenCalled();
   });
 
+  it("writes a durable receipt to error_events on the success path (issue #1355)", async () => {
+    const response = await postSlackEvent({
+      type: "agent_session_stopped",
+      channel: "D0AFEC7BEMP",
+      thread_ts: "1787785660.512159",
+      event_ts: "1787785700.000100",
+      user: "U0678NQJ2",
+      streaming_message_ts: ["1787785661.000200"],
+    });
+
+    expect(response.status).toBe(200);
+    expect(mocks.logErrorMock).toHaveBeenCalledExactlyOnceWith({
+      errorName: "AgentSessionStopped",
+      errorMessage: "agent_session_stopped receipt (displaced=true)",
+      errorCode: "agent_session_stopped_receipt",
+      channelId: "D0AFEC7BEMP",
+      userId: "U0678NQJ2",
+      context: {
+        threadTs: "1787785660.512159",
+        eventTs: "1787785700.000100",
+        streamingMessageTs: ["1787785661.000200"],
+        displaced: true,
+        statusCleared: true,
+        stopFailed: false,
+      },
+    });
+  });
+
   it("writes exactly one stop receipt with the stop's channel/thread/user/displaced/stopId", async () => {
     const response = await postSlackEvent({
       type: "agent_session_stopped",
@@ -337,6 +374,29 @@ describe("agent_session_stopped (Stop button)", () => {
       stopId: "stop:11111111-2222-3333-4444-555555555555",
     });
     expect(mocks.recordErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("writes a receipt with displaced=false when no live invocation was displaced", async () => {
+    mocks.stopInvocationMock.mockResolvedValueOnce({
+      displaced: false,
+      stopId: "stop:11111111-2222-3333-4444-555555555555",
+    });
+
+    await postSlackEvent({
+      type: "agent_session_stopped",
+      channel: "D0AFEC7BEMP",
+      thread_ts: "1787785660.512159",
+      event_ts: "1787785700.000100",
+      user: "U0678NQJ2",
+    });
+
+    expect(mocks.logErrorMock).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        errorName: "AgentSessionStopped",
+        errorCode: "agent_session_stopped_receipt",
+        context: expect.objectContaining({ displaced: false, stopFailed: false }),
+      }),
+    );
   });
 
   it("a receipt-insert failure still returns 200 and still stops the turn", async () => {
@@ -374,8 +434,9 @@ describe("agent_session_stopped (Stop button)", () => {
     );
   });
 
-  it("still clears the session status when stopping the lock fails", async () => {
+  it("still clears the session status and writes a receipt when stopping the lock fails", async () => {
     mocks.stopInvocationMock.mockRejectedValueOnce(new Error("db down"));
+    mocks.trySetAgentSessionStatusMock.mockResolvedValueOnce(false);
 
     const response = await postSlackEvent({
       type: "agent_session_stopped",
@@ -394,6 +455,19 @@ describe("agent_session_stopped (Stop button)", () => {
     expect(mocks.trySetAgentSessionStatusMock).toHaveBeenCalledWith(
       expect.objectContaining({ status: "active" }),
     );
+    // Failure path still leaves a durable, queryable receipt.
+    expect(mocks.logErrorMock).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        errorName: "AgentSessionStopped",
+        errorMessage: expect.stringContaining("stopInvocation failed: db down"),
+        errorCode: "agent_session_stopped_receipt",
+        context: expect.objectContaining({
+          displaced: null,
+          statusCleared: false,
+          stopFailed: true,
+        }),
+      }),
+    );
   });
 
   it("acks and does nothing without channel/thread_ts", async () => {
@@ -402,5 +476,59 @@ describe("agent_session_stopped (Stop button)", () => {
     expect(mocks.stopInvocationMock).not.toHaveBeenCalled();
     expect(mocks.trySetAgentSessionStatusMock).not.toHaveBeenCalled();
     expect(mocks.runPipelineMock).not.toHaveBeenCalled();
+    expect(mocks.logErrorMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("Slack retry middleware (issue #1355)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.waitUntilPromises.length = 0;
+    mocks.logErrorMock.mockResolvedValue(undefined);
+  });
+
+  it("acks a retried agent_session_stopped without processing but leaves a durable trace", async () => {
+    const response = await postSlackEvent(
+      {
+        type: "agent_session_stopped",
+        channel: "D0AFEC7BEMP",
+        thread_ts: "1787785660.512159",
+        event_ts: "1787785700.000100",
+        user: "U0678NQJ2",
+      },
+      { "x-slack-retry-num": "1", "x-slack-retry-reason": "http_timeout" },
+    );
+
+    expect(response.status).toBe(200);
+    // Retry semantics unchanged: nothing is processed…
+    expect(mocks.stopInvocationMock).not.toHaveBeenCalled();
+    expect(mocks.trySetAgentSessionStatusMock).not.toHaveBeenCalled();
+    expect(mocks.runPipelineMock).not.toHaveBeenCalled();
+    // …but the dropped stop retry is durably visible.
+    expect(mocks.logErrorMock).toHaveBeenCalledExactlyOnceWith({
+      errorName: "AgentSessionStopped",
+      errorMessage:
+        "agent_session_stopped retry acked without processing (retry 1: http_timeout)",
+      errorCode: "agent_session_stopped_retry_ack",
+      channelId: "D0AFEC7BEMP",
+      userId: "U0678NQJ2",
+      context: {
+        threadTs: "1787785660.512159",
+        eventTs: "1787785700.000100",
+        retryNum: "1",
+        retryReason: "http_timeout",
+      },
+    });
+  });
+
+  it("acks retried non-stop events without processing and without a durable row", async () => {
+    const response = await postSlackEvent(
+      { type: "message", channel: "C123", user: "U123", text: "hi" },
+      { "x-slack-retry-num": "2", "x-slack-retry-reason": "http_error" },
+    );
+
+    expect(response.status).toBe(200);
+    expect(mocks.runPipelineMock).not.toHaveBeenCalled();
+    expect(mocks.logErrorMock).not.toHaveBeenCalled();
   });
 });

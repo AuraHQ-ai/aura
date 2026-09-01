@@ -536,13 +536,49 @@ async function runSlackAgentStep(
   };
   resetTimer();
 
+  // ── Mid-tool cancellation (issue #1355) ─────────────────────────────
+  // The staleness check above runs once per model call, so a Stop press
+  // during a 90s+ tool used to burn until the tool returned. While tools
+  // are pending, the keepalive tick below re-checks the lock and aborts
+  // promptly. `supersededMidTool` routes the abort to the SAME superseded
+  // outcome as the step-boundary check — never a raw AbortError or
+  // AI_NoOutputGeneratedError.
+  let supersededMidTool = false;
+  let supersedeCheckInFlight = false;
+  const abortIfSuperseded = async (): Promise<void> => {
+    if (supersedeCheckInFlight || abortController.signal.aborted) return;
+    supersedeCheckInFlight = true;
+    try {
+      const current = await isInvocationCurrent(
+        input.channelId,
+        input.threadTs,
+        input.invocationId,
+      );
+      if (!current && !abortController.signal.aborted) {
+        supersededMidTool = true;
+        logger.info("slackRespondWorkflow: invocation superseded mid-tool — aborting", {
+          channelId: input.channelId,
+          stepIndex,
+          pendingToolCount: pendingTools.size,
+        });
+        abortController.abort("superseded");
+      }
+    } catch {
+      // assume still current on check failure
+    } finally {
+      supersedeCheckInFlight = false;
+    }
+  };
+
   // Keep the Slack stream session alive during long tool executions.
   const pendingTools = new Set<string>();
   const keepAlive = setInterval(() => {
-    if (pendingTools.size > 0 && !state.streamingFailed && state.streamTs) {
+    if (pendingTools.size === 0) return;
+    if (!state.streamingFailed && state.streamTs) {
       void append([{ type: "markdown_text", text: " " }]);
       resetTimer();
     }
+    void abortIfSuperseded();
   }, 20_000);
 
   // Context compaction (issue #1328), mirroring prepare-step.ts: past the
@@ -712,6 +748,14 @@ async function runSlackAgentStep(
 
     await flushText(true);
 
+    // Mid-tool Stop (issue #1355): the abort may end the stream gracefully
+    // (no throw) with the SDK surfacing an AbortError via onError. Resolve
+    // it to the superseded outcome BEFORE the streamError handling so it is
+    // never reported (or retried) as a model failure.
+    if (supersededMidTool) {
+      return supersededResult(state, Date.now() - turn.turnStartedAt);
+    }
+
     if (streamError) {
       const cause = streamError as { message?: string; name?: string; stack?: string };
       const message = cause?.message || String(streamError);
@@ -781,6 +825,14 @@ async function runSlackAgentStep(
       stepModelId,
     };
   } catch (error: any) {
+    // Mid-tool Stop (issue #1355): the abort usually surfaces here as an
+    // AbortError (or AI_NoOutputGeneratedError from the awaited promises).
+    // Resolve it to the same superseded outcome as the step-boundary check —
+    // returning (not throwing) also skips the DevKit's step retries.
+    if (supersededMidTool) {
+      return supersededResult(state, Date.now() - turn.turnStartedAt);
+    }
+
     // Make step failures VISIBLE. The DevKit retries a throwing step up to 3
     // times and only its own console logger sees attempts 1–3; nothing
     // reached error_events. Record every attempt (with the attempt number)
@@ -875,14 +927,21 @@ async function finalizeSlackRespond(params: {
       };
       if (outcome === "superseded") {
         // "stopped" = the user pressed Stop (agent_session_stopped) — Slack
-        // has already halted the stream, so both calls are best effort.
+        // has already halted the stream AND renders its own native grey
+        // "(stopped)" indicator on the bubble (ai_context.result_status =
+        // "stopped_by_user"), so appending our `_[stopped]_` here would show
+        // the marker twice (issue #1355). Only "newer_message" keeps the
+        // markdown note — Slack has no native indicator for that. Append is
+        // best effort: the stream may already be closed.
         const { getSupersedeReason, interruptionNote } = await import("../src/lib/invocation-lock.js");
-        const note = interruptionNote(await getSupersedeReason(input.channelId, input.threadTs));
-        await slackClient.apiCall("chat.appendStream", {
-          channel: input.channelId,
-          ts: streamState.streamTs,
-          chunks: [{ type: "markdown_text", text: `\n\n${note}` }],
-        }).catch(() => {});
+        const reason = await getSupersedeReason(input.channelId, input.threadTs);
+        if (reason !== "stopped") {
+          await slackClient.apiCall("chat.appendStream", {
+            channel: input.channelId,
+            ts: streamState.streamTs,
+            chunks: [{ type: "markdown_text", text: `\n\n${interruptionNote(reason)}` }],
+          }).catch(() => {});
+        }
       }
       if (failureNote) {
         await slackClient.apiCall("chat.appendStream", {
@@ -1048,7 +1107,10 @@ export async function slackRespondWorkflow(input: SlackRespondWorkflowInput) {
     if (r.superseded) {
       await finalizeSlackRespond({
         input,
-        streamState,
+        // Use the step's stream state, not the loop's: a mid-tool supersede
+        // (issue #1355) may have opened the bubble inside the aborted step,
+        // and the `_[stopped]_` note must land on THAT stream.
+        streamState: r.streamState,
         fullText,
         steps,
         stepModelIds,

@@ -31,15 +31,18 @@ export const setStatusUnsupportedChannels = new Set<string>();
  *
  * Soft-fail: on error the channel is added to the circuit-breaker set and a
  * warning is logged; the error never propagates.
+ *
+ * Returns whether the status was actually set (false on skip or failure) so
+ * callers that record durable receipts (issue #1355) can include the outcome.
  */
 export async function trySetAgentSessionStatus(params: {
   client: WebClient;
   channelId: string;
   threadTs?: string;
   status: SessionStatus;
-}): Promise<void> {
+}): Promise<boolean> {
   const { client, channelId, threadTs, status } = params;
-  if (!threadTs || setStatusUnsupportedChannels.has(channelId)) return;
+  if (!threadTs || setStatusUnsupportedChannels.has(channelId)) return false;
 
   try {
     await agentsSessions.setStatus(client, {
@@ -47,6 +50,7 @@ export async function trySetAgentSessionStatus(params: {
       thread_ts: threadTs,
       status,
     });
+    return true;
   } catch (error: any) {
     const code: string | undefined = error?.data?.error;
     const detail = error?.data?.response_metadata?.messages;
@@ -60,7 +64,7 @@ export async function trySetAgentSessionStatus(params: {
         channelId,
         code,
       });
-      return;
+      return false;
     }
     logger.warn("agents.sessions.setStatus failed (will retry next turn)", {
       channelId,
@@ -68,6 +72,7 @@ export async function trySetAgentSessionStatus(params: {
       code: code || error?.message || String(error),
       detail,
     });
+    return false;
   }
 }
 
