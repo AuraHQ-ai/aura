@@ -1,6 +1,6 @@
 import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
-import { eq, and, or, desc, isNotNull, isNull, ne, sql } from "drizzle-orm";
+import { eq, and, or, not, desc, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import type { WebClient } from "@slack/web-api";
 import { CronExpressionParser } from "cron-parser";
 import { db } from "../db/client.js";
@@ -330,7 +330,7 @@ export function createJobTools(
 
     list_jobs: defineTool({
       description:
-        "List jobs. Always includes enabled recurring jobs regardless of their last execution status, with last/next run info. Filter one-shots by status, or use status:'all'. Archived jobs are excluded by default; pass include_archived to see them. For execution history of a specific job, use read_job_trace with the job name.",
+        "List jobs. Always includes enabled recurring jobs regardless of their last execution status or the limit (the limit only applies to other rows), with last/next run info. Filter one-shots by status, or use status:'all'. Archived jobs are excluded by default; pass include_archived to see them. For execution history of a specific job, use read_job_trace with the job name.",
       inputSchema: z.object({
         status: z
           .enum(["pending", "running", "completed", "failed", "cancelled", "all"])
@@ -349,7 +349,9 @@ export function createJobTools(
           .min(1)
           .max(50)
           .default(20)
-          .describe("Maximum number of jobs to return"),
+          .describe(
+            "Maximum number of jobs to return. Enabled recurring jobs are always included and are not counted against this limit.",
+          ),
       }),
       execute: async ({ status, recurring_only, include_archived, limit }) => {
         try {
@@ -361,26 +363,48 @@ export function createJobTools(
             eq(jobs.enabled, 1),
             recurringCondition,
           )!;
-          const conditions: Array<ReturnType<typeof eq>> = [];
+
+          // Enabled recurring jobs are ALWAYS included and exempt from the
+          // limit — applying the limit to them can silently truncate active
+          // jobs out of the listing (#1306). Only the archived filter applies.
+          const recurringConditions: Array<ReturnType<typeof eq>> = [
+            enabledRecurringCondition,
+          ];
+          if (!include_archived) {
+            recurringConditions.push(isNull(jobs.archivedAt));
+          }
+          const recurringRows = await db
+            .select()
+            .from(jobs)
+            .where(and(...recurringConditions))
+            .orderBy(desc(jobs.createdAt));
+
+          // Everything else (one-shots, disabled recurring) obeys the
+          // status/recurring_only filters and the limit.
+          const otherConditions: Array<ReturnType<typeof eq>> = [
+            not(enabledRecurringCondition),
+          ];
           if (status !== "all") {
-            conditions.push(or(eq(jobs.status, status), enabledRecurringCondition)!);
+            otherConditions.push(eq(jobs.status, status));
           }
           if (recurring_only) {
-            conditions.push(recurringCondition);
+            otherConditions.push(recurringCondition);
           }
           if (!include_archived) {
-            conditions.push(isNull(jobs.archivedAt));
+            otherConditions.push(isNull(jobs.archivedAt));
           }
-
-          const query = db.select().from(jobs);
-          const rows = await (conditions.length > 0
-            ? query.where(and(...conditions))
-            : query
-          )
+          const otherRows = await db
+            .select()
+            .from(jobs)
+            .where(and(...otherConditions))
             .orderBy(desc(jobs.createdAt))
             .limit(limit);
 
-          const filtered = rows;
+          const filtered = [...recurringRows, ...otherRows].sort(
+            (a, b) =>
+              new Date(b.createdAt as any).getTime() -
+              new Date(a.createdAt as any).getTime(),
+          );
 
           const tz = context?.timezone;
           const result = filtered.map((j) => {

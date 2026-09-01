@@ -51,6 +51,24 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           .describe(
             "GitHub repository in owner/repo format, e.g. 'org/repo'. Defaults to 'AuraHQ-ai/aura'",
           ),
+        model: z
+          .string()
+          .optional()
+          .describe(
+            "Cursor model to use, e.g. 'claude-sonnet-4.5', 'gpt-5', 'composer-1.5'. " +
+            "Omit or leave empty to use Cursor's default auto-selection. " +
+            "Defaults to env CURSOR_DEFAULT_MODEL if set.",
+          ),
+        issue: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe(
+            "GitHub issue number this dispatch implements. When set, the agent is instructed " +
+            "to start the PR body with 'Fixes #N' so the issue auto-closes on merge, and the " +
+            "issue number is recorded in the dispatch tracking note.",
+          ),
       }),
       inputExamples: [
         {
@@ -73,7 +91,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           },
         },
       ],
-      execute: async ({ issue_description, branch_prefix, ref, key_files, repository }) => {
+      execute: async ({ issue_description, branch_prefix, ref, key_files, repository, model, issue }) => {
         try {
           const { launchCursorAgent } = await import(
             "../lib/cursor-agent.js"
@@ -108,11 +126,15 @@ export function createCursorAgentTools(context?: ScheduleContext) {
               ]
             : [];
 
+          const issueInstruction = issue
+            ? [`- When you open the PR, the PR body MUST start with the line: Fixes #${issue}`]
+            : [];
+
           const prompt = [
             `## Task\n\n${issue_description}`,
             `## Repository\n\n${repoDescription}`,
             keyFilesSection,
-            `## Instructions\n\n${[...instructions, `- Never push directly to main — work on branch \`${branchName}\``, `- Create a PR with a clear description of changes`].join("\n")}`,
+            `## Instructions\n\n${[...instructions, `- Never push directly to main — work on branch \`${branchName}\``, `- Create a PR with a clear description of changes`, ...issueInstruction].join("\n")}`,
           ].join("\n\n");
 
           const webhookUrl = process.env.VERCEL_PROJECT_PRODUCTION_URL
@@ -122,11 +144,17 @@ export function createCursorAgentTools(context?: ScheduleContext) {
 
           const webhookSecret = process.env.CURSOR_WEBHOOK_SECRET;
 
+          // Explicit model wins, then env default; otherwise omit → Cursor auto.
+          const resolvedModel =
+            (model && model.trim()) ||
+            (process.env.CURSOR_DEFAULT_MODEL?.trim() || undefined);
+
           const result = await launchCursorAgent({
             prompt,
             repository: repoUrl,
             ref: ref || "main",
             branchName,
+            model: resolvedModel,
             autoCreatePr: true,
             webhookUrl,
             webhookSecret: webhookSecret || undefined,
@@ -137,6 +165,8 @@ export function createCursorAgentTools(context?: ScheduleContext) {
             `- **Agent ID**: ${result.id}`,
             `- **Branch**: ${branchName}`,
             `- **Repo**: ${repo}`,
+            `- **Model**: ${resolvedModel || "auto"}`,
+            ...(issue ? [`- **Issue**: #${issue}`] : []),
             `- **Requester**: ${context?.userId || "unknown"}`,
             `- **Channel**: ${context?.channelId || "unknown"}`,
             `- **Thread**: ${context?.threadTs || "none"}`,

@@ -5,6 +5,7 @@ import { aiTelemetry } from "../lib/langfuse.js";
 import { defineTool, binaryToModelOutput, registerToolNames, filterToolsByCredentials } from "../lib/tool.js";
 import { resolveUserCredentials } from "../lib/permissions.js";
 import { createCoreTools } from "./core.js";
+import { createBrowserTools } from "./browser.js";
 import { createJobTools } from "./jobs.js";
 import { createListWriteTools } from "./lists.js";
 import { createTableTools } from "./table.js";
@@ -470,6 +471,59 @@ export async function resolveSlackDestination(
   }
 
   return null;
+}
+
+/**
+ * Upload a file buffer to Slack via the 3-step external upload API
+ * (getUploadURLExternal → POST bytes → completeUploadExternal), optionally
+ * sharing it to a channel/thread. Shared by the upload_file tool and the
+ * browse tool's screenshot auto-upload.
+ */
+export async function uploadFileToSlack(
+  client: WebClient,
+  {
+    buffer,
+    filename,
+    title,
+    channelId,
+    threadTs,
+  }: {
+    buffer: Buffer;
+    filename: string;
+    title?: string;
+    channelId?: string;
+    threadTs?: string;
+  },
+): Promise<{ fileId: string; fileUrl: string | null }> {
+  // 1. Get upload URL
+  const uploadUrlResp = await client.files.getUploadURLExternal({
+    filename,
+    length: buffer.length,
+  });
+  const uploadUrl = uploadUrlResp.upload_url!;
+  const fileId = uploadUrlResp.file_id!;
+
+  // 2. Upload the file content to the presigned URL
+  const uploadResp = await fetch(uploadUrl, {
+    method: "POST",
+    body: new Uint8Array(buffer),
+    headers: { "Content-Type": "application/octet-stream" },
+  });
+  if (!uploadResp.ok) {
+    throw new Error(`File upload failed: ${uploadResp.status} ${uploadResp.statusText}`);
+  }
+
+  // 3. Complete upload and share to channel
+  const completeParams: Record<string, unknown> = {
+    files: [{ id: fileId, title: title || filename }],
+  };
+  if (channelId) completeParams.channel_id = channelId;
+  if (threadTs) completeParams.thread_ts = threadTs;
+
+  const completeResp = await client.files.completeUploadExternal(completeParams as any);
+  const fileUrl = (completeResp as any).files?.[0]?.permalink ?? null;
+
+  return { fileId, fileUrl };
 }
 
 /**
@@ -2451,34 +2505,13 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
             }
           }
 
-          // 1. Get upload URL
-          const uploadUrlResp = await client.files.getUploadURLExternal({
+          const { fileId, fileUrl } = await uploadFileToSlack(client, {
+            buffer: fileBuffer,
             filename,
-            length: fileBuffer.length,
+            title,
+            channelId,
+            threadTs: resolvedThreadTs,
           });
-          const uploadUrl = uploadUrlResp.upload_url!;
-          const fileId = uploadUrlResp.file_id!;
-
-          // 2. Upload the file content to the presigned URL
-          const uploadResp = await fetch(uploadUrl, {
-            method: "POST",
-            body: new Uint8Array(fileBuffer),
-            headers: { "Content-Type": "application/octet-stream" },
-          });
-          if (!uploadResp.ok) {
-            throw new Error(`File upload failed: ${uploadResp.status} ${uploadResp.statusText}`);
-          }
-
-          // 3. Complete upload and share to channel
-          const completeParams: Record<string, unknown> = {
-            files: [{ id: fileId, title: title || filename }],
-          };
-          if (channelId) completeParams.channel_id = channelId;
-          if (resolvedThreadTs) completeParams.thread_ts = resolvedThreadTs;
-
-          const completeResp = await client.files.completeUploadExternal(completeParams as any);
-
-          const fileUrl = (completeResp as any).files?.[0]?.permalink ?? null;
 
           logger.info("upload_file tool called", {
             filename,
@@ -3033,6 +3066,9 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
 
     // ── Slack-only Tools (require WebClient) ───────────────────────────
     ...createListWriteTools(client),
+    // Client-aware browse: overrides the core version so upload_channel /
+    // upload_thread_ts can share screenshots to Slack directly.
+    ...createBrowserTools(context, client),
     ...createJobTools(client, context),
     ...createEmailSyncTools(client, context),
     ...createTableTools(client, context),
