@@ -1034,6 +1034,38 @@ export const deferredToolThreadCache = pgTable(
   ],
 );
 
+// ── App Context Cache (Slack agent context, issue #1295) ────────────────────
+// Short-TTL cache of the entities a user currently has open in Slack, fed by
+// `app_context_changed` events (agent_view apps only). Read at DM message time
+// so the pipeline can steer artifact-first reading. Rows older than a few
+// minutes are treated as stale and ignored — no cron cleanup needed, the
+// per-user upsert keeps the table at one row per (workspace, user).
+
+/** One entity from a Slack app_context payload, e.g.
+ * `{ type: "slack#/types/channel_id", value: "C0123", team_id: "T0123" }` */
+export interface AppContextEntity {
+  type: string;
+  value: string;
+  team_id?: string;
+  [key: string]: unknown;
+}
+
+export const appContextCache = pgTable(
+  "app_context_cache",
+  {
+    workspaceId: workspaceId().references(() => workspaces.id),
+    userId: text("user_id").notNull(),
+    /** Ordered-by-relevance entities from the latest app_context_changed event */
+    entities: jsonb("entities").$type<AppContextEntity[]>().notNull(),
+    /** event_ts of the app_context_changed event that produced this row */
+    eventTs: text("event_ts"),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.workspaceId, table.userId] }),
+  ],
+);
+
 // ── Error Events ────────────────────────────────────────────────────────────
 
 export const errorEvents = pgTable(

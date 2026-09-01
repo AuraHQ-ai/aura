@@ -406,6 +406,37 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       });
     }
 
+    // ── Agent context (app_context) — DMs only ───────────────────────────
+    // Prefer the inline app_context on the event (freshest); otherwise fall
+    // back to the cached context from the latest app_context_changed event
+    // (stale rows ignored). Non-fatal: a cache failure must never break the
+    // turn. See issue #1295.
+    if (context.isDm) {
+      try {
+        const { resolveAppContextForMessage } = await import(
+          "../lib/app-context.js"
+        );
+        const appContextEntities = await resolveAppContextForMessage({
+          event,
+          userId: context.userId,
+          workspaceId: process.env.DEFAULT_WORKSPACE_ID || "default",
+        });
+        if (appContextEntities && appContextEntities.length > 0) {
+          context.appContextEntities = appContextEntities;
+          logger.info("Resolved app context for DM", {
+            userId: context.userId,
+            entityCount: appContextEntities.length,
+            source: (event as any).app_context ? "event" : "cache",
+          });
+        }
+      } catch (error: any) {
+        logger.warn("Failed to resolve app context (non-fatal)", {
+          error: error?.message || String(error),
+          userId: context.userId,
+        });
+      }
+    }
+
     // Ensure user has a profile and resolve their timezone
     const { name: displayName, timezone: slackTimezone } = await resolveDisplayName(client, context.userId);
     const userProfile = await getOrCreateProfile(context.userId, displayName, slackTimezone);

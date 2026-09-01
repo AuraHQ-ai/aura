@@ -376,6 +376,46 @@ app.post("/api/slack/events", async (c) => {
       return c.json({ ok: true });
     }
 
+    // Agent context (agent_view). Slack fires this whenever the user's active
+    // view changes while the app is open (channel, DM, thread, canvas, list).
+    // We cache the entities per user so the DM pipeline can steer
+    // artifact-first reading (issue #1295). Requires the `app_context_changed`
+    // bot event subscription in the app manifest
+    // (https://docs.slack.dev/reference/events/app_context_changed —
+    // see docs/slack-agent-view-rollout.md).
+    if (event.type === "app_context_changed") {
+      const contextPromise = (async () => {
+        // The event itself carries no `user` field in the documented payload;
+        // fall back to the event wrapper's authorization.
+        const userId: string | undefined =
+          event.user || body.authorizations?.[0]?.user_id;
+        if (!userId) {
+          logger.warn("app_context_changed without resolvable user", { event });
+          return;
+        }
+        try {
+          const { upsertAppContext } = await import("./lib/app-context.js");
+          const entities = Array.isArray(event.context?.entities)
+            ? event.context.entities
+            : [];
+          await upsertAppContext({
+            workspaceId: process.env.DEFAULT_WORKSPACE_ID || "default",
+            userId,
+            entities,
+            eventTs: event.event_ts ? String(event.event_ts) : undefined,
+          });
+          logger.debug("app_context_changed cached", {
+            userId,
+            entityCount: entities.length,
+          });
+        } catch (err) {
+          recordError("app_context_changed", err, { userId });
+        }
+      })();
+      waitUntil(contextPromise);
+      return c.json({ ok: true });
+    }
+
     // Handle App Home opened
     if (event.type === "app_home_opened") {
       // Agent-view entry point for thread bootstrap (Messages tab only).
