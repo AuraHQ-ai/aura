@@ -2,6 +2,7 @@ import { pruneMessages } from "ai";
 import type { LanguageModel, ModelMessage } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import { compactMessages } from "./compact-messages.js";
+import { sanitizeToolCallIds } from "./sanitize-tool-ids.js";
 import { getModelCapabilities } from "../lib/model-catalog.js";
 import { isInvocationCurrent } from "../lib/invocation-lock.js";
 import { logger } from "../lib/logger.js";
@@ -468,13 +469,48 @@ export function createPrepareStep(opts: {
         + "\n\n" + systemSuffixes.join("\n\n");
     }
 
+    // --- Tool call id sanitization (issue #1376) ---
+    // Malformed or orphaned tool_use / tool_result ids replayed from stored
+    // history kill the whole request at the provider ("String should match
+    // pattern '^[a-zA-Z0-9_-]+$'"). Repair them at the message-assembly
+    // boundary: rewrite invalid ids (stable mapping, so pairs stay paired),
+    // drop orphaned tool_results and unpaired tool_uses. The error row is the
+    // counter — and it carries the RAW offending ids so we finally learn the
+    // actual source instead of guessing.
+    const sanitization = sanitizeToolCallIds(messages);
+    if (sanitization.changed) {
+      const summary =
+        `${sanitization.normalizedIds.length} id(s) normalized, ` +
+        `${sanitization.droppedOrphanedToolResultIds.length} orphaned tool_result(s) dropped, ` +
+        `${sanitization.droppedUnpairedToolCallIds.length} unpaired tool_use(s) dropped`;
+      logger.warn("prepareStep: sanitized malformed tool blocks before provider call", {
+        stepNumber,
+        summary,
+        normalizedIds: sanitization.normalizedIds,
+      });
+      logError({
+        errorName: "ToolCallIdSanitized",
+        errorMessage: `Sanitized malformed tool blocks at message assembly: ${summary}`,
+        errorCode: "tool_call_id_sanitized",
+        channelId: opts.channelId,
+        userId: opts.userId,
+        context: {
+          stepNumber,
+          path: opts.turnPath,
+          normalizedIds: sanitization.normalizedIds,
+          droppedOrphanedToolResultIds: sanitization.droppedOrphanedToolResultIds,
+          droppedUnpairedToolCallIds: sanitization.droppedUnpairedToolCallIds,
+        },
+      });
+    }
+
     // --- Context compaction (issue #1328) ---
     // Applied universally (interactive AND headless): past the step threshold,
     // old large tool results are replaced with stubs that KEEP toolCallId +
     // toolName, so the model still sees what it already did (no #499 re-run
     // loops) and no tool-call is orphaned from its tool-result. Only the
     // in-flight array is modified — the persisted trace stays complete.
-    const compaction = compactMessages(messages, stepNumber);
+    const compaction = compactMessages(sanitization.messages, stepNumber);
     if (compaction.compactedCount > 0) {
       logger.info("prepareStep: compacting messages", {
         stepNumber,

@@ -476,3 +476,129 @@ describe("createPrepareStep context compaction (issue #1328)", () => {
     expect([...callIds].sort()).toEqual([...resultIds].sort());
   });
 });
+
+describe("createPrepareStep tool call id sanitization (issue #1376)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    invocationLockMocks.isInvocationCurrent.mockResolvedValue(true);
+  });
+
+  const badId = "continue-turn-deadline:abc 123";
+
+  function messagesWithBadId(): ModelMessage[] {
+    return [
+      { role: "user", content: "resume the job" },
+      {
+        role: "assistant",
+        content: [
+          { type: "tool-call", toolCallId: badId, toolName: "run_command", input: {} },
+        ],
+      } as ModelMessage,
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: badId,
+            toolName: "run_command",
+            output: { type: "text", value: "ok" },
+          },
+        ],
+      } as ModelMessage,
+      { role: "user", content: "continue" },
+    ];
+  }
+
+  it("rewrites malformed replayed ids before the provider call and logs the raw id", async () => {
+    const prepareStep = createPrepareStep({
+      stablePrefix: "PREFIX",
+      channelId: "C0123456",
+      userId: "U0999",
+    });
+
+    const result = await prepareStep({
+      stepNumber: 1,
+      steps: [],
+      messages: messagesWithBadId(),
+    });
+
+    const ids: string[] = [];
+    for (const msg of result?.messages ?? []) {
+      if (!Array.isArray(msg.content)) continue;
+      for (const part of msg.content as any[]) {
+        if (part.type === "tool-call" || part.type === "tool-result") {
+          ids.push(part.toolCallId);
+        }
+      }
+    }
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).toBe(ids[1]);
+    expect(ids[0]).toMatch(/^[a-zA-Z0-9_-]{1,64}$/);
+
+    const sanitizeCalls = errorLoggerMocks.logError.mock.calls.filter(
+      ([params]) => params.errorCode === "tool_call_id_sanitized",
+    );
+    expect(sanitizeCalls).toHaveLength(1);
+    expect(sanitizeCalls[0][0]).toMatchObject({
+      errorName: "ToolCallIdSanitized",
+      channelId: "C0123456",
+      userId: "U0999",
+      context: expect.objectContaining({
+        stepNumber: 1,
+        normalizedIds: [
+          { raw: badId, sanitized: expect.stringMatching(/^[a-zA-Z0-9_-]{1,64}$/) },
+        ],
+      }),
+    });
+  });
+
+  it("drops an orphaned tool_result from replayed history and counts it", async () => {
+    const prepareStep = createPrepareStep({ stablePrefix: "PREFIX" });
+
+    const result = await prepareStep({
+      stepNumber: 1,
+      steps: [],
+      messages: [
+        { role: "user", content: "resume" },
+        {
+          role: "tool",
+          content: [
+            {
+              type: "tool-result",
+              toolCallId: "call_ghost",
+              toolName: "run_command",
+              output: { type: "text", value: "orphaned" },
+            },
+          ],
+        } as ModelMessage,
+        { role: "user", content: "continue" },
+      ],
+    });
+
+    expect(result?.messages).toHaveLength(2);
+    expect(result?.messages?.every((m) => m.role === "user")).toBe(true);
+
+    const sanitizeCalls = errorLoggerMocks.logError.mock.calls.filter(
+      ([params]) => params.errorCode === "tool_call_id_sanitized",
+    );
+    expect(sanitizeCalls).toHaveLength(1);
+    expect(sanitizeCalls[0][0].context).toMatchObject({
+      droppedOrphanedToolResultIds: ["call_ghost"],
+    });
+  });
+
+  it("does not log when the replayed history is clean", async () => {
+    const prepareStep = createPrepareStep({ stablePrefix: "PREFIX" });
+
+    await prepareStep({
+      stepNumber: 1,
+      steps: [],
+      messages: [{ role: "user", content: "hello" }],
+    });
+
+    const sanitizeCalls = errorLoggerMocks.logError.mock.calls.filter(
+      ([params]) => params.errorCode === "tool_call_id_sanitized",
+    );
+    expect(sanitizeCalls).toHaveLength(0);
+  });
+});
