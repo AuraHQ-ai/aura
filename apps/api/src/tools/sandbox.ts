@@ -974,6 +974,21 @@ export function createSandboxTools(context?: ScheduleContext) {
 
           if (canSuspendForDetachedCommand(context)) {
             markTurnSuspendedByDetachedCommand(detached.id);
+            // Job executions that suspend on a webhook resume are legitimately
+            // parked, not hung (issue #1326): stamp suspended_until so the
+            // heartbeat stale sweep and stuck-job watchdog leave them alone
+            // until the detached-command watchdog has had its say.
+            const store = executionContext.getStore();
+            if (store?.jobId || store?.jobExecutionId) {
+              const { markJobSuspendedForDetachedCommand } = await import(
+                "../lib/job-suspension.js"
+              );
+              await markJobSuspendedForDetachedCommand({
+                jobId: store.jobId ?? null,
+                jobExecutionId: store.jobExecutionId ?? null,
+                commandId: detached.id,
+              });
+            }
             return detached;
           }
 

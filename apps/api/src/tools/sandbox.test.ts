@@ -33,6 +33,14 @@ const toolMocks = vi.hoisted(() => ({
   getStore: vi.fn(),
 }));
 
+const jobSuspensionMocks = vi.hoisted(() => ({
+  markJobSuspendedForDetachedCommand: vi.fn(async () => undefined),
+}));
+
+vi.mock("../lib/job-suspension.js", () => ({
+  markJobSuspendedForDetachedCommand: jobSuspensionMocks.markJobSuspendedForDetachedCommand,
+}));
+
 vi.mock("../lib/sandbox.js", () => ({
   getOrCreateSandbox: sandboxMocks.getOrCreateSandbox,
   getSandboxEnvs: sandboxMocks.getSandboxEnvs,
@@ -347,6 +355,43 @@ describe("sandbox command tools", () => {
       jobId: "job-uuid-1",
       jobExecutionId: "exec-uuid-1",
     }));
+  });
+
+  it("marks the job suspended when a job execution dispatches with a webhook resume (issue #1326)", async () => {
+    toolMocks.getStore.mockReturnValue({
+      triggeredBy: "U123",
+      triggerType: "scheduled_job",
+      jobId: "job-uuid-1",
+      jobExecutionId: "exec-uuid-1",
+    });
+    const tool = createSandboxTools({
+      userId: "U123",
+      channelId: "C123",
+      threadTs: "1710000000.000000",
+    } as any).run_command_detached as any;
+
+    const result = await tool.execute(tool.inputSchema.parse({ command: "sleep 300" }));
+
+    expect(toolMocks.markTurnSuspendedByDetachedCommand).toHaveBeenCalledWith(result.id);
+    expect(jobSuspensionMocks.markJobSuspendedForDetachedCommand).toHaveBeenCalledWith({
+      jobId: "job-uuid-1",
+      jobExecutionId: "exec-uuid-1",
+      commandId: result.id,
+    });
+  });
+
+  it("does not mark suspension for interactive turns (no job in the execution context)", async () => {
+    toolMocks.getStore.mockReturnValue(undefined);
+    const tool = createSandboxTools({
+      userId: "U123",
+      channelId: "C123",
+      threadTs: "1710000000.000000",
+    } as any).run_command_detached as any;
+
+    await tool.execute(tool.inputSchema.parse({ command: "sleep 300" }));
+
+    expect(toolMocks.markTurnSuspendedByDetachedCommand).toHaveBeenCalled();
+    expect(jobSuspensionMocks.markJobSuspendedForDetachedCommand).not.toHaveBeenCalled();
   });
 
   it("waits for a slow detached pid file before returning", async () => {
