@@ -4,6 +4,7 @@ import { db } from "../db/client.js";
 import { detachedCommands, jobExecutions } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
 import { logError } from "../lib/error-logger.js";
+import { clearJobSuspension } from "../lib/job-suspension.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
 
 // ── Detached-command watchdog (issue #1281) ──────────────────────────────────
@@ -167,6 +168,13 @@ export async function sweepStaleDetachedCommands(
             error: execErr instanceof Error ? execErr.message : String(execErr),
           });
         }
+      }
+
+      // The command is officially dead — drop the webhook-suspension shield
+      // (issue #1326) so the heartbeat stale sweep can recover the parent job
+      // on its next pass instead of waiting out the full suspension window.
+      if (command.jobId) {
+        await clearJobSuspension(command.jobId);
       }
 
       if (command.channelId && command.threadTs) {
