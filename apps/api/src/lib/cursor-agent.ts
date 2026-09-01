@@ -27,6 +27,11 @@ export interface LaunchCursorAgentParams {
   repository: string;
   ref?: string;
   branchName?: string;
+  /**
+   * Cursor model to use (e.g. "claude-sonnet-4.5"). Omitted/empty means
+   * Cursor auto-selects — never send "auto" or "" (both rejected by the API).
+   */
+  model?: string;
   autoCreatePr?: boolean;
   webhookUrl?: string;
   /** Must be at least 32 characters if provided */

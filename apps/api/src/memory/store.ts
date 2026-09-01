@@ -497,6 +497,84 @@ export async function supersedeMemory(
 }
 
 /**
+ * Mark a memory as disputed (correction-signal quarantine, #949). Unlike
+ * supersession this doesn't close the validity window — the memory stays in
+ * the retrieval pool but is demoted by DISPUTED_STATUS_MULTIPLIER until the
+ * next contradiction sweep finalizes supersession or a corroborating source
+ * restores it.
+ */
+export async function disputeMemory(
+  memoryId: string,
+  reason: string,
+  at?: Date,
+): Promise<void> {
+  const now = at ?? new Date();
+  try {
+    await db
+      .update(memories)
+      .set({ status: "disputed", updatedAt: now })
+      .where(and(eq(memories.id, memoryId), eq(memories.status, "current")));
+    logger.info("Disputed memory", { memoryId, reason });
+  } catch (error) {
+    logger.warn("Failed to dispute memory", {
+      memoryId,
+      reason,
+      error: String(error),
+    });
+  }
+}
+
+/**
+ * Find current assistant-sourced memories semantically matching an embedding.
+ * Used by correction-signal handling (#949): when a user explicitly corrects a
+ * prior assertion, the assistant-sourced claims it corrects are looked up by
+ * similarity to the corrected fact and marked disputed. Unlike
+ * findContradictionCandidates this has no shared-relatedUserId requirement
+ * (capability claims about Aura often have none) and no similarity ceiling
+ * (a negated restatement can be >0.85 similar).
+ */
+export async function findAssistantClaimMatches(
+  embedding: number[],
+  workspaceId: string,
+  minSimilarity: number,
+  excludeIds: string[] = [],
+  limit = 5,
+): Promise<Array<{ id: string; content: string; similarity: number }>> {
+  try {
+    const vectorSql = sql.raw(`'[${embedding.join(",")}]'::vector`);
+    const excludeClause = excludeIds.length > 0
+      ? sql`AND id NOT IN (${sql.join(excludeIds.map(id => sql`${id}::uuid`), sql`, `)})`
+      : sql``;
+
+    const result = await db.execute(sql`
+      SELECT id, content, 1 - (embedding <=> ${vectorSql}) AS similarity
+      FROM memories
+      WHERE workspace_id = ${workspaceId}
+        AND embedding IS NOT NULL
+        AND status = 'current'
+        AND extraction_source_role = 'assistant'
+        AND relevance_score > 0.01
+        AND (1 - (embedding <=> ${vectorSql})) >= ${minSimilarity}
+        ${excludeClause}
+      ORDER BY embedding <=> ${vectorSql}
+      LIMIT ${limit}
+    `);
+
+    const rows = ((result as any).rows ?? result) as Array<Record<string, any>>;
+    return rows.map((row) => ({
+      id: row.id as string,
+      content: row.content as string,
+      similarity: parseFloat(row.similarity),
+    }));
+  } catch (error) {
+    logger.warn("Failed to find assistant claim matches for correction", {
+      error: String(error),
+    });
+    return [];
+  }
+}
+
+/**
  * A candidate memory that might contradict a new memory.
  */
 export interface ContradictionCandidate {

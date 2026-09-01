@@ -164,6 +164,131 @@ describe("resolveUserCredentials", () => {
     expect(result.has("github_token")).toBe(true);
   });
 
+  it("intersects the credential set with an active env allowlist (issue #1312)", async () => {
+    queueDbResults(
+      [{ role: "member" }],
+      [],
+      [
+        { id: "c1", name: "tavily_api_key", scope: "member", ownerId: "U_X", sandboxEnvName: null },
+        { id: "c2", name: "google_bq_credentials", scope: "member", ownerId: "U_X", sandboxEnvName: null },
+      ],
+      [],
+    );
+
+    const { resolveUserCredentials } = await import("./permissions.js");
+    const { executionContext } = await import("./tool.js");
+
+    const result = await executionContext.run(
+      {
+        triggeredBy: "U1",
+        triggerType: "scheduled_job",
+        callingUserId: "U1",
+        envAllowlist: ["TAVILY_API_KEY"],
+      },
+      () => resolveUserCredentials("U1"),
+    );
+
+    expect(result).toEqual(new Set(["tavily_api_key"]));
+  });
+
+  it("matches allowlist entries via sandbox_env_name and the GH_TOKEN alias", async () => {
+    queueDbResults(
+      [{ role: "member" }],
+      [],
+      [
+        {
+          id: "c1",
+          name: "meta_ads_system_user",
+          scope: "member",
+          ownerId: "U_X",
+          sandboxEnvName: "META_ADMIN_TOKEN",
+        },
+        { id: "c2", name: "github_token", scope: "member", ownerId: "U_X", sandboxEnvName: null },
+        { id: "c3", name: "slack_bot_token", scope: "member", ownerId: "U_X", sandboxEnvName: null },
+      ],
+      [],
+    );
+
+    const { resolveUserCredentials } = await import("./permissions.js");
+    const { executionContext } = await import("./tool.js");
+
+    const result = await executionContext.run(
+      {
+        triggeredBy: "U1",
+        triggerType: "scheduled_job",
+        callingUserId: "U1",
+        envAllowlist: ["META_ADMIN_TOKEN", "GH_TOKEN"],
+      },
+      () => resolveUserCredentials("U1"),
+    );
+
+    expect(result).toEqual(new Set(["meta_ads_system_user", "github_token"]));
+  });
+
+  it("drops the synthetic google_oauth credential when it is not allowlisted", async () => {
+    queueDbResults(
+      [{ role: "member" }],
+      [],
+      [],
+      [{ id: "token-1" }], // user has OAuth tokens → google_oauth would be granted
+    );
+
+    const { resolveUserCredentials } = await import("./permissions.js");
+    const { executionContext } = await import("./tool.js");
+
+    const result = await executionContext.run(
+      {
+        triggeredBy: "U1",
+        triggerType: "scheduled_job",
+        callingUserId: "U1",
+        envAllowlist: ["GITHUB_TOKEN"],
+      },
+      () => resolveUserCredentials("U1"),
+    );
+
+    expect(result.has("google_oauth")).toBe(false);
+  });
+
+  it("keeps google_oauth when GOOGLE_OAUTH is allowlisted", async () => {
+    queueDbResults([{ role: "member" }], [], [], [{ id: "token-1" }]);
+
+    const { resolveUserCredentials } = await import("./permissions.js");
+    const { executionContext } = await import("./tool.js");
+
+    const result = await executionContext.run(
+      {
+        triggeredBy: "U1",
+        triggerType: "scheduled_job",
+        callingUserId: "U1",
+        envAllowlist: ["GOOGLE_OAUTH"],
+      },
+      () => resolveUserCredentials("U1"),
+    );
+
+    expect(result.has("google_oauth")).toBe(true);
+  });
+
+  it("leaves the credential set unchanged when the context has no allowlist", async () => {
+    queueDbResults(
+      [{ role: "member" }],
+      [],
+      [
+        { id: "c1", name: "tavily_api_key", scope: "member", ownerId: "U_X", sandboxEnvName: null },
+      ],
+      [],
+    );
+
+    const { resolveUserCredentials } = await import("./permissions.js");
+    const { executionContext } = await import("./tool.js");
+
+    const result = await executionContext.run(
+      { triggeredBy: "U1", triggerType: "scheduled_job", callingUserId: "U1" },
+      () => resolveUserCredentials("U1"),
+    );
+
+    expect(result.has("tavily_api_key")).toBe(true);
+  });
+
   it("fails closed and logs for unknown credential scopes", async () => {
     queueDbResults(
       [],

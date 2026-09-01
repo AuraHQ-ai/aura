@@ -1,10 +1,12 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { ModelMessage } from "ai";
 import {
   compactMessages,
   COMPACTION_START_STEP,
   COMPACTION_KEEP_RECENT,
   COMPACTION_MAX_RESULT_LENGTH,
+  SUMMARIZE_ON_EVICT_MIN_CHARS,
+  SUMMARIZE_ON_EVICT_MAX_CHARS,
 } from "../pipeline/compact-messages.js";
 
 function makeSystemMessage(text: string): ModelMessage {
@@ -72,25 +74,25 @@ function buildConversation(stepCount: number, resultLength = 1000): ModelMessage
 }
 
 describe("compactMessages", () => {
-  it("returns messages unchanged below COMPACTION_START_STEP", () => {
+  it("returns messages unchanged below COMPACTION_START_STEP", async () => {
     const messages = buildConversation(10);
-    const result = compactMessages(messages, COMPACTION_START_STEP - 1);
+    const result = await compactMessages(messages, COMPACTION_START_STEP - 1);
 
     expect(result.compactedCount).toBe(0);
     expect(result.estimatedTokensSaved).toBe(0);
     expect(result.messages).toBe(messages);
   });
 
-  it("returns messages unchanged at exactly COMPACTION_START_STEP with few messages", () => {
+  it("returns messages unchanged at exactly COMPACTION_START_STEP with few messages", async () => {
     const messages = buildConversation(5, 100);
-    const result = compactMessages(messages, COMPACTION_START_STEP);
+    const result = await compactMessages(messages, COMPACTION_START_STEP);
 
     expect(result.compactedCount).toBe(0);
   });
 
-  it("compacts old tool results that exceed MAX_RESULT_LENGTH", () => {
+  it("compacts old tool results that exceed MAX_RESULT_LENGTH", async () => {
     const messages = buildConversation(40, 1000);
-    const result = compactMessages(messages, 40);
+    const result = await compactMessages(messages, 40);
 
     expect(result.compactedCount).toBeGreaterThan(0);
     expect(result.estimatedTokensSaved).toBeGreaterThan(0);
@@ -109,9 +111,9 @@ describe("compactMessages", () => {
     expect(compactedToolMessages.length).toBeGreaterThan(0);
   });
 
-  it("preserves the most recent KEEP_RECENT * 2 messages", () => {
+  it("preserves the most recent KEEP_RECENT * 2 messages", async () => {
     const messages = buildConversation(40, 1000);
-    const result = compactMessages(messages, 40);
+    const result = await compactMessages(messages, 40);
 
     const keepFromEnd = COMPACTION_KEEP_RECENT * 2;
     const recentMessages = result.messages.slice(-keepFromEnd);
@@ -127,17 +129,17 @@ describe("compactMessages", () => {
     }
   });
 
-  it("never modifies system or user messages", () => {
+  it("never modifies system or user messages", async () => {
     const messages = buildConversation(30, 1000);
-    const result = compactMessages(messages, 30);
+    const result = await compactMessages(messages, 30);
 
     expect(result.messages[0]).toEqual(messages[0]);
     expect(result.messages[1]).toEqual(messages[1]);
   });
 
-  it("never modifies assistant messages", () => {
+  it("never modifies assistant messages", async () => {
     const messages = buildConversation(30, 1000);
-    const result = compactMessages(messages, 30);
+    const result = await compactMessages(messages, 30);
 
     const assistantMessages = result.messages.filter(
       (m) => m.role === "assistant",
@@ -147,18 +149,18 @@ describe("compactMessages", () => {
     expect(assistantMessages).toEqual(originalAssistants);
   });
 
-  it("does not compact tool results under MAX_RESULT_LENGTH", () => {
+  it("does not compact tool results under MAX_RESULT_LENGTH", async () => {
     const shortLength = COMPACTION_MAX_RESULT_LENGTH - 10;
     const messages = buildConversation(30, shortLength);
-    const result = compactMessages(messages, 30);
+    const result = await compactMessages(messages, 30);
 
     expect(result.compactedCount).toBe(0);
     expect(result.estimatedTokensSaved).toBe(0);
   });
 
-  it("compacted messages have the correct format", () => {
+  it("compacted messages have the correct format", async () => {
     const messages = buildConversation(40, 1000);
-    const result = compactMessages(messages, 40);
+    const result = await compactMessages(messages, 40);
 
     const compactedParts: any[] = [];
     for (const msg of result.messages) {
@@ -185,9 +187,9 @@ describe("compactMessages", () => {
     }
   });
 
-  it("preserves toolCallId and toolName on compacted parts", () => {
+  it("preserves toolCallId and toolName on compacted parts", async () => {
     const messages = buildConversation(40, 1000);
-    const result = compactMessages(messages, 40);
+    const result = await compactMessages(messages, 40);
 
     for (let i = 0; i < result.messages.length; i++) {
       const msg = result.messages[i];
@@ -205,12 +207,12 @@ describe("compactMessages", () => {
     }
   });
 
-  it("never leaves an orphaned tool-call or tool-result pair", () => {
+  it("never leaves an orphaned tool-call or tool-result pair", async () => {
     // Anthropic rejects a request outright if any tool_use block lacks its
     // matching tool_result (or vice versa) — compaction must never break the
     // pairing, only shrink the result payload.
     const messages = buildConversation(40, 8000);
-    const result = compactMessages(messages, 40);
+    const result = await compactMessages(messages, 40);
 
     const callIds = new Set<string>();
     const resultIds = new Set<string>();
@@ -226,7 +228,7 @@ describe("compactMessages", () => {
     expect([...callIds].sort()).toEqual([...resultIds].sort());
   });
 
-  it("handles JSON tool results", () => {
+  it("handles JSON tool results", async () => {
     const messages: ModelMessage[] = [
       makeSystemMessage("system"),
       makeUserMessage("user"),
@@ -239,7 +241,7 @@ describe("compactMessages", () => {
       messages.push(makeToolMessage(`tool_${i}`, id, jsonData, "json"));
     }
 
-    const result = compactMessages(messages, 40);
+    const result = await compactMessages(messages, 40);
     expect(result.compactedCount).toBeGreaterThan(0);
 
     for (const msg of result.messages) {
@@ -257,7 +259,7 @@ describe("compactMessages", () => {
     }
   });
 
-  it("handles json results whose value stringifies to undefined", () => {
+  it("handles json results whose value stringifies to undefined", async () => {
     // JSON.stringify(undefined) === undefined — must not throw on .length.
     const messages = buildConversation(40, 8000);
     messages[2] = {
@@ -272,23 +274,23 @@ describe("compactMessages", () => {
       ],
     } as ModelMessage;
 
-    expect(() => compactMessages(messages, 40)).not.toThrow();
+    await expect(compactMessages(messages, 40)).resolves.toBeDefined();
   });
 
-  it("does not mutate the original messages array", () => {
+  it("does not mutate the original messages array", async () => {
     const messages = buildConversation(40, 1000);
     const originalJson = JSON.stringify(messages);
-    compactMessages(messages, 40);
+    await compactMessages(messages, 40);
     expect(JSON.stringify(messages)).toBe(originalJson);
   });
 
-  it("total message count stays the same after compaction", () => {
+  it("total message count stays the same after compaction", async () => {
     const messages = buildConversation(40, 1000);
-    const result = compactMessages(messages, 40);
+    const result = await compactMessages(messages, 40);
     expect(result.messages.length).toBe(messages.length);
   });
 
-  it("keeps input growth roughly linear across a simulated 40-step turn with 8k-char tool results", () => {
+  it("keeps input growth roughly linear across a simulated 40-step turn with 8k-char tool results", async () => {
     // Simulates the failure mode behind issue #1328 (the $77.89 turn):
     // every step replays the whole history, so per-step input grows linearly
     // and CUMULATIVE input grows quadratically without compaction. With
@@ -304,7 +306,7 @@ describe("compactMessages", () => {
     for (let step = 1; step <= STEPS; step++) {
       const history = buildConversation(step, RESULT_CHARS);
       perStepWithout.push(inputChars(history));
-      perStepWith.push(inputChars(compactMessages(history, step).messages));
+      perStepWith.push(inputChars((await compactMessages(history, step)).messages));
     }
 
     // Without compaction, per-step input keeps growing linearly to the end
@@ -330,5 +332,145 @@ describe("compactMessages", () => {
     const cumulativeWithout = perStepWithout.reduce((a, b) => a + b, 0);
     const cumulativeWith = perStepWith.reduce((a, b) => a + b, 0);
     expect(cumulativeWith).toBeLessThan(cumulativeWithout * 0.7);
+  });
+});
+
+describe("summarize-on-evict (issue #1330)", () => {
+  const SUMMARY = "42 rows; columns: id, name, total; max total = 913; no errors";
+
+  function collectStubParts(messages: ModelMessage[]): any[] {
+    const parts: any[] = [];
+    for (const msg of messages) {
+      if (msg.role !== "tool" || !Array.isArray(msg.content)) continue;
+      for (const part of msg.content as any[]) {
+        if (
+          part.type === "tool-result" &&
+          part.output?.type === "text" &&
+          (part.output.value.startsWith("[Summarized]") ||
+            part.output.value.startsWith("[Compacted]"))
+        ) {
+          parts.push(part);
+        }
+      }
+    }
+    return parts;
+  }
+
+  it("summarizes evicted results at or above SUMMARIZE_ON_EVICT_MIN_CHARS", async () => {
+    const summarize = vi.fn().mockResolvedValue(SUMMARY);
+    const messages = buildConversation(40, SUMMARIZE_ON_EVICT_MIN_CHARS);
+    const result = await compactMessages(messages, 40, { summarize });
+
+    expect(summarize).toHaveBeenCalled();
+    expect(result.summarizedCount).toBeGreaterThan(0);
+    expect(result.summarizedCount).toBe(result.compactedCount);
+
+    const summarized = collectStubParts(result.messages).filter((p) =>
+      p.output.value.startsWith("[Summarized]"),
+    );
+    expect(summarized.length).toBe(result.summarizedCount);
+    for (const part of summarized) {
+      expect(part.output.value).toContain(part.toolName);
+      // The stub must state it is a summary and how much was elided.
+      expect(part.output.value).toContain("AI-generated summary");
+      expect(part.output.value).toMatch(/\d+-char result \(~\d+ chars elided\)/);
+      expect(part.output.value).toContain("Full result available in conversation trace");
+      expect(part.output.value).toContain(SUMMARY);
+    }
+  });
+
+  it("hard-truncates results below the summarize threshold without calling the model", async () => {
+    const summarize = vi.fn().mockResolvedValue(SUMMARY);
+    // Above the compaction cap (500) but below the summarize threshold:
+    // a summary stub would not save enough tokens to pay for the call.
+    const messages = buildConversation(40, SUMMARIZE_ON_EVICT_MIN_CHARS - 1);
+    const result = await compactMessages(messages, 40, { summarize });
+
+    expect(summarize).not.toHaveBeenCalled();
+    expect(result.summarizedCount).toBe(0);
+    expect(result.compactedCount).toBeGreaterThan(0);
+
+    const stubs = collectStubParts(result.messages);
+    expect(stubs.length).toBeGreaterThan(0);
+    for (const part of stubs) {
+      expect(part.output.value).toMatch(/^\[Compacted\]/);
+    }
+  });
+
+  it("hard-truncates enormous results above SUMMARIZE_ON_EVICT_MAX_CHARS without calling the model", async () => {
+    const summarize = vi.fn().mockResolvedValue(SUMMARY);
+    const messages = buildConversation(25, SUMMARIZE_ON_EVICT_MAX_CHARS + 1);
+    const result = await compactMessages(messages, 40, { summarize });
+
+    expect(summarize).not.toHaveBeenCalled();
+    expect(result.summarizedCount).toBe(0);
+    expect(result.compactedCount).toBeGreaterThan(0);
+  });
+
+  it("falls back to hard truncation when the summarization call fails", async () => {
+    const summarize = vi.fn().mockRejectedValue(new Error("model unavailable"));
+    const messages = buildConversation(40, 8000);
+    const result = await compactMessages(messages, 40, { summarize });
+
+    expect(summarize).toHaveBeenCalled();
+    expect(result.summarizedCount).toBe(0);
+    expect(result.compactedCount).toBeGreaterThan(0);
+
+    const stubs = collectStubParts(result.messages);
+    for (const part of stubs) {
+      expect(part.output.value).toMatch(/^\[Compacted\]/);
+    }
+  });
+
+  it("falls back to hard truncation when the summary would not save tokens", async () => {
+    // A "summary" nearly as long as the original saves nothing.
+    const messages = buildConversation(40, 8000);
+    const summarize = vi.fn().mockResolvedValue("s".repeat(7000));
+    const result = await compactMessages(messages, 40, { summarize });
+
+    expect(result.summarizedCount).toBe(0);
+    expect(result.compactedCount).toBeGreaterThan(0);
+  });
+
+  it("memoizes summaries by toolCallId across steps via summaryCache", async () => {
+    const summarize = vi.fn().mockResolvedValue(SUMMARY);
+    const summaryCache = new Map<string, string>();
+    const messages = buildConversation(40, 8000);
+
+    const first = await compactMessages(messages, 40, { summarize, summaryCache });
+    const callsAfterFirst = summarize.mock.calls.length;
+    expect(callsAfterFirst).toBeGreaterThan(0);
+
+    // Same history on the next step: every summary must come from the cache.
+    const second = await compactMessages(messages, 41, { summarize, summaryCache });
+    expect(summarize.mock.calls.length).toBe(callsAfterFirst);
+    expect(second.summarizedCount).toBe(first.summarizedCount);
+  });
+
+  it("passes the tool name and full result text to the summarizer", async () => {
+    const summarize = vi.fn().mockResolvedValue(SUMMARY);
+    const messages = buildConversation(40, 8000);
+    await compactMessages(messages, 40, { summarize });
+
+    const firstCall = summarize.mock.calls[0][0];
+    expect(firstCall.toolName).toMatch(/^tool_\d+$/);
+    expect(firstCall.text).toBe("x".repeat(8000));
+  });
+
+  it("never summarizes results in the recent live tail", async () => {
+    const summarize = vi.fn().mockResolvedValue(SUMMARY);
+    const messages = buildConversation(40, 8000);
+    const result = await compactMessages(messages, 40, { summarize });
+
+    const keepFromEnd = COMPACTION_KEEP_RECENT * 2;
+    for (const msg of result.messages.slice(-keepFromEnd)) {
+      if (msg.role === "tool" && Array.isArray(msg.content)) {
+        for (const part of msg.content as any[]) {
+          if (part.type === "tool-result" && part.output?.type === "text") {
+            expect(part.output.value).not.toContain("[Summarized]");
+          }
+        }
+      }
+    }
   });
 });

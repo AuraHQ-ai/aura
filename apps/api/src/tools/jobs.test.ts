@@ -15,6 +15,9 @@ const dbMock = vi.hoisted(() => {
   function createQuery() {
     let predicate: Predicate | undefined;
 
+    const resolveRows = () =>
+      predicate ? state.rows.filter((row) => predicate?.(row)) : state.rows;
+
     const query: any = {
       from: vi.fn(() => query),
       where: vi.fn((condition: Predicate) => {
@@ -23,13 +26,13 @@ const dbMock = vi.hoisted(() => {
         return query;
       }),
       orderBy: vi.fn(() => query),
-      limit: vi.fn((limit: number) => {
-        const filtered = predicate
-          ? state.rows.filter((row) => predicate?.(row))
-          : state.rows;
-
-        return Promise.resolve(filtered.slice(0, limit));
-      }),
+      limit: vi.fn((limit: number) => Promise.resolve(resolveRows().slice(0, limit))),
+      // Queries awaited without .limit() (e.g. the unlimited enabled-recurring
+      // query in list_jobs) resolve through this thenable.
+      then: (
+        onFulfilled: (rows: Array<Record<string, unknown>>) => unknown,
+        onRejected?: (err: unknown) => unknown,
+      ) => Promise.resolve(resolveRows()).then(onFulfilled, onRejected),
     };
 
     return query;
@@ -121,6 +124,9 @@ const drizzleMock = vi.hoisted(() => {
         activeConditions.some((condition) => condition(row)),
       );
     }),
+    not: vi.fn((condition: Predicate) =>
+      predicate("not", (row) => !condition(row)),
+    ),
     desc: vi.fn((column: { key: string }) => ({ column })),
     sql: vi.fn(),
   };
@@ -323,9 +329,62 @@ describe("list_jobs", () => {
       "failed-job",
     ]);
     expect(result.count).toBe(2);
-    // status:"all" adds no status condition, but the default
-    // include_archived:false filter still applies one where() call.
-    expect(dbMock.whereCalls).toHaveLength(1);
+    // list_jobs runs two queries: one for enabled recurring jobs (unlimited)
+    // and one for everything else (limited). Each applies a where() call.
+    expect(dbMock.whereCalls).toHaveLength(2);
+  });
+
+  it("always returns enabled recurring jobs even when the limit truncates other rows (#1306)", async () => {
+    // Legacy-shaped recurring row: empty channel_id, old created_at — created
+    // long before the newer one-shots that would otherwise fill the limit.
+    const legacyRecurring = baseJob({
+      id: "job-recurring-legacy",
+      name: "sergio-sales-tip",
+      status: "completed",
+      cronSchedule: "50 8 * * 1-5",
+      channelId: "",
+      createdAt: new Date("2026-02-16T00:00:00.000Z"),
+    });
+    dbMock.rows = [
+      baseJob({ id: "job-1", name: "one-shot-1", status: "pending", createdAt: new Date("2026-05-19T00:00:00.000Z") }),
+      baseJob({ id: "job-2", name: "one-shot-2", status: "pending", createdAt: new Date("2026-05-18T00:00:00.000Z") }),
+      baseJob({ id: "job-3", name: "one-shot-3", status: "pending", createdAt: new Date("2026-05-17T00:00:00.000Z") }),
+      legacyRecurring,
+    ];
+
+    const result = await listJobs({ status: "all", limit: 2 });
+
+    expect(result.ok).toBe(true);
+    expect(result.jobs.map((job: { name: string }) => job.name)).toEqual([
+      "one-shot-1",
+      "one-shot-2",
+      "sergio-sales-tip",
+    ]);
+    expect(result.count).toBe(3);
+  });
+
+  it("does not double-count enabled recurring jobs against the limit for one-shots", async () => {
+    dbMock.rows = [
+      baseJob({
+        id: "job-recurring",
+        name: "daily-digest",
+        status: "completed",
+        cronSchedule: "0 9 * * *",
+        createdAt: new Date("2026-05-20T00:00:00.000Z"),
+      }),
+      baseJob({ id: "job-1", name: "one-shot-1", status: "pending", createdAt: new Date("2026-05-19T00:00:00.000Z") }),
+      baseJob({ id: "job-2", name: "one-shot-2", status: "pending", createdAt: new Date("2026-05-18T00:00:00.000Z") }),
+    ];
+
+    const result = await listJobs({ status: "all", limit: 2 });
+
+    expect(result.ok).toBe(true);
+    // The recurring job is exempt from the limit, so both one-shots fit.
+    expect(result.jobs.map((job: { name: string }) => job.name)).toEqual([
+      "daily-digest",
+      "one-shot-1",
+      "one-shot-2",
+    ]);
   });
 
   it("excludes archived jobs by default and includes them with include_archived", async () => {
