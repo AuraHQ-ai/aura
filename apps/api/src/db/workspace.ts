@@ -99,6 +99,52 @@ async function buildHandle(client: PooledClient, kind: DriverKind): Promise<Data
 }
 
 /**
+ * Boot-time privilege assertion (issue #1393 review): the RLS policies are
+ * INERT for roles with BYPASSRLS or superuser (BYPASSRLS beats FORCE ROW
+ * LEVEL SECURITY — FORCE only removes the *owner* exemption). On production
+ * Neon, `neondb_owner` has BYPASSRLS, which is exactly why migration 0092
+ * introduces the non-bypassing `aura_app` role. This check runs once per
+ * process, on the first pinned connection: if the connected role is
+ * RLS-exempt it logs a hard error (single-tenant prod keeps running — the
+ * failure mode is "containment inert", not "app down") and THROWS when
+ * MULTI_TENANT=true, because in multi-tenant mode an exempt role means
+ * cross-tenant reads.
+ */
+let roleAssertionPromise: Promise<void> | null = null;
+
+function assertNonBypassingRole(client: PooledClient): Promise<void> {
+  if (!roleAssertionPromise) {
+    roleAssertionPromise = (async () => {
+      const result = (await client.query(
+        "SELECT current_user::text AS role, rolbypassrls, rolsuper FROM pg_roles WHERE rolname = current_user",
+      )) as { rows?: Array<{ role: string; rolbypassrls: boolean; rolsuper: boolean }> };
+      const row = result.rows?.[0];
+      if (!row) return;
+      if (row.rolbypassrls || row.rolsuper) {
+        const message =
+          `RLS containment is INERT: database role "${row.role}" has ` +
+          `${row.rolsuper ? "SUPERUSER" : "BYPASSRLS"}, which exempts it from every ` +
+          `row-level-security policy (FORCE does not override role attributes). ` +
+          `Point DATABASE_URL at the non-privileged "aura_app" role (migration 0092, ` +
+          `see the PR #1396 runbook).`;
+        logger.error(message, { role: row.role, rolbypassrls: row.rolbypassrls, rolsuper: row.rolsuper });
+        if (process.env.MULTI_TENANT === "true") {
+          throw new Error(message);
+        }
+      }
+    })();
+    roleAssertionPromise.catch(() => {
+      // A thrown assertion (MULTI_TENANT) must stay thrown for every caller;
+      // only transient query failures should be retried. Distinguishing the
+      // two: the assertion error message is stable, so re-running is safe
+      // and cheap either way.
+      if (process.env.MULTI_TENANT !== "true") roleAssertionPromise = null;
+    });
+  }
+  return roleAssertionPromise;
+}
+
+/**
  * Unit-test pass-through: the existing vitest suite mocks `../db/client.js`
  * and calls entry points (job executor, Slack event handlers, webhooks)
  * without any database. In that mode withWorkspace() must not try to open a
@@ -146,6 +192,7 @@ export async function withWorkspace<T>(
   const store: WorkspaceStore = { workspaceId, handle: null, active: false };
   let broken = false;
   try {
+    await assertNonBypassingRole(client);
     // set_config(..., false) = session-scoped on this pinned connection.
     await client.query("SELECT set_config('app.workspace_id', $1, false)", [workspaceId]);
     store.handle = await buildHandle(client, kind);
