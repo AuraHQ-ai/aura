@@ -97,7 +97,7 @@ export function createJobTools(
           .array(z.string())
           .optional()
           .describe(
-            "Restrict the job's sandbox env to ONLY these credential env var names (e.g. ['META_ADMIN_TOKEN', 'SLACK_BOT_TOKEN']) plus core infra vars. Narrows the caller's credential set — never widens it. Use for jobs that process untrusted input so a prompt injection can't reach unrelated credentials. Omit for full inheritance.",
+            "Restrict the job's credentials to ONLY these credential env var names (e.g. ['META_ADMIN_TOKEN', 'SLACK_BOT_TOKEN']) plus core infra vars. Applies to the sandbox env AND to credential-gated typed tools (bq_execute_query, Gmail tools, web_search, …): tools whose backing credential is not in the allowlist are omitted from the job's tool set. Narrows the caller's credential set — never widens it. Use for jobs that process untrusted input so a prompt injection can't reach unrelated credentials. Omit for full inheritance.",
           ),
         prompt_mode: z
           .enum(["full", "task"])
@@ -575,7 +575,7 @@ export function createJobTools(
             .nullable()
             .optional()
             .describe(
-              "Restrict the job's sandbox env to ONLY these credential env var names (plus core infra vars). Set to null to restore full inheritance.",
+              "Restrict the job's sandbox env AND credential-gated typed tools to ONLY these credential env var names (plus core infra vars). Set to null to restore full inheritance.",
             ),
           prompt_mode: z
             .enum(["full", "task"])
