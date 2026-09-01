@@ -48,6 +48,10 @@ jobs:
 
       - name: Test
         run: pnpm --filter aura-api test
+        env:
+          # No real DB in CI -- src/db/client.ts throws without this,
+          # and several pipeline tests import it transitively.
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
 
       # Must stay last and must stay in this job: a green typecheck on a
       # non-building commit is exactly the failure mode this workflow exists
