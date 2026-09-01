@@ -559,6 +559,21 @@ export function createVoiceTools(client?: WebClient, context?: ScheduleContext):
           .describe(
             "Language code (es/fr/it/en/de). The LLM should always specify this explicitly based on context about the person.",
           ),
+        callback_channel: z
+          .string()
+          .optional()
+          .describe(
+            "Slack channel ID to post the post-call summary to. " +
+            "Defaults to the channel the call was initiated from. " +
+            "When no callback target exists, the summary only goes to the voice monitoring channel.",
+          ),
+        callback_thread_ts: z
+          .string()
+          .optional()
+          .describe(
+            "Slack thread timestamp to post the post-call summary into. " +
+            "Defaults to the current thread when callback_channel is omitted.",
+          ),
       }),
       execute: async ({
         agent_id: agentIdParam,
@@ -570,6 +585,8 @@ export function createVoiceTools(client?: WebClient, context?: ScheduleContext):
         prompt,
         context: callContext,
         language,
+        callback_channel,
+        callback_thread_ts,
       }) => {
         const apiKey = await resolveCredentialValue("elevenlabs_api_key");
         if (!apiKey) {
@@ -704,6 +721,14 @@ export function createVoiceTools(client?: WebClient, context?: ScheduleContext):
             ? undefined
             : "ElevenLabs did not return a conversation_id; call tracking and webhooks may not work for this call.";
 
+          // Capture where the call was initiated from so the post-call
+          // webhook can route the summary back to the originating thread.
+          const resolvedCallbackChannel =
+            callback_channel ?? context?.channelId ?? null;
+          const resolvedCallbackThreadTs =
+            callback_thread_ts ??
+            (callback_channel ? null : context?.threadTs ?? null);
+
           if (conversationId) {
             try {
               await db
@@ -718,6 +743,16 @@ export function createVoiceTools(client?: WebClient, context?: ScheduleContext):
                   status: "in_progress",
                   callContext: callContext || null,
                   dynamicVariables: dynamicVars,
+                  ...(resolvedCallbackChannel
+                    ? {
+                        metadata: {
+                          callback_channel: resolvedCallbackChannel,
+                          ...(resolvedCallbackThreadTs
+                            ? { callback_thread_ts: resolvedCallbackThreadTs }
+                            : {}),
+                        },
+                      }
+                    : {}),
                 })
                 .onConflictDoNothing({ target: voiceCalls.conversationId });
             } catch (dbError: any) {

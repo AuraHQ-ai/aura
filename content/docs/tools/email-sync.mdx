@@ -30,7 +30,8 @@ Every synced email thread has a state:
 ## Tools
 
 - `search_emails` — Find emails by keyword or meaning. Supports filtering by triage state.
-- `update_email_threads` — Batch-update triage states for multiple threads at once.
+- `update_email_threads` — Batch-update triage states for multiple threads at once (internal state only; does not touch Gmail).
+- `archive_emails` — Archive threads in the real Gmail mailbox (removes the `INBOX` label via `messages.batchModify`; messages stay in All Mail). Also marks archived threads `resolved` locally, and returns per-thread `archived` / `failed` / `not_found` results.
 - `read_user_email` — Read a specific email message with full content and attachments.
 - `download_email_attachment` — Download and process email attachments.
 

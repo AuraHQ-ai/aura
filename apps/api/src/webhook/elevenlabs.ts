@@ -2,7 +2,7 @@ import { Hono } from "hono";
 import { WebClient } from "@slack/web-api";
 import { waitUntil } from "@vercel/functions";
 import crypto from "node:crypto";
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { logger } from "../lib/logger.js";
 import { recordError } from "../lib/metrics.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
@@ -282,6 +282,33 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
       const { transcript: _t, analysis: _a, ...metadataRest } = data;
       const strippedMetadata = metadataRest as Record<string, unknown>;
 
+      // Read the callback target captured at place_call time (stored in the
+      // record's metadata) BEFORE the upsert below overwrites metadata.
+      let callbackChannel: string | undefined;
+      let callbackThreadTs: string | undefined;
+      try {
+        const existing = await db
+          .select({ metadata: voiceCalls.metadata })
+          .from(voiceCalls)
+          .where(eq(voiceCalls.conversationId, conversationId))
+          .limit(1);
+        const existingMetadata = existing[0]?.metadata ?? {};
+        if (typeof existingMetadata.callback_channel === "string") {
+          callbackChannel = existingMetadata.callback_channel;
+        }
+        if (typeof existingMetadata.callback_thread_ts === "string") {
+          callbackThreadTs = existingMetadata.callback_thread_ts;
+        }
+      } catch (lookupErr) {
+        logger.warn("Post-call callback lookup failed", {
+          conversationId,
+          error: lookupErr instanceof Error ? lookupErr.message : String(lookupErr),
+        });
+      }
+      // Preserve the callback target across the metadata overwrite.
+      if (callbackChannel) strippedMetadata.callback_channel = callbackChannel;
+      if (callbackThreadTs) strippedMetadata.callback_thread_ts = callbackThreadTs;
+
       await db
         .insert(voiceCalls)
         .values({
@@ -337,15 +364,42 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
           ? `\n\n*Transcript excerpt:*\n>${truncatedTranscript}`
           : "");
 
+      // Route the summary back to the originating channel/thread when a
+      // callback target was captured at place_call time (#400).
+      if (callbackChannel) {
+        try {
+          await safePostMessage(slackClient, {
+            channel: callbackChannel,
+            text: slackMessage,
+            ...(callbackThreadTs ? { thread_ts: callbackThreadTs } : {}),
+          });
+          logger.info("Post-call summary sent to originating thread", {
+            conversationId,
+            channel: callbackChannel,
+            threadTs: callbackThreadTs ?? null,
+          });
+        } catch (slackErr) {
+          logger.error("Failed to post call summary to originating thread", {
+            conversationId,
+            channel: callbackChannel,
+            error: slackErr instanceof Error ? slackErr.message : String(slackErr),
+          });
+        }
+      }
+
+      // Monitoring copy to the voice channel (current behaviour, kept as
+      // fallback when no callback target exists).
       try {
         const voiceChannel = await getConfig("elevenlabs_voice_channel");
-        if (voiceChannel) {
+        const duplicatesCallback =
+          !!voiceChannel && voiceChannel === callbackChannel && !callbackThreadTs;
+        if (voiceChannel && !duplicatesCallback) {
           await safePostMessage(slackClient, {
             channel: voiceChannel,
             text: slackMessage,
           });
           logger.info("Post-call summary sent to voice channel", { conversationId });
-        } else {
+        } else if (!voiceChannel && !callbackChannel) {
           logger.warn("ELEVENLABS_VOICE_CHANNEL not configured — skipping post-call message");
         }
       } catch (slackErr) {

@@ -1,6 +1,6 @@
 ---
 title: "Email & Calendar Tools"
-description: "Gmail reading, drafting, sending, triage, calendar management, and workspace directory — 22 tools."
+description: "Gmail reading, drafting, sending, triage, archiving, calendar management, and workspace directory — 23 tools."
 ---
 
 # Email & Calendar Tools
@@ -159,7 +159,7 @@ Get a structured email digest for a user: counts, thread objects with `gmail_thr
 ---
 
 ### `update_email_thread`
-Update the triage state of a single email thread.
+Update the triage state of a single email thread. **Internal state only** — this changes Aura's triage pipeline in Postgres and does not touch the real Gmail mailbox. Use `archive_emails` to actually remove threads from the Gmail inbox.
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
@@ -171,12 +171,23 @@ Update the triage state of a single email thread.
 ---
 
 ### `update_email_threads`
-Batch-update triage states for multiple threads at once. Use after `email_digest`.
+Batch-update triage states for multiple threads at once. Use after `email_digest`. Internal state only — see `archive_emails` for real Gmail archiving.
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
 | `user_name` | string | **yes** | Account owner |
 | `updates` | array | **yes** | Array of `{ gmail_thread_id, thread_state, reason? }` |
+
+---
+
+### `archive_emails`
+Archive threads in the user's **real Gmail mailbox** by removing the `INBOX` label via the Gmail API (`messages.batchModify`). Messages stay in All Mail — nothing is deleted. Archived threads are also marked `resolved` in the local triage pipeline. Returns an explicit per-thread result (`archived` / `failed` / `not_found`) so callers never report a false success.
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `user_name` | string | **yes** | Account owner |
+| `gmail_thread_ids` | string[] | **yes** | Gmail thread IDs to archive (max 50 per call) |
+| `reason` | string | no | Why the threads are being archived (stored in triage state) |
 
 ---
 

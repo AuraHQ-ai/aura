@@ -99,7 +99,7 @@ Create a one-shot task, recurring job, or follow-up.
 | `min_interval_hours` | number | no | Minimum hours between executions. Anchored to the job's *scheduled* fire time, not wall-clock execution time -- an off-schedule run (e.g. a manual trigger or recovery re-run) never pushes back the next scheduled fire (#1238). |
 | `script` | string | no | Shell command to run before/instead of LLM. See [execution modes](#execution-modes) below. |
 | `model` | enum | no | Model catalog category to execute with: `fast` (cheap, mechanical tasks), `medium` (Sonnet-class — the default and standard tier for jobs), `main` (frontier), or `escalation` (exceptionally hard work) |
-| `env_allowlist` | string[] | no | Restrict the job's sandbox env to only these credential env var names (plus core infra vars). Omit for full inheritance. |
+| `env_allowlist` | string[] | no | Restrict the job's sandbox env AND credential-gated typed tools to only these credential env var names (plus core infra vars). Omit for full inheritance. |
 | `prompt_mode` | enum | no | `full` (default) or `task` — see [Prompt Modes](/prompt-modes) |
 
 ---
@@ -135,13 +135,20 @@ Routes the job's LLM execution to a model catalog category. A job with no `model
 
 The category resolves through the same chain as everywhere else: the DB settings row (`model_medium`, `model_fast`, `model_main`, `model_escalation`) first, then the hardcoded `LAST_RESORT_MODELS` map in `apps/api/src/lib/ai.ts`, which logs a warning so the missing setting is visible. `model_catalog_selections` is no longer consulted during resolution. Set the per-category model in the dashboard settings page — every model in the synced gateway catalog is selectable.
 
-### `env_allowlist` — sandbox credential narrowing
+### `env_allowlist` — credential narrowing
 
-Restricts the job's sandbox environment to only the listed credential env var names, plus core infra vars that the sandbox needs to function (`E2B_API_KEY`, `E2B_TEMPLATE_ID`, `GOOGLE_SA_KEY_B64`). Matching is case-insensitive, and `GITHUB_TOKEN`/`GH_TOKEN` are aliased to each other.
+Restricts the job's credentials to only the listed credential env var names, plus core infra vars that the sandbox needs to function (`E2B_API_KEY`, `E2B_TEMPLATE_ID`, `GOOGLE_SA_KEY_B64`). Matching is case-insensitive, and `GITHUB_TOKEN`/`GH_TOKEN` are aliased to each other.
 
-The allowlist **narrows, never widens**: it intersects with the caller's credential set, so names in the allowlist that the caller can't access are not added. It applies both to the LLM execution (every `run_command` in the job) and to the `script` layer.
+The allowlist **narrows, never widens**: it intersects with the caller's credential set, so names in the allowlist that the caller can't access are not added. It covers every credential-resolution path in the run:
+
+- **Sandbox env** — every `run_command` in the job and the `script` layer only see allowlisted env vars.
+- **Typed tools** — tools gated on a backing credential (`bq_execute_query`, Gmail tools, `web_search`, …) are omitted from the job's tool set when that credential is not in the allowlist. Matching uses the credential's `sandbox_env_name` when set, otherwise the uppercased credential name (e.g. `google_oauth` → `GOOGLE_OAUTH`). This includes tools built at runtime (e.g. inside subagents), so a scoped job can't reach an out-of-allowlist credential through a typed tool.
 
 Use this for jobs that process untrusted input (scraped web content, inbound email, ad comments) so a prompt injection can't reach unrelated credentials. Omit for full inheritance of the caller's credential set. On `update_job`, set to `null` to restore full inheritance.
+
+### Required credentials are owner-scoped
+
+Credential resolution for a job run is deliberately scoped to the job owner (`requested_by`) — dispatching a job or transferring it never widens scope. When a job lists required credential IDs and one of them is not available to the owner (for example an admin-scoped credential on a job now owned by a non-admin, or a credential that was deleted), the run **fails closed before executing anything**: the execution is marked failed and an ops notice naming the credential and the job owner goes out via the ops routing ladder. Fix it by granting the credential to the owner or transferring the job to a user with access.
 
 ### `prompt_mode` — task-mode system prompt
 
