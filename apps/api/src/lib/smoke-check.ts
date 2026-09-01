@@ -161,11 +161,27 @@ async function probeCursor(_signal: AbortSignal): Promise<ProbeOutcome> {
   const apiKey = await resolveCredentialValue("cursor_api_key");
   if (!apiKey) return skipped("not_configured");
 
-  // Same @cursor/sdk call path the cursor-agent tools use, so this catches
-  // upstream endpoint/contract drift for the whole integration (#986's
-  // original incident was a silent Cursor endpoint rename).
-  const { Agent } = await import("@cursor/sdk");
-  await Agent.list({ runtime: "cloud", apiKey, limit: 1 });
+  // Raw v0 REST, not @cursor/sdk: 1.0.30's published dist is unbundlable
+  // under the Workflow DevKit esbuild step-discovery pass (dynamic import()
+  // of its own .d.ts.map files, plus unresolvable bun:sqlite / vendor /
+  // ./errors.js / ./stubs.js references) -- it broke
+  // pnpm --filter aura-api build:vercel on main. See cursor-agent.ts for the
+  // full writeup. This still catches upstream endpoint/contract drift for
+  // the whole integration (#986's original incident was a silent Cursor
+  // endpoint rename).
+  const res = await fetch("https://api.cursor.com/v0/agents?limit=1", {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      "Content-Type": "application/json",
+    },
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(
+      `Cursor API GET /agents failed (${res.status}): ${text}`,
+    );
+  }
   return OK;
 }
 
