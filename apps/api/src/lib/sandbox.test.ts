@@ -60,11 +60,13 @@ vi.mock("./metrics.js", () => ({
 import { logger } from "./logger.js";
 import { getSetting } from "./settings.js";
 import { executionContext } from "./tool.js";
+import { filterToolsByCredentials } from "./tool.js";
 import {
   ensureAuraTools,
   getSandboxEnvs,
   getSandboxEnvNames,
   filterEnvsByAllowlist,
+  filterCredentialNamesByEnvAllowlist,
 } from "./sandbox.js";
 
 const getSettingMock = vi.mocked(getSetting);
@@ -275,6 +277,72 @@ describe("filterEnvsByAllowlist", () => {
   it("returns the map unchanged for a null allowlist (full inheritance)", () => {
     expect(filterEnvsByAllowlist(envs, null)).toEqual(envs);
     expect(filterEnvsByAllowlist(envs, undefined)).toEqual(envs);
+  });
+});
+
+describe("filterCredentialNamesByEnvAllowlist (issue #1312)", () => {
+  it("keeps credentials whose uppercased name is allowlisted, drops the rest", () => {
+    const filtered = filterCredentialNamesByEnvAllowlist(
+      new Set(["meta_admin_token", "tavily_api_key", "google_bq_credentials"]),
+      ["TAVILY_API_KEY"],
+    );
+
+    expect(filtered).toEqual(new Set(["tavily_api_key"]));
+  });
+
+  it("matches through the credential's explicit sandbox env name", () => {
+    const filtered = filterCredentialNamesByEnvAllowlist(
+      new Set(["meta_ads_system_user", "tavily_api_key"]),
+      ["META_ADMIN_TOKEN"],
+      new Map([["meta_ads_system_user", "META_ADMIN_TOKEN"]]),
+    );
+
+    expect(filtered).toEqual(new Set(["meta_ads_system_user"]));
+  });
+
+  it("keeps core infra credentials and the GH_TOKEN alias", () => {
+    const filtered = filterCredentialNamesByEnvAllowlist(
+      new Set(["e2b_api_key", "github_token", "slack_bot_token"]),
+      ["GH_TOKEN"],
+    );
+
+    // e2b_api_key maps to core infra env E2B_API_KEY; github_token via alias.
+    expect(filtered).toEqual(new Set(["e2b_api_key", "github_token"]));
+  });
+
+  it("returns the set unchanged for a null allowlist (full inheritance)", () => {
+    const names = new Set(["github_token", "tavily_api_key"]);
+    expect(filterCredentialNamesByEnvAllowlist(names, null)).toEqual(names);
+    expect(filterCredentialNamesByEnvAllowlist(names, undefined)).toEqual(names);
+  });
+
+  it("an empty allowlist keeps only core-infra-backed credentials (fail closed)", () => {
+    const filtered = filterCredentialNamesByEnvAllowlist(
+      new Set(["google_bq_credentials", "google_oauth", "e2b_api_key"]),
+      [],
+    );
+
+    expect(filtered).toEqual(new Set(["e2b_api_key"]));
+  });
+
+  it("gates credential-backed typed tools when combined with filterToolsByCredentials", () => {
+    // Plain objects standing in for defineTool() output — filterToolsByCredentials
+    // only reads the __requiredCredentials metadata.
+    const tools = {
+      bq_execute_query: { __requiredCredentials: ["google_bq_credentials"] },
+      web_search: { __requiredCredentials: ["tavily_api_key"] },
+      read_note: {},
+    };
+    const userCredentials = new Set(["google_bq_credentials", "tavily_api_key"]);
+
+    const scoped = filterCredentialNamesByEnvAllowlist(userCredentials, [
+      "TAVILY_API_KEY",
+    ]);
+    const filtered = filterToolsByCredentials(tools, scoped);
+
+    // bq_execute_query's backing credential is outside the allowlist → omitted.
+    // Credential-free tools are unaffected.
+    expect(Object.keys(filtered).sort()).toEqual(["read_note", "web_search"]);
   });
 });
 
