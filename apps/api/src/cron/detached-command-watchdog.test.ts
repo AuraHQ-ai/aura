@@ -34,6 +34,12 @@ const dbMock = vi.hoisted(() => {
         state.operations.push(operation);
         return Promise.resolve(nextResult());
       }),
+      // Queries awaited without .returning()/.limit() (e.g. the issue #1326
+      // suspension-clear update) still record their operation.
+      then: (onFulfilled: any, onRejected: any) => {
+        state.operations.push(operation);
+        return Promise.resolve(nextResult()).then(onFulfilled, onRejected);
+      },
     };
     return query;
   }
@@ -160,6 +166,11 @@ describe("detached command watchdog sweep", () => {
         status: "failed",
         finishedAt: expect.any(Date),
         error: "detached command abcdef12 never resumed (webhook continuation lost)",
+      }),
+      // Suspension shield dropped (issue #1326) so the heartbeat stale sweep
+      // can recover the parent job immediately.
+      expect.objectContaining({
+        suspendedUntil: null,
       }),
     ]);
 

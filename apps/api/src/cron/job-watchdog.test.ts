@@ -252,6 +252,7 @@ describe("sweepStuckJobs — selection logic", () => {
       detected: 0,
       markedFailed: 0,
       requeued: 0,
+      skippedSuspended: 0,
     });
     expect(updateSets()).toEqual([]);
   });
@@ -286,6 +287,78 @@ describe("sweepStuckJobs — selection logic", () => {
 
     const jobSet = updateSets().find((s) => s.result !== undefined);
     expect(jobSet?.result).toContain(WATCHDOG_RESET_MARKER);
+  });
+});
+
+// ── Webhook-suspension exclusion (issue #1326) ────────────────────────────────
+
+describe("sweepStuckJobs — webhook-suspended executions", () => {
+  beforeEach(() => {
+    dbMock.results = [];
+    dbMock.operations = [];
+    vi.clearAllMocks();
+  });
+
+  it("skips an execution whose suspension deadline is still in the future", async () => {
+    // Suspended 30 min past NOW — legitimately parked awaiting a webhook.
+    const exec = baseExecution({
+      startedAt: new Date("2026-08-17T06:00:00.000Z"), // 59 min ago (stale by age)
+      suspendedUntil: new Date(NOW.getTime() + 30 * 60 * 1000),
+    });
+    const job = baseJob({ cronSchedule: null });
+
+    queueDbResults([exec], [job]);
+
+    const { sweepStuckJobs } = await import("./job-watchdog.js");
+    const result = await sweepStuckJobs(NOW);
+
+    expect(result.detected).toBe(1);
+    expect(result.skippedSuspended).toBe(1);
+    expect(result.markedFailed).toBe(0);
+    expect(result.requeued).toBe(0);
+    // The execution must NOT be claimed or failed while suspended.
+    expect(updateSets()).toEqual([]);
+  });
+
+  it("processes an execution whose suspension deadline has elapsed", async () => {
+    const exec = baseExecution({
+      startedAt: new Date("2026-08-17T06:00:00.000Z"),
+      suspendedUntil: new Date(NOW.getTime() - 5 * 60 * 1000), // elapsed 5 min ago
+    });
+    const job = baseJob({ cronSchedule: null });
+
+    queueDbResults([exec], [job], [{ id: exec.id }], []);
+
+    const { sweepStuckJobs } = await import("./job-watchdog.js");
+    const result = await sweepStuckJobs(NOW);
+
+    expect(result.detected).toBe(1);
+    expect(result.skippedSuspended).toBe(0);
+    expect(result.markedFailed).toBe(1);
+    expect(updateSets()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          status: "failed",
+          error: expect.stringContaining("reset by watchdog"),
+        }),
+      ]),
+    );
+  });
+
+  it("treats a null suspendedUntil as not suspended", async () => {
+    const exec = baseExecution({
+      startedAt: new Date("2026-08-17T06:00:00.000Z"),
+      suspendedUntil: null,
+    });
+    const job = baseJob({ cronSchedule: null });
+
+    queueDbResults([exec], [job], [{ id: exec.id }], []);
+
+    const { sweepStuckJobs } = await import("./job-watchdog.js");
+    const result = await sweepStuckJobs(NOW);
+
+    expect(result.skippedSuspended).toBe(0);
+    expect(result.markedFailed).toBe(1);
   });
 });
 

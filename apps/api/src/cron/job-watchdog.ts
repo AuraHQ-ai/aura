@@ -1,7 +1,8 @@
-import { and, eq, inArray, lt } from "drizzle-orm";
+import { and, eq, inArray, isNull, lt, lte, or } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { jobs, jobExecutions } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
+import { isSuspensionActive } from "../lib/job-suspension.js";
 import { computeNextCronTick } from "./cron-utils.js";
 
 // ── Stuck-job watchdog ────────────────────────────────────────────────────────
@@ -32,6 +33,8 @@ export interface StuckJobsSweepResult {
   markedFailed: number;
   /** Recurring parent jobs requeued to their next cron slot. */
   requeued: number;
+  /** Executions skipped because they are webhook-suspended (issue #1326). */
+  skippedSuspended: number;
 }
 
 /**
@@ -46,7 +49,12 @@ export interface StuckJobsSweepResult {
  *   next cron tick with retries reset to 0.
  */
 export async function sweepStuckJobs(now = new Date()): Promise<StuckJobsSweepResult> {
-  const result: StuckJobsSweepResult = { detected: 0, markedFailed: 0, requeued: 0 };
+  const result: StuckJobsSweepResult = {
+    detected: 0,
+    markedFailed: 0,
+    requeued: 0,
+    skippedSuspended: 0,
+  };
 
   try {
     const cutoff = new Date(now.getTime() - STUCK_JOB_THRESHOLD_MS);
@@ -56,12 +64,19 @@ export async function sweepStuckJobs(now = new Date()): Promise<StuckJobsSweepRe
         id: jobExecutions.id,
         jobId: jobExecutions.jobId,
         startedAt: jobExecutions.startedAt,
+        suspendedUntil: jobExecutions.suspendedUntil,
       })
       .from(jobExecutions)
       .where(
         and(
           eq(jobExecutions.status, "running"),
           lt(jobExecutions.startedAt, cutoff),
+          // Webhook-suspended executions are parked, not hung (issue #1326):
+          // leave them alone until their suspension deadline elapses.
+          or(
+            isNull(jobExecutions.suspendedUntil),
+            lte(jobExecutions.suspendedUntil, now),
+          ),
         ),
       )
       .orderBy(jobExecutions.startedAt)
@@ -91,6 +106,14 @@ export async function sweepStuckJobs(now = new Date()): Promise<StuckJobsSweepRe
     const jobMap = new Map(jobRows.map((j) => [j.id, j]));
 
     for (const exec of stuckExecutions) {
+      // Defence in depth for the SQL-level suspension filter above: a row
+      // suspended between the SELECT and this loop iteration (or one leaking
+      // through a stale read) must still not be killed while parked.
+      if (isSuspensionActive(exec.suspendedUntil, now)) {
+        result.skippedSuspended++;
+        continue;
+      }
+
       const ageMs = now.getTime() - exec.startedAt.getTime();
       const ageMinutes = Math.round(ageMs / 60_000);
       const errorMsg = `Stale: no completion signal after ${ageMinutes}m, ${WATCHDOG_RESET_MARKER}`;
@@ -181,6 +204,7 @@ export async function sweepStuckJobs(now = new Date()): Promise<StuckJobsSweepRe
         detected: result.detected,
         markedFailed: result.markedFailed,
         requeued: result.requeued,
+        skippedSuspended: result.skippedSuspended,
         staleThresholdMinutes: STUCK_JOB_THRESHOLD_MINUTES,
       });
     }
