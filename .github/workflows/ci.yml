@@ -1,0 +1,60 @@
+name: CI
+
+# The gate that PR #1389 needed and did not have.
+#
+# typecheck + tests both passed on 2218ddeb, a commit that could not build:
+# @cursor/sdk's published dist/esm dynamically imports its own .d.ts.map files
+# and references bun:sqlite, which nitro tolerates but the WDK step-discovery
+# esbuild pass does not. `build:vercel` is the only command that exercises that
+# path, so it is the real acceptance test — not typecheck, not vitest.
+#
+# Keep the job name `ci` stable: it is wired as a required status check on main.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # No `version:` — packageManager in package.json pins pnpm@10.33.0, and
+      # specifying both makes action-setup hard-fail on ERR_PNPM_BAD_PM_VERSION.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build @aura/db
+        run: pnpm --filter @aura/db build
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm --filter aura-api test
+        env:
+          # No real DB in CI -- src/db/client.ts throws without this,
+          # and several pipeline tests import it transitively.
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+
+      # Must stay last and must stay in this job: a green typecheck on a
+      # non-building commit is exactly the failure mode this workflow exists
+      # to catch, so the two signals have to travel together.
+      - name: Build (vercel preset)
+        run: pnpm --filter aura-api build:vercel
