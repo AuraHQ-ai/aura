@@ -19,7 +19,7 @@ Do not use them for one-off analysis. A tool should earn its existence by being 
 
 Tools should live in a dedicated Git repository, not only in a sandbox filesystem.
 
-Configure the workspace setting `tools_repo` from App Home → Settings → **Self-authored tools repository**. The value is a single GitHub repository in either shorthand or URL form:
+By default Aura uses `realadvisor/aura-tools`. To point at a different repository, configure the workspace setting `tools_repo` from App Home → Settings → **Self-authored tools repository**. The value is a single GitHub repository in either shorthand or URL form:
 
 ```bash
 tools_repo=<owner>/<repo>
@@ -38,13 +38,13 @@ tool_name/
   test.py               # Smoke tests
 ```
 
-When `tools_repo` is empty or unset, Aura skips this step and the sandbox starts cleanly with no self-authored tools checkout. When it is set, Aura clones or refreshes the repository after sandbox acquisition at:
+On every sandbox acquisition, Aura ensures the repository (the `tools_repo` setting, or `realadvisor/aura-tools` when unset) is cloned and up to date at:
 
 ```bash
 /home/user/aura-tools
 ```
 
-The checkout is refreshed with `git pull --ff-only` when the directory already contains a valid Git repository. Clone or pull failures are warnings only; they do not make the sandbox unusable.
+The checkout is refreshed with `git pull --ff-only` when the directory already contains a valid Git repository, and Python dependencies from `requirements.txt` are installed whenever the checkout changes. A freshness marker (30-minute TTL) makes repeated acquisitions a single cheap probe. Clone, pull, or dependency-install failures are warnings only; they do not make the sandbox unusable.
 
 ## Execution contract
 

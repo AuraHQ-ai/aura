@@ -322,18 +322,30 @@ export async function updateConversationTraceUsage(
         ? sumStepUsages(stepUsages)
         : tokenUsage;
 
-    if (stepUsages && stepUsages.length > 0) {
-      try {
-        const [trace] = await db
-          .select({
-            workspaceId: conversationTraces.workspaceId,
-          })
-          .from(conversationTraces)
-          .where(eq(conversationTraces.id, conversationId))
-          .limit(1);
+    try {
+      const [trace] = await db
+        .select({
+          workspaceId: conversationTraces.workspaceId,
+          modelId: conversationTraces.modelId,
+        })
+        .from(conversationTraces)
+        .where(eq(conversationTraces.id, conversationId))
+        .limit(1);
 
-        const workspaceId = trace?.workspaceId ?? "default";
+      const workspaceId = trace?.workspaceId ?? "default";
 
+      // Pricing fallback (issue #1325): when no per-step usages could be
+      // built (e.g. the provider response carried no modelId, so
+      // resolved_model_id is NULL), price the cumulative usage against the
+      // trace's model_id instead of leaving cost_usd NULL.
+      const usagesToPrice: StepUsage[] =
+        stepUsages && stepUsages.length > 0
+          ? stepUsages
+          : trace?.modelId
+            ? [{ modelId: trace.modelId, usage: cumulativeUsage }]
+            : [];
+
+      if (usagesToPrice.length > 0) {
         try {
           const syncResult = await syncModelCatalogFromGateway(workspaceId);
           costPricedAt = syncResult.syncedAt;
@@ -347,17 +359,17 @@ export async function updateConversationTraceUsage(
         }
 
         const cost = await computeConversationCost(
-          stepUsages,
+          usagesToPrice,
           costPricedAt,
           workspaceId,
         );
         if (cost > 0) costUsd = cost.toFixed(6);
-      } catch (costErr: any) {
-        logger.warn("updateConversationTraceUsage: cost computation failed (non-fatal)", {
-          conversationId,
-          error: costErr.message,
-        });
       }
+    } catch (costErr: any) {
+      logger.warn("updateConversationTraceUsage: cost computation failed (non-fatal)", {
+        conversationId,
+        error: costErr.message,
+      });
     }
 
     await db
