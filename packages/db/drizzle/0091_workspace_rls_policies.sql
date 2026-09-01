@@ -14,31 +14,45 @@
 --
 -- ROLE ASSUMPTIONS -- READ BEFORE RUNNING (issue #1393 requires sign-off)
 -- ======================================================================
--- 1. One database role (Neon: `neondb_owner`) OWNS all tables and is used by
---    (a) the application, (b) this migration runner, (c) maintenance scripts.
---    It is NOT a superuser and does NOT have BYPASSRLS. That is why every
---    table gets FORCE ROW LEVEL SECURITY: without FORCE, RLS is a no-op for
---    the table owner and this whole migration would enforce nothing.
--- 2. THIS migration is DDL-only (ENABLE/FORCE/CREATE POLICY). RLS never
+-- 1. On production Neon, `neondb_owner` (the table owner and migration-runner
+--    identity) HAS the BYPASSRLS role attribute (verified live:
+--    SELECT rolbypassrls FROM pg_roles WHERE rolname = 'neondb_owner' -> t;
+--    `neon_service` too). BYPASSRLS beats FORCE ROW LEVEL SECURITY — FORCE
+--    only removes the *owner* exemption, not the *role attribute* exemption.
+--    THEREFORE: this migration alone enforces NOTHING for connections made as
+--    `neondb_owner`. Enforcement requires the application to connect as the
+--    dedicated non-bypassing role `aura_app` created in migration 0092
+--    (LOGIN, NOSUPERUSER, NOBYPASSRLS, NOCREATEROLE, owns nothing). The
+--    operator cutover — setting the role password out of band and pointing
+--    DATABASE_URL at `aura_app` — is documented in the PR runbook.
+-- 2. FORCE is still applied everywhere: it keeps enforcement correct for any
+--    non-bypassing role that OWNS tables (e.g. the local replay database used
+--    by the isolation test), and it is a no-op otherwise.
+-- 3. THIS migration is DDL-only (ENABLE/FORCE/CREATE POLICY). RLS never
 --    blocks DDL, so the migration cannot lock itself out while running.
--- 3. FUTURE migrations that run DML (UPDATE/INSERT backfills) against these
---    tables MUST account for FORCE RLS. The hash-based runner
---    (packages/db/src/migrate.ts) executes each statement as an independent
+-- 4. FUTURE migrations that run DML (UPDATE/INSERT backfills): on production
+--    the runner is `neondb_owner`, whose BYPASSRLS makes the DML unaffected
+--    by these policies. On databases where the migration-runner role does NOT
+--    have BYPASSRLS, bracket the DML per table (the hash-based runner in
+--    packages/db/src/migrate.ts executes each statement as an independent
 --    stateless neon-http query, so session GUCs do NOT persist between
---    statements. The supported pattern is to bracket the DML per table:
+--    statements):
 --        ALTER TABLE "t" NO FORCE ROW LEVEL SECURITY;
 --        UPDATE "t" SET ...;   -- owner bypasses non-forced RLS
 --        ALTER TABLE "t" FORCE ROW LEVEL SECURITY;
 --    (Do NOT use DISABLE ROW LEVEL SECURITY: NO FORCE keeps enforcement live
 --    for every non-owner role during the migration window.)
--- 4. Maintenance scripts / psql sessions that legitimately need cross-tenant
---    access must run, on their own session:
+-- 5. Maintenance scripts / psql sessions running as a NON-bypassing role
+--    (e.g. `aura_app`) that legitimately need cross-tenant access must run,
+--    on their own session:
 --        SELECT set_config('app.rls_bypass', 'maintenance', false);
 --    The application NEVER sets this GUC; withWorkspace() only ever sets
 --    app.workspace_id.
--- 5. The application reaches these tables through withWorkspace()
+-- 6. The application reaches these tables through withWorkspace()
 --    (apps/api/src/db/workspace.ts), which pins a connection and issues
---    set_config('app.workspace_id', $1, ...) before running any queries.
+--    set_config('app.workspace_id', $1, ...) before running any queries — and
+--    asserts at boot that the connected role is not RLS-exempt (logs a hard
+--    error; throws when MULTI_TENANT=true).
 --
 -- TABLES DELIBERATELY EXCLUDED
 -- ============================
@@ -49,7 +63,8 @@
 --               says "40 tenant tables"; the live count is 39 because content
 --               is global -- called out in the PR for reviewer sign-off.)
 --
--- 39 tenant tables get ENABLE + FORCE + the two policies below.
+-- 39 tenant tables get ENABLE + FORCE + the two policies below, plus a
+-- guarded block for the prod-only orphan table `approval_items` (see 0090).
 
 -- messages
 ALTER TABLE "messages" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
@@ -361,4 +376,19 @@ ALTER TABLE "github_pull_requests" FORCE ROW LEVEL SECURITY;--> statement-breakp
 DROP POLICY IF EXISTS "github_pull_requests_workspace_isolation" ON "github_pull_requests";--> statement-breakpoint
 CREATE POLICY "github_pull_requests_workspace_isolation" ON "github_pull_requests" AS PERMISSIVE FOR ALL USING ("workspace_id" = current_setting('app.workspace_id', true)) WITH CHECK ("workspace_id" = current_setting('app.workspace_id', true));--> statement-breakpoint
 DROP POLICY IF EXISTS "github_pull_requests_maintenance" ON "github_pull_requests";--> statement-breakpoint
-CREATE POLICY "github_pull_requests_maintenance" ON "github_pull_requests" AS PERMISSIVE FOR ALL USING (current_setting('app.rls_bypass', true) = 'maintenance') WITH CHECK (current_setting('app.rls_bypass', true) = 'maintenance');
+CREATE POLICY "github_pull_requests_maintenance" ON "github_pull_requests" AS PERMISSIVE FOR ALL USING (current_setting('app.rls_bypass', true) = 'maintenance') WITH CHECK (current_setting('app.rls_bypass', true) = 'maintenance');--> statement-breakpoint
+
+-- approval_items (prod-only orphan; exists in no migration -- see 0090)
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'approval_items'
+  ) THEN
+    ALTER TABLE "approval_items" ENABLE ROW LEVEL SECURITY;
+    ALTER TABLE "approval_items" FORCE ROW LEVEL SECURITY;
+    DROP POLICY IF EXISTS "approval_items_workspace_isolation" ON "approval_items";
+    CREATE POLICY "approval_items_workspace_isolation" ON "approval_items" AS PERMISSIVE FOR ALL USING ("workspace_id" = current_setting('app.workspace_id', true)) WITH CHECK ("workspace_id" = current_setting('app.workspace_id', true));
+    DROP POLICY IF EXISTS "approval_items_maintenance" ON "approval_items";
+    CREATE POLICY "approval_items_maintenance" ON "approval_items" AS PERMISSIVE FOR ALL USING (current_setting('app.rls_bypass', true) = 'maintenance') WITH CHECK (current_setting('app.rls_bypass', true) = 'maintenance');
+  END IF;
+END $$;

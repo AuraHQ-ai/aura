@@ -57,4 +57,31 @@ ALTER TABLE "voice_calls" ALTER COLUMN "workspace_id" SET NOT NULL;--> statement
 ALTER TABLE "voice_calls" DROP CONSTRAINT IF EXISTS "voice_calls_workspace_id_workspaces_id_fk";--> statement-breakpoint
 ALTER TABLE "voice_calls" ADD CONSTRAINT "voice_calls_workspace_id_workspaces_id_fk" FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id") ON DELETE no action ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "voice_calls" DROP CONSTRAINT IF EXISTS "voice_calls_conversation_id_unique";--> statement-breakpoint
-CREATE UNIQUE INDEX IF NOT EXISTS "voice_calls_workspace_conversation_id_idx" ON "voice_calls" USING btree ("workspace_id", "conversation_id");
+CREATE UNIQUE INDEX IF NOT EXISTS "voice_calls_workspace_conversation_id_idx" ON "voice_calls" USING btree ("workspace_id", "conversation_id");--> statement-breakpoint
+
+-- 5. approval_items --------------------------------------------------------
+-- Orphan of the pre-0049 governance system: `0049_remove_governance_tables`
+-- dropped `approvals` / `approval_policies` but never listed `approval_items`,
+-- so it survives on the production database (0 rows) while existing in no
+-- migration and not in schema.ts. It is NOT recreated here — the whole block
+-- is guarded so it only runs where the table actually exists (prod), and the
+-- fresh-database replay used by the isolation test stays faithful to the
+-- journal. Covered now so RLS (0091) can fence it before it ever grows rows.
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.tables
+    WHERE table_schema = 'public' AND table_name = 'approval_items'
+  ) THEN
+    ALTER TABLE "approval_items" ADD COLUMN IF NOT EXISTS "workspace_id" text DEFAULT 'default';
+    UPDATE "approval_items" SET "workspace_id" = 'default' WHERE "workspace_id" IS NULL;
+    ALTER TABLE "approval_items" ALTER COLUMN "workspace_id" SET DEFAULT 'default';
+    ALTER TABLE "approval_items" ALTER COLUMN "workspace_id" SET NOT NULL;
+    IF NOT EXISTS (
+      SELECT 1 FROM pg_constraint WHERE conname = 'approval_items_workspace_id_workspaces_id_fk'
+    ) THEN
+      ALTER TABLE "approval_items"
+        ADD CONSTRAINT "approval_items_workspace_id_workspaces_id_fk"
+        FOREIGN KEY ("workspace_id") REFERENCES "workspaces"("id");
+    END IF;
+  END IF;
+END $$;

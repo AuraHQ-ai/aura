@@ -645,6 +645,13 @@
       "when": 1788620000003,
       "tag": "0091_workspace_rls_policies",
       "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "7",
+      "when": 1788620000004,
+      "tag": "0092_aura_app_role",
+      "breakpoints": true
     }
   ]
 }
