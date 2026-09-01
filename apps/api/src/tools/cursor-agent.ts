@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
 import { eq } from "drizzle-orm";
@@ -73,11 +74,21 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           },
         },
       ],
-      execute: async ({ issue_description, branch_prefix, ref, key_files, repository }) => {
+      execute: async (input) => {
+        const { issue_description, branch_prefix, ref, key_files, repository } =
+          input;
         try {
           const { launchCursorAgent } = await import(
             "../lib/cursor-agent.js"
           );
+
+          // #1031 (PR in flight) adds an optional `model` input to this tool.
+          // Read it defensively so this code works with or without the schema
+          // change; resolveCursorModel() in the lib applies the
+          // CURSOR_DEFAULT_MODEL fallback and drops empty/"auto" values.
+          const modelCandidate = (input as { model?: unknown }).model;
+          const model =
+            typeof modelCandidate === "string" ? modelCandidate : undefined;
 
           const defaultRepo = await getConfig("default_github_repo", "AuraHQ-ai/aura");
           const repo = repository || defaultRepo;
@@ -88,7 +99,11 @@ export function createCursorAgentTools(context?: ScheduleContext) {
             .replace(/[^a-z0-9]+/g, "-")
             .slice(0, 40)
             .replace(/-$/, "");
-          const branchName = `${branch_prefix}/${slug}`;
+          // Unique suffix so repeat dispatches of similar tasks never collide
+          // on the same auto-derived branch (see the Jul 6 incident in #1190:
+          // three agents pushed to one branch and reverted each other).
+          const uniqueSuffix = crypto.randomBytes(3).toString("hex");
+          const branchName = `${branch_prefix}/${slug}-${uniqueSuffix}`;
 
           const keyFilesSection =
             key_files && key_files.length > 0
@@ -130,6 +145,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
             autoCreatePr: true,
             webhookUrl,
             webhookSecret: webhookSecret || undefined,
+            model,
           });
 
           const trackingContent = [
