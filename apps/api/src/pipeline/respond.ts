@@ -44,6 +44,7 @@ import {
   type URLSource,
 } from "../lib/slack-chunks.js";
 import { getSupersedeReason, interruptionNote, isInvocationCurrent } from "../lib/invocation-lock.js";
+import { getSameDestinationPostText, isSubstantialDuplicate } from "./duplicate-reply.js";
 
 // ── Tool I/O Persistence ─────────────────────────────────────────────────────
 // Accumulated during streaming and attached as invisible Slack message metadata
@@ -452,6 +453,10 @@ export async function generateResponse(
   // splitToNewStream() creates a fresh stream — NOT between tool results —
   // so it tracks total stream age for the STREAM_MAX_AGE_MS check.
   let streamStartedAt = Date.now();
+  // Whether anything was ever successfully flushed to the CURRENT stream.
+  // A never-flushed streamer must not be stop()ped: the SDK would call
+  // chat.startStream just to close it, creating an empty Slack message.
+  let streamHasContent = false;
 
   // ── Streaming fallback ──────────────────────────────────────────────
   // Some channel types (e.g. Slack List internal channels) don't support
@@ -509,6 +514,7 @@ export async function generateResponse(
     if (streamingFailed || !streamer) return false;
     try {
       await streamer.append(payload);
+      streamHasContent = true;
       return true;
     } catch (err: any) {
       if (isChannelTypeNotSupported(err)) {
@@ -550,6 +556,7 @@ export async function generateResponse(
         if (textOnly.length > 0 && textOnly.length < rejectedChunks.length) {
           try {
             await streamer.append({ chunks: textOnly });
+            streamHasContent = true;
             textRecovered = true;
           } catch (retryErr: any) {
             logger.warn("Text-only retry after chunk rejection also failed", {
@@ -616,6 +623,7 @@ export async function generateResponse(
         try {
           await new Promise(r => setTimeout(r, 500));
           await streamer.append(payload);
+          streamHasContent = true;
           return true;
         } catch (retryErr: any) {
           streamingFailed = true;
@@ -863,6 +871,20 @@ export async function generateResponse(
   const toolCallRecords: ToolCallRecord[] = [];
   const pendingToolInputs = new Map<string, { name: string; input: string }>();
   const optimisticToolCards = new Map<string, { title: string }>();
+  // ── Duplicate final message suppression (issue #1343) ───────────────
+  // Full (untruncated) inputs of in-flight Slack posting tool calls, so a
+  // successful post to THIS turn's own destination can be recorded.
+  const slackPostToolInputs = new Map<string, { toolName: string; input: unknown }>();
+  // Texts this turn already posted to (channelId, threadTs) via
+  // send_thread_reply / send_channel_message. Once non-empty, further
+  // assistant text is held back and only delivered at finalize if it does
+  // NOT substantially duplicate one of these.
+  const sameDestinationPostTexts: string[] = [];
+  let deferredFinalText = "";
+  let duplicateFinalSuppressed = false;
+  // Index into accumulatedText where the suppressed tail starts, so the
+  // postMessage fallback path can exclude it too.
+  let suppressedTailStart = -1;
   let deferredToolCachePersisted = false;
   const persistDeferredToolCache = async () => {
     if (deferredToolCachePersisted) return;
@@ -1137,6 +1159,18 @@ export async function generateResponse(
     await splitForStreamAge();
     accumulatedText += text;
     currentSegmentTextLength += text.length;
+    // Issue #1343: once this turn has posted to its own delivery destination
+    // via a Slack tool, hold subsequent assistant text back. It is delivered
+    // at finalize only if it does NOT substantially duplicate what the tool
+    // already posted (the "Posted in-thread. <restatement>" spam pattern).
+    if (sameDestinationPostTexts.length > 0) {
+      deferredFinalText += text;
+      return;
+    }
+    await streamTextToSlack(text);
+  }
+
+  async function streamTextToSlack(text: string): Promise<void> {
     let remaining = processChunkForTables(text);
     if (!remaining) return;
 
@@ -1235,6 +1269,7 @@ export async function generateResponse(
     try {
       streamer = slackClient.chatStream(streamParams);
       streamStartedAt = Date.now();
+      streamHasContent = false;
       currentStreamLength = 0;
       streamTombstoneSent = false;
       continuationCount++;
@@ -1448,6 +1483,15 @@ export async function generateResponse(
             name: chunk.toolName,
             input: truncateToBytes(JSON.stringify(inputArgs), 1500),
           });
+          // Issue #1343: keep the FULL input of Slack posting tools so a
+          // successful post to this turn's own destination can be compared
+          // against the final assistant text.
+          if (chunk.toolName === "send_thread_reply" || chunk.toolName === "send_channel_message") {
+            slackPostToolInputs.set(chunk.toolCallId, {
+              toolName: chunk.toolName,
+              input: inputArgs,
+            });
+          }
           optimisticToolCards.delete(chunk.toolCallId);
           startLongToolSplitTimer();
 
@@ -1554,6 +1598,27 @@ export async function generateResponse(
             is_error: !!isError,
             rawOutput: output,
           });
+          // Issue #1343: the turn just posted into its own delivery
+          // destination — remember what it said so the final assistant text
+          // can be suppressed if it merely restates it.
+          const slackPost = slackPostToolInputs.get(chunk.toolCallId);
+          if (slackPost && !isError) {
+            const postedText = getSameDestinationPostText(
+              slackPost.toolName,
+              slackPost.input,
+              channelId,
+              threadTs,
+            );
+            if (postedText != null) {
+              sameDestinationPostTexts.push(postedText);
+              logger.info("Turn posted to its own destination via tool; deferring further text", {
+                channelId,
+                threadTs,
+                toolName: slackPost.toolName,
+              });
+            }
+          }
+          slackPostToolInputs.delete(chunk.toolCallId);
           if (
             chunk.toolName === "run_command_detached" &&
             !isError &&
@@ -1610,6 +1675,7 @@ export async function generateResponse(
           });
           pendingToolInputs.delete(errToolCallId);
           optimisticToolCards.delete(errToolCallId);
+          slackPostToolInputs.delete(errToolCallId);
 
           if (pendingToolInputs.size === 0 && toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
           if (pendingToolInputs.size === 0 && streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
@@ -1748,6 +1814,53 @@ export async function generateResponse(
     if (streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
     clearLongToolSplitTimer();
 
+    // ── Duplicate final message resolution (issue #1343) ────────────────
+    // The text held back after a same-destination tool post is either
+    // suppressed (it substantially duplicates the posted message — the
+    // "Posted in-thread." spam pattern) or delivered now in one piece.
+    if (deferredFinalText) {
+      if (isSubstantialDuplicate(deferredFinalText, sameDestinationPostTexts)) {
+        duplicateFinalSuppressed = true;
+        suppressedTailStart = accumulatedText.length - deferredFinalText.length;
+        logger.info("Final assistant text duplicates a message this turn already posted — suppressing", {
+          channelId,
+          threadTs,
+          deferredLength: deferredFinalText.length,
+          sameDestinationPostCount: sameDestinationPostTexts.length,
+        });
+        logError({
+          errorName: "DuplicateFinalMessageSuppressed",
+          errorMessage: "Final assistant text substantially duplicated a same-thread tool post; suppressed",
+          errorCode: "duplicate_final_message_suppressed",
+          channelId,
+          context: {
+            threadTs,
+            deferredLength: deferredFinalText.length,
+            sameDestinationPostCount: sameDestinationPostTexts.length,
+            toolCallCount: toolCallRecords.length,
+          },
+        });
+      } else {
+        // If streaming already failed, failure bookkeeping may have advanced
+        // fallbackStartIdx past deferred text that was never streamed — pull
+        // it back so the postMessage fallback still delivers the tail.
+        const deferredStart = accumulatedText.length - deferredFinalText.length;
+        if (fallbackStartIdx > deferredStart) {
+          fallbackStartIdx = deferredStart;
+        }
+        await streamTextToSlack(deferredFinalText);
+        const deferredTableFlush = flushRemainingTableBuffer();
+        if (deferredTableFlush && !streamingFailed) {
+          currentStreamLength += deferredTableFlush.length;
+          await tryStreamAppend(asAppendPayload({ markdown_text: deferredTableFlush }));
+          if (streamingFailed) {
+            fallbackStartIdx = streamedRawIdx;
+          }
+        }
+      }
+      deferredFinalText = "";
+    }
+
     const llmMs = Date.now() - start;
     const finalText = accumulatedText;
     const inputTokens = aggregateUsage.inputTokens;
@@ -1765,11 +1878,14 @@ export async function generateResponse(
       // wasn't already streamed (fallbackStartIdx marks the boundary).
       // After a Stop press nothing further is delivered — the user asked for
       // silence, not a bulk dump of what they stopped.
+      // A duplicate-suppressed tail (issue #1343) is excluded from the
+      // fallback post too — it was already delivered via the Slack tool.
+      const deliverableEnd = duplicateFinalSuppressed && suppressedTailStart >= 0
+        ? Math.max(fallbackStartIdx, suppressedTailStart)
+        : finalText.length;
       const unsentText = stoppedByUser
         ? ""
-        : fallbackStartIdx > 0
-          ? finalText.slice(fallbackStartIdx)
-          : finalText;
+        : finalText.slice(fallbackStartIdx, deliverableEnd);
       const blocks: any[] = [];
       const formattedUnsent = unsentText ? formatForSlack(unsentText) : "";
       // Issue #1121: when the stream died after everything visible had
@@ -1786,7 +1902,7 @@ export async function generateResponse(
       const stopRenderedNativelyBySlack = stoppedByUser && streamer != null;
       const interruptedStubText = stoppedByUser
         ? stopRenderedNativelyBySlack ? null : "_[stopped]_"
-        : !emptyCompletionDetected && !formattedUnsent && toolCallRecords.length > 0
+        : !emptyCompletionDetected && !duplicateFinalSuppressed && !formattedUnsent && toolCallRecords.length > 0
           ? `_Turn interrupted after ${toolCallRecords.length} tool call${toolCallRecords.length === 1 ? "" : "s"} — rerun?_`
           : null;
       if (formattedUnsent) {
@@ -1828,6 +1944,19 @@ export async function generateResponse(
         // press and Slack's own indicator marks the halted bubble.
         logger.info("Stop press rendered natively by Slack — skipping fallback delivery", {
           channelId,
+        });
+      } else if (
+        duplicateFinalSuppressed &&
+        !formattedUnsent &&
+        !interruptedStubText &&
+        pendingNativeBlocks.length === 0
+      ) {
+        // Issue #1343: the ONLY undelivered content was the duplicate final
+        // text — the answer already sits in the thread via the Slack tool,
+        // so posting anything here would be exactly the spam being fixed.
+        logger.info("Duplicate final text suppressed — skipping fallback delivery", {
+          channelId,
+          threadTs,
         });
       } else {
         // Issue #1342: skip the fallback post entirely when a newer message has
@@ -1915,16 +2044,31 @@ export async function generateResponse(
       const stopArgs: Record<string, any> = { blocks: stopBlocks };
       if (toolMeta) stopArgs.metadata = toolMeta;
 
+      // A never-flushed stream must NOT be finalized: the SDK's stop() would
+      // call chat.startStream just to close it, creating an empty Slack
+      // message. This happens when the whole answer was delivered elsewhere —
+      // e.g. a same-thread tool post whose duplicate final text was
+      // suppressed (issue #1343) — or the turn produced no visible output.
+      const skipStreamFinalize = !streamHasContent;
+      if (skipStreamFinalize) {
+        logger.info("Skipping stream finalize — nothing was ever streamed", {
+          channelId,
+          duplicateFinalSuppressed,
+        });
+      }
+
       // Issue #1342: do NOT finalize the stream with the answer when a newer
       // message has taken over the thread — unwind through the existing
       // supersede path (streamer.stop with interruption note, telemetry).
-      if (!(await isCurrentAtFinalDelivery("stream_stop"))) {
+      if (!skipStreamFinalize && !(await isCurrentAtFinalDelivery("stream_stop"))) {
         throw new InvocationSupersededError(invocationId);
       }
 
       try {
-        await streamer.stop(stopArgs);
-        if (pendingNativeBlocks.length > 0) {
+        if (!skipStreamFinalize) {
+          await streamer.stop(stopArgs);
+        }
+        if (!skipStreamFinalize && pendingNativeBlocks.length > 0) {
           logger.info("NativeBlockDelivered", {
             toolCallIds: pendingNativeBlockToolCallIds,
             path: "stop_blocks",

@@ -1898,3 +1898,155 @@ describe("generateResponse turn markers (stream-death watchdog, issue #1109)", (
     expect(turnMarkerMocks.finishTurnMarker).not.toHaveBeenCalled();
   });
 });
+
+describe("generateResponse duplicate final message suppression (issue #1343)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    toolStateMocks.detachedSuspendState = undefined;
+    invocationLockMocks.isInvocationCurrent.mockResolvedValue(true);
+    invocationLockMocks.getSupersedeReason.mockResolvedValue("newer_message");
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const postedMessage =
+    "Numbers are internally consistent: 26 agencies with ranking data, 14 with a paid " +
+    "subscription, and the ranking rule only counts agencies with 3+ listings.";
+  const duplicateFinalText =
+    "*Posted in-thread.* Numbers are internally consistent — 26 agencies with ranking data, " +
+    "14 with a paid subscription; the ranking rule only counts agencies with 3+ listings.";
+
+  function sameThreadPostTurn(finalText: string) {
+    return (async function* () {
+      yield {
+        type: "tool-call",
+        toolCallId: "call-post-1",
+        toolName: "send_thread_reply",
+        input: {
+          channel: "C123",
+          thread_ts: "1710000000.000000",
+          message: postedMessage,
+        },
+      };
+      yield {
+        type: "tool-result",
+        toolCallId: "call-post-1",
+        toolName: "send_thread_reply",
+        output: { ok: true, message: "Reply sent in thread in #bugs", timestamp: "1710000009.000000" },
+      };
+      yield { type: "text-delta", text: finalText };
+    })();
+  }
+
+  it("suppresses a final message that duplicates a send_thread_reply into the same thread", async () => {
+    const streamer = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([streamer]);
+
+    mockAgentStream(sameThreadPostTurn(duplicateFinalText));
+
+    const result = await generateResponse(baseOptions(slackClient));
+    expect(result.alreadyPosted).toBe(true);
+    // The raw trace still contains what the model said…
+    expect(result.raw).toBe(duplicateFinalText);
+
+    // …but the duplicate never reached the Slack stream, and nothing was
+    // posted as a fallback either.
+    const appendedPayloads = streamer.append.mock.calls
+      .map(([payload]) => JSON.stringify(payload))
+      .join("\n");
+    expect(appendedPayloads).not.toContain("Posted in-thread");
+    expect(slackClient.chat.postMessage).not.toHaveBeenCalled();
+
+    expect(logError).toHaveBeenCalledWith(expect.objectContaining({
+      errorName: "DuplicateFinalMessageSuppressed",
+      errorCode: "duplicate_final_message_suppressed",
+      channelId: "C123",
+    }));
+  });
+
+  it("still delivers a final message that does NOT duplicate the tool post", async () => {
+    const streamer = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([streamer]);
+
+    const distinctFinalText =
+      "I also opened issue #1344 to track the subscription mismatch and pinged the data " +
+      "team about backfilling the missing rows tomorrow morning.";
+    mockAgentStream(sameThreadPostTurn(distinctFinalText));
+
+    const result = await generateResponse(baseOptions(slackClient));
+    expect(result.raw).toBe(distinctFinalText);
+
+    const appendedPayloads = streamer.append.mock.calls
+      .map(([payload]) => JSON.stringify(payload))
+      .join("\n");
+    expect(appendedPayloads).toContain("opened issue #1344");
+    expect(streamer.stop).toHaveBeenCalledTimes(1);
+
+    const suppressionLogs = vi.mocked(logError).mock.calls.filter(
+      ([entry]) => entry.errorCode === "duplicate_final_message_suppressed",
+    );
+    expect(suppressionLogs).toHaveLength(0);
+  });
+
+  it("streams text immediately when the tool post targeted a different thread", async () => {
+    const streamer = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([streamer]);
+
+    mockAgentStream((async function* () {
+      yield {
+        type: "tool-call",
+        toolCallId: "call-post-2",
+        toolName: "send_thread_reply",
+        input: { channel: "C0OTHER99", thread_ts: "1700000000.000042", message: "elsewhere" },
+      };
+      yield {
+        type: "tool-result",
+        toolCallId: "call-post-2",
+        toolName: "send_thread_reply",
+        output: { ok: true, message: "Reply sent in thread in #other", timestamp: "1700000001.000000" },
+      };
+      yield { type: "text-delta", text: "Cross-posted the fix to #other as requested." };
+    })());
+
+    await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
+      raw: "Cross-posted the fix to #other as requested.",
+      alreadyPosted: true,
+    });
+
+    expect(streamer.append).toHaveBeenCalledWith({
+      chunks: [expect.objectContaining({
+        type: "markdown_text",
+        text: "Cross-posted the fix to #other as requested.",
+      })],
+    });
+  });
+
+  it("suppresses the duplicate on the headless postMessage fallback path too", async () => {
+    const slackClient = createSlackClient([]);
+
+    mockAgentStream(sameThreadPostTurn(duplicateFinalText));
+
+    const result = await generateResponse({
+      ...baseOptions(slackClient),
+      isHeadless: true,
+    });
+    expect(result.raw).toBe(duplicateFinalText);
+
+    // The only undelivered content was the duplicate — no fallback post.
+    expect(slackClient.chat.postMessage).not.toHaveBeenCalled();
+    expect(logError).toHaveBeenCalledWith(expect.objectContaining({
+      errorCode: "duplicate_final_message_suppressed",
+    }));
+  });
+});
