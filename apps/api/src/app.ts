@@ -46,6 +46,7 @@ import { safePostMessage } from "./lib/slack-messaging.js";
 import crypto from "node:crypto";
 import { eq, sql } from "drizzle-orm";
 import { db } from "./db/client.js";
+import { withWorkspace } from "./db/workspace.js";
 import { errorEvents, notes, feedback, stopEvents } from "@aura/db/schema";
 
 // ── Config ──────────────────────────────────────────────────────────────────
@@ -164,6 +165,14 @@ app.route("/", cronApp);
 app.route("/", heartbeatApp);
 app.route("/", supervisorApp);
 app.route("/", evalResponsesApp);
+
+// Multi-tenancy Phase 0 (issue #1393): scope all webhook DB access to the
+// default workspace. Registered before the webhook mounts so every handler
+// under /api/webhook/* runs inside withWorkspace(). Phase 1 replaces the
+// static default with real per-event workspace resolution.
+app.use("/api/webhook/*", (c, next) =>
+  withWorkspace(process.env.DEFAULT_WORKSPACE_ID || "default", () => next()),
+);
 
 // Mount ElevenLabs voice webhook routes
 app.route("/api/webhook/elevenlabs", elevenlabsWebhookApp);
@@ -298,7 +307,11 @@ app.post("/api/slack/events", async (c) => {
 
     // Handle reaction events -- store as memory
     if (event.type === "reaction_added" && event.user && event.item) {
-      const reactionPromise = (async () => {
+      // Issue #1393: reaction storage writes to the messages table — run it
+      // inside the workspace scope so RLS admits the write.
+      const reactionPromise = withWorkspace(
+        process.env.DEFAULT_WORKSPACE_ID || "default",
+        async () => {
         try {
           // ── Store as a lightweight memory via the store module ──
           let userName = event.user;
@@ -330,7 +343,10 @@ app.post("/api/slack/events", async (c) => {
         } catch (err) {
           recordError("reaction_event", err, { userId: event.user });
         }
-      })();
+        },
+      ).catch((err) => {
+        recordError("reaction_event_workspace_scope", err, { userId: event.user });
+      });
       waitUntil(reactionPromise);
       return c.json({ ok: true });
     }
@@ -350,7 +366,11 @@ app.post("/api/slack/events", async (c) => {
     // Requires the `agent_session_stopped` bot event subscription in the app
     // manifest (see docs/slack-agent-view-rollout.md).
     if (event.type === "agent_session_stopped") {
-      const stopPromise = (async () => {
+      // Issue #1393: stop handling reads/writes conversation_locks,
+      // stop_events and error_events — scope it to the workspace.
+      const stopPromise = withWorkspace(
+        process.env.DEFAULT_WORKSPACE_ID || "default",
+        async () => {
         const channelId: string | undefined = event.channel;
         const threadTs: string | undefined = event.thread_ts;
         if (!channelId || !threadTs) {
@@ -443,7 +463,13 @@ app.post("/api/slack/events", async (c) => {
             stopFailed: stopError !== null,
           },
         });
-      })();
+        },
+      ).catch((err) => {
+        recordError("agent_session_stopped_workspace_scope", err, {
+          userId: event.user,
+          channelId: event.channel,
+        });
+      });
       waitUntil(stopPromise);
       return c.json({ ok: true });
     }
@@ -456,7 +482,10 @@ app.post("/api/slack/events", async (c) => {
     // (https://docs.slack.dev/reference/events/app_context_changed —
     // see docs/slack-agent-view-rollout.md).
     if (event.type === "app_context_changed") {
-      const contextPromise = (async () => {
+      // Issue #1393: the app-context cache upsert is a DB write — scope it.
+      const contextPromise = withWorkspace(
+        process.env.DEFAULT_WORKSPACE_ID || "default",
+        async () => {
         // The event itself carries no `user` field in the documented payload;
         // fall back to the event wrapper's authorization.
         const userId: string | undefined =
@@ -483,7 +512,12 @@ app.post("/api/slack/events", async (c) => {
         } catch (err) {
           recordError("app_context_changed", err, { userId });
         }
-      })();
+        },
+      ).catch((err) => {
+        recordError("app_context_changed_workspace_scope", err, {
+          userId: event.user,
+        });
+      });
       waitUntil(contextPromise);
       return c.json({ ok: true });
     }
@@ -533,15 +567,20 @@ app.post("/api/slack/events", async (c) => {
       workspaceId: process.env.DEFAULT_WORKSPACE_ID || "default",
     };
     latestInFlightContext = eventExecutionContext;
-    const pipelinePromise = executionContext.run(
-      eventExecutionContext,
-      async () =>
-        runPipeline({
-          event,
-          client: slackClient,
-          botUserId: botUserId || await getConfig("aura_bot_user_id"),
-          teamId: body.team_id,
-        }),
+    // Issue #1393: the whole respond pipeline (memory retrieval, message
+    // history, tool DB access, persistence) runs inside the workspace scope
+    // so RLS constrains every query to this tenant.
+    const pipelinePromise = withWorkspace(eventExecutionContext.workspaceId!, () =>
+      executionContext.run(
+        eventExecutionContext,
+        async () =>
+          runPipeline({
+            event,
+            client: slackClient,
+            botUserId: botUserId || await getConfig("aura_bot_user_id"),
+            teamId: body.team_id,
+          }),
+      ),
     ).catch((err) => {
       recordError("pipeline", err, {
         eventType: event.type,
