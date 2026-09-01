@@ -29,3 +29,6 @@ apps/api/dist/
 .env.prod
 .env.staging
 .env.development
+
+# Memory rebuild/replay artifacts (scripts/rebuild-memories.ts, #1041)
+memory-snapshots/
