@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/",
     "test": "vitest run",
+    "test:workspace-isolation": "bash scripts/workspace-isolation-test.sh",
     "content:index": "tsx scripts/index-content.ts",
     "content:index:no-embeddings": "tsx scripts/index-content.ts --skip-embeddings",
     "backfill:canonical-model-ids": "tsx scripts/backfill-canonical-model-ids.ts",
@@ -74,13 +75,17 @@
     "rollup": "^4.61.1",
     "turndown": "^7.2.2",
     "workflow": "^4.3.1",
+    "ws": "^8.21.3",
     "xlsx": "^0.18.5",
     "zod": "^3.24.4"
   },
   "devDependencies": {
     "@types/node": "^22.15.3",
+    "@types/pg": "^8.23.1",
     "@types/react": "19.2.14",
     "@types/turndown": "^5.0.6",
+    "@types/ws": "^8.18.1",
+    "pg": "^8.23.0",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",
     "vitest": "^4.0.18"
