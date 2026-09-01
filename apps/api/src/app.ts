@@ -160,19 +160,35 @@ app.get("/api/health", (c) => {
 
 // ── Dashboard API (authenticated with DASHBOARD_API_SECRET) ─────────────────
 
+// Multi-tenancy Phase 0 (issue #1393): entry-point workspace scoping. Every
+// HTTP surface that touches the database runs inside withWorkspace(), so the
+// RLS policies (migration 0091) constrain all of its queries — including
+// under the non-bypassing `aura_app` role (migration 0092), where an
+// unwrapped path would fail CLOSED at runtime (cron going dark) instead of
+// leaking. Registered BEFORE the corresponding mounts/handlers; Hono `*`
+// wildcards match nested segments, so `/api/webhook/*` also covers e.g.
+// /api/webhook/elevenlabs/tool/:toolName. The Slack events endpoint is
+// deliberately NOT wrapped here: it acks within 3s and each of its
+// background closures opens its own scope (see below). Phase 1 replaces the
+// static default with real per-request workspace resolution.
+const scopeToDefaultWorkspace = (
+  _c: unknown,
+  next: () => Promise<void>,
+): Promise<void> =>
+  withWorkspace(process.env.DEFAULT_WORKSPACE_ID || "default", () => next());
+
+app.use("/api/cron/*", scopeToDefaultWorkspace);
+app.use("/api/execute-now", scopeToDefaultWorkspace);
+app.use("/api/internal/*", scopeToDefaultWorkspace);
+app.use("/api/oauth/google/*", scopeToDefaultWorkspace);
+app.use("/api/slack/interactions", scopeToDefaultWorkspace);
+app.use("/api/webhook/*", scopeToDefaultWorkspace);
+
 // Mount cron routes
 app.route("/", cronApp);
 app.route("/", heartbeatApp);
 app.route("/", supervisorApp);
 app.route("/", evalResponsesApp);
-
-// Multi-tenancy Phase 0 (issue #1393): scope all webhook DB access to the
-// default workspace. Registered before the webhook mounts so every handler
-// under /api/webhook/* runs inside withWorkspace(). Phase 1 replaces the
-// static default with real per-event workspace resolution.
-app.use("/api/webhook/*", (c, next) =>
-  withWorkspace(process.env.DEFAULT_WORKSPACE_ID || "default", () => next()),
-);
 
 // Mount ElevenLabs voice webhook routes
 app.route("/api/webhook/elevenlabs", elevenlabsWebhookApp);
