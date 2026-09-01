@@ -1,6 +1,5 @@
 import { Hono } from "hono";
 import { runConsolidation } from "../memory/consolidate.js";
-import { consolidateProfiles } from "../users/profiles.js";
 import { regenerateStaleSummaries } from "../memory/entity-summaries.js";
 import { logger } from "../lib/logger.js";
 
@@ -28,14 +27,8 @@ cronApp.get("/api/cron/consolidate", async (c) => {
   try {
     const result = await runConsolidation();
 
-    let profileResult = null;
-    try {
-      profileResult = await consolidateProfiles();
-    } catch (error) {
-      logger.error("Cron: Profile consolidation failed (non-fatal)", {
-        error: String(error),
-      });
-    }
+    // NOTE (#911): profile consolidation (users.known_facts compaction) was
+    // retired — entity summaries below are the profile source of truth.
 
     let entitySummaryResult = null;
     try {
@@ -49,7 +42,6 @@ cronApp.get("/api/cron/consolidate", async (c) => {
     const duration = Date.now() - start;
     logger.info(`Cron: Consolidation completed in ${duration}ms`, {
       ...result,
-      profileResult,
       entitySummaryResult,
     });
 
@@ -57,7 +49,6 @@ cronApp.get("/api/cron/consolidate", async (c) => {
       ok: true,
       duration,
       ...result,
-      profileConsolidation: profileResult,
       entitySummaries: entitySummaryResult,
     });
   } catch (error) {

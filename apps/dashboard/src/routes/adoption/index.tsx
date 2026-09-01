@@ -480,7 +480,7 @@ function AdoptionPage() {
       <Card className="gap-0 overflow-hidden p-0">
         <CardHeader className="px-6 pt-6 pb-4">
           <CardTitle className="text-base">Team adoption</CardTitle>
-          <p className="text-xs text-muted-foreground">Team comes from users.known_facts.team when available.</p>
+          <p className="text-xs text-muted-foreground">Team comes from the person entity (entities.metadata.team) when available.</p>
         </CardHeader>
         <CardContent className="px-0 pb-0">
           <div className="overflow-auto">

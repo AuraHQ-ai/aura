@@ -7,6 +7,7 @@ import {
   users,
   addresses,
   messages,
+  entities,
   type ScheduleContext,
 } from "@aura/db/schema";
 
@@ -30,7 +31,6 @@ interface RawUserRow {
   notes: string | null;
   entity_id: string | null;
   communication_style: Record<string, unknown> | null;
-  known_facts: Record<string, unknown> | null;
   role: string;
   interaction_count: number;
   last_interaction_at: string | null;
@@ -55,7 +55,9 @@ function mapRawUser(row: RawUserRow): typeof users.$inferSelect {
     notes: row.notes,
     entityId: row.entity_id,
     communicationStyle: row.communication_style,
-    knownFacts: row.known_facts,
+    // DEPRECATED (#911): known_facts is retired — profile prose comes from the
+    // linked entity's summary (see enrichPerson), so it is not surfaced here.
+    knownFacts: null,
     role: row.role,
     interactionCount: row.interaction_count,
     lastInteractionAt: row.last_interaction_at ? new Date(row.last_interaction_at) : null,
@@ -76,6 +78,8 @@ interface PersonResult {
   manager_id: string | null;
   manager_name: string | null;
   notes: string | null;
+  /** Compiled profile from the linked person entity (entities.summary, #911). */
+  profile_summary: string | null;
   addresses: { id: string; channel: string; value: string; is_primary: boolean }[];
   stats: {
     workspace_messages: number;
@@ -96,6 +100,18 @@ async function enrichPerson(user: typeof users.$inferSelect): Promise<PersonResu
     })
     .from(addresses)
     .where(eq(addresses.userId, user.id));
+
+  // Profile prose comes from the linked person entity — entities.summary is the
+  // single source of truth for human profiles (#911, replaces users.known_facts).
+  let profileSummary: string | null = null;
+  if (user.entityId) {
+    const [entity] = await db
+      .select({ summary: entities.summary })
+      .from(entities)
+      .where(eq(entities.id, user.entityId))
+      .limit(1);
+    profileSummary = entity?.summary ?? null;
+  }
 
   let managerName: string | null = null;
   if (user.managerId) {
@@ -141,6 +157,7 @@ async function enrichPerson(user: typeof users.$inferSelect): Promise<PersonResu
     manager_id: user.managerId ?? null,
     manager_name: managerName,
     notes: user.notes ?? null,
+    profile_summary: profileSummary,
     addresses: addrs.map((a) => ({
       id: a.id,
       channel: a.channel,
@@ -196,6 +213,7 @@ export function createPeopleTools(context?: ScheduleContext) {
       description:
         "Look up a person in the users database by name, Slack user ID (e.g. 'U0678NQJ2'), or email address. " +
         "Returns structured profile data including job title, gender, preferred language, birthdate, manager, notes/context, " +
+        "a compiled profile_summary (from the person's entity — what Aura knows about them), " +
         "all known addresses (email, phone, slack), and Slack activity stats (workspace_messages, aura_dm_messages, last_activity, last_aura_dm). " +
         "Use this before update_person to confirm identity. For ambiguous name searches, returns up to 3 fuzzy matches.",
       inputSchema: z.object({

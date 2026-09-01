@@ -1,6 +1,6 @@
 import { eq, sql, and, like, or, arrayContains } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { memories, users, type Memory } from "@aura/db/schema";
+import { memories, users, entities, type Memory } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
 import { embedText } from "../lib/embeddings.js";
 
@@ -22,7 +22,8 @@ export async function getKnowledgeAboutUser(
   profile: {
     displayName: string;
     communicationStyle: unknown;
-    knownFacts: unknown;
+    /** Compiled profile from the linked person entity (#911 — replaces known_facts). */
+    entitySummary: string | null;
     interactionCount: number;
     lastInteractionAt: Date | null;
   } | null;
@@ -35,6 +36,17 @@ export async function getKnowledgeAboutUser(
     .from(users)
     .where(eq(users.slackUserId, slackUserId))
     .limit(1);
+
+  // The compiled profile lives on the linked person entity (#911).
+  let entitySummary: string | null = null;
+  if (profile?.entityId) {
+    const [entity] = await db
+      .select({ summary: entities.summary })
+      .from(entities)
+      .where(eq(entities.id, profile.entityId))
+      .limit(1);
+    entitySummary = entity?.summary ?? null;
+  }
 
   // Get all memories related to this user
   const userMemories = await db
@@ -56,7 +68,7 @@ export async function getKnowledgeAboutUser(
       ? {
           displayName: profile.displayName,
           communicationStyle: profile.communicationStyle,
-          knownFacts: profile.knownFacts,
+          entitySummary,
           interactionCount: profile.interactionCount,
           lastInteractionAt: profile.lastInteractionAt,
         }
@@ -86,17 +98,8 @@ export function formatKnowledgeSummary(
     parts.push(`Name: ${p.displayName}`);
     parts.push(`We've talked ${p.interactionCount} times.`);
 
-    const facts = p.knownFacts as any;
-    if (facts) {
-      if (facts.role) parts.push(`Role: ${facts.role}`);
-      if (facts.team) parts.push(`Team: ${facts.team}`);
-      if (facts.interests?.length) parts.push(`Interests: ${facts.interests.join(", ")}`);
-      if (facts.personalDetails?.length) {
-        parts.push(`Personal notes: ${facts.personalDetails.join("; ")}`);
-      }
-      if (facts.preferences?.length) {
-        parts.push(`Preferences: ${facts.preferences.join("; ")}`);
-      }
+    if (p.entitySummary) {
+      parts.push(`Profile: ${p.entitySummary}`);
     }
 
     const style = p.communicationStyle as any;

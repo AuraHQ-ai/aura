@@ -10,6 +10,7 @@
     "db:migrate": "./scripts/env.sh pnpm --filter @aura/db db:migrate",
     "db:push": "./scripts/env.sh pnpm --filter @aura/db db:push",
     "db:studio": "./scripts/env.sh pnpm --filter @aura/db db:studio",
+    "rebuild:memories": "pnpm --filter aura-api rebuild:memories",
     "bench:memory": "./scripts/env.sh pnpm --filter aura-api bench:memory",
     "bench:memory:i": "./scripts/env.sh pnpm --filter aura-api bench:memory:i",
     "bench:fetch-corpus": "pnpm --filter aura-api bench:fetch-corpus",

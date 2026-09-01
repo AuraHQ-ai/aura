@@ -275,6 +275,12 @@ export interface CommunicationStyle {
   preferredFormat: "prose" | "bullets" | "mixed";
 }
 
+/**
+ * @deprecated (#911) The legacy user-profile blob. Frozen — no longer written.
+ * `entities.summary` (prose) and `entities.metadata` (structured team/role)
+ * are the source of truth for human profiles. The column is kept for a soak
+ * period; a separate drop migration removes it afterwards.
+ */
 export interface KnownFacts {
   role?: string;
   team?: string;
@@ -309,6 +315,10 @@ export const users = pgTable(
         emojiUsage: "light",
         preferredFormat: "mixed",
       }),
+    /**
+     * @deprecated (#911) Frozen — no longer written. Read the linked entity's
+     * summary/metadata instead. Kept for a soak period before a drop migration.
+     */
     knownFacts: jsonb("known_facts").$type<KnownFacts>().default({}),
     role: text("role").notNull().default("member"),
     interactionCount: integer("interaction_count").notNull().default(0),
