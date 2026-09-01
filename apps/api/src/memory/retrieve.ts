@@ -7,6 +7,10 @@ import type { EntityType } from "@aura/db/schema";
 import { embedText } from "../lib/embeddings.js";
 import { getFastModel, getRerankingModel } from "../lib/ai.js";
 import { resolveEntityReadOnly } from "./entity-resolution.js";
+import {
+  isQuarantinedCapabilityClaim,
+  sourceTrustMultiplier,
+} from "./provenance.js";
 import { logger } from "../lib/logger.js";
 import { aiTelemetry } from "../lib/langfuse.js";
 
@@ -365,6 +369,7 @@ async function fetchEntityMatchedMemories(
       embedding: row.embedding,
       relevanceScore: row.relevance_score ?? 1,
       shareable: row.shareable ?? 0,
+      extractionSourceRole: row.extraction_source_role ?? null,
       searchVector: row.search_vector ?? null,
       status: row.status ?? "current",
       confidence: row.confidence ?? 0.8,
@@ -651,6 +656,7 @@ async function retrieveSingleQuery(
         embedding: row.embedding,
         relevanceScore: row.relevance_score ?? 1,
         shareable: row.shareable ?? 0,
+        extractionSourceRole: row.extraction_source_role ?? null,
         searchVector: row.search_vector ?? null,
         status: row.status ?? "current",
         confidence: row.confidence ?? 0.8,
@@ -698,6 +704,20 @@ async function retrieveSingleQuery(
     if (!asOf) {
       const liveNow = new Date();
       results = results.filter((r) => isTemporallyLive(r.memory, liveNow));
+    }
+
+    // Capability-claim quarantine (#949): a claim about Aura's own access/
+    // credentials sourced from Aura's OWN assistant message is excluded from
+    // injection entirely — it must be re-verified live, not recalled. Filtered
+    // BEFORE the abstention gate and the rerank so a confabulated self-claim
+    // never occupies a candidate slot.
+    const preQuarantineCount = results.length;
+    results = results.filter((r) => !isQuarantinedCapabilityClaim(r.memory));
+    if (results.length < preQuarantineCount) {
+      logger.info(
+        `Quarantined ${preQuarantineCount - results.length} assistant-sourced capability claims from retrieval`,
+        { query: query.substring(0, 100) },
+      );
     }
 
     if (entityMemories.length > 0) {
@@ -749,7 +769,12 @@ async function retrieveSingleQuery(
         // so it never evicts a genuinely relevant memory from the top-k.
         const confidence = (memory as any).confidence ?? 0.8;
         const confidenceFactor = 0.9 + 0.1 * confidence;
-        const score = baseScore * confidenceFactor;
+        // Provenance multiplier (#949/#950): trust tier (founder DM > user DM >
+        // team channel > public channel > assistant-generated) × disputed-status
+        // demotion. Applied here — before the top-K cut — so low-trust memories
+        // can't crowd out equally relevant high-trust ones.
+        const trustFactor = sourceTrustMultiplier(memory);
+        const score = baseScore * confidenceFactor * trustFactor;
         return { memory, score, originalIndex: item.originalIndex, cohereScore: item.score };
       });
 
@@ -779,12 +804,15 @@ async function retrieveSingleQuery(
         const recencyBoost = Math.max(0, 1 - ageDays / 365);
 
         const normalizedRrf = maxRrfScore > 0 ? Math.min(rrfScore / maxRrfScore, 1) : 0;
+        // Same provenance multiplier as the reranker path (#949/#950) so trust
+        // weighting holds even when Cohere is unavailable.
+        const trustFactor = sourceTrustMultiplier(memory);
         const score =
-          normalizedRrf * 0.4 +
-          similarity * 0.2 +
-          memory.relevanceScore * 0.1 +
-          recencyBoost * 0.1 +
-          entityBoost * 0.2;
+          (normalizedRrf * 0.4 +
+            similarity * 0.2 +
+            memory.relevanceScore * 0.1 +
+            recencyBoost * 0.1 +
+            entityBoost * 0.2) * trustFactor;
 
         return { memory, score };
       });
