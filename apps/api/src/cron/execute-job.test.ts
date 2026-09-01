@@ -72,6 +72,9 @@ const sandboxMock = vi.hoisted(() => ({
 }));
 
 const createHeadlessAgentMock = vi.hoisted(() => vi.fn());
+const sendJobOpsNoticeMock = vi.hoisted(() =>
+  vi.fn(async () => ({ ok: true, target: "ops_channel" as const })),
+);
 const buildStablePrefixMock = vi.hoisted(() =>
   vi.fn(async () => "full stable prefix"),
 );
@@ -127,6 +130,14 @@ vi.mock("./persist-conversation.js", () => ({
 vi.mock("../tools/scratchpad.js", () => ({
   getScratchpadContents: vi.fn(() => null),
   cleanupScratchpad: vi.fn(),
+}));
+
+vi.mock("./job-notifications.js", () => ({
+  sendJobOpsNotice: sendJobOpsNoticeMock,
+  truncateJobFailureText: (value: string | null | undefined, maxChars = 400) => {
+    const text = value?.trim() || "unknown";
+    return text.length <= maxChars ? text : `${text.slice(0, maxChars - 3)}...`;
+  },
 }));
 
 function queueDbResults(...results: unknown[][]) {
@@ -973,5 +984,198 @@ describe("detectScriptOutputError", () => {
   it('does not treat {"error": 0} (falsy) as an error', () => {
     const output = '{"error": 0}';
     expect(detectScriptOutputError(output)).toBeNull();
+  });
+});
+
+// ── Script hard-failure detection (issue #961) ────────────────────────────────
+
+describe("isHardFailure", () => {
+  it("returns false for a clean exit regardless of output", async () => {
+    const { isHardFailure } = await import("./execute-job.js");
+    expect(isHardFailure({ exit_code: 0, stdout: "", stderr: "" })).toBe(false);
+    expect(
+      isHardFailure({ exit_code: 0, stdout: "data", stderr: "warning: noise" }),
+    ).toBe(false);
+    expect(isHardFailure({ exit_code: null, stdout: "", stderr: "" })).toBe(false);
+  });
+
+  it("flags exec-failure exit codes 126/127 even with stdout", async () => {
+    const { isHardFailure } = await import("./execute-job.js");
+    expect(
+      isHardFailure({ exit_code: 127, stdout: "partial", stderr: "bash: python3: command not found" }),
+    ).toBe(true);
+    expect(isHardFailure({ exit_code: 126, stdout: "partial", stderr: "" })).toBe(true);
+  });
+
+  it("flags non-zero exit with empty or whitespace-only stdout", async () => {
+    const { isHardFailure } = await import("./execute-job.js");
+    expect(isHardFailure({ exit_code: 1, stdout: "", stderr: "boom" })).toBe(true);
+    expect(isHardFailure({ exit_code: 2, stdout: "  \n ", stderr: "" })).toBe(true);
+  });
+
+  it("flags non-zero exit with fatal stderr signatures despite stdout", async () => {
+    const { isHardFailure } = await import("./execute-job.js");
+    const fatalStderrs = [
+      "python3: can't open file '/home/user/aura-tools/runner.py': [Errno 2] No such file or directory",
+      "bash: line 1: gh: command not found",
+      "ModuleNotFoundError: No module named 'requests'",
+      "ImportError: cannot import name 'foo'",
+      "/usr/bin/tool: Permission denied",
+      "Error: Cannot find module './missing.js'",
+    ];
+    for (const stderr of fatalStderrs) {
+      expect(isHardFailure({ exit_code: 1, stdout: "partial output", stderr })).toBe(true);
+    }
+  });
+
+  it("treats non-zero exit with real stdout and benign stderr as a soft failure", async () => {
+    const { isHardFailure } = await import("./execute-job.js");
+    expect(
+      isHardFailure({
+        exit_code: 1,
+        stdout: '{"rows": [1, 2, 3]}',
+        stderr: "warning: upstream API returned 500 for one page",
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("executeJob script hard-failure handling (issue #961)", () => {
+  beforeEach(() => {
+    dbMock.results = [];
+    dbMock.operations = [];
+    vi.clearAllMocks();
+    sendJobOpsNoticeMock.mockResolvedValue({ ok: true, target: "ops_channel" });
+    sandboxMock.getSandboxEnvs.mockResolvedValue({});
+    sandboxMock.getOrCreateSandbox.mockResolvedValue({
+      commands: { run: sandboxMock.commandRun },
+    });
+  });
+
+  it("does not invoke the LLM on a hard failure (exit 127) even with a playbook", async () => {
+    sandboxMock.commandRun.mockResolvedValue({
+      exitCode: 127,
+      stdout: "",
+      stderr: "bash: python3: command not found",
+    });
+    queueDbResults([{ id: "job-1" }], [{ id: "exec-1" }]);
+
+    const { executeJob } = await import("./execute-job.js");
+    await expect(
+      executeJob(baseJob({ playbook: "Do the daily sync." }) as any, "heartbeat"),
+    ).rejects.toThrow(/Script hard failure \(exit code 127\)/);
+
+    expect(createHeadlessAgentMock).not.toHaveBeenCalled();
+    expect(sendJobOpsNoticeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        jobId: "job-1",
+        jobName: "test-job",
+        text: expect.stringContaining("Script hard failure"),
+        logContext: expect.objectContaining({ event: "script_hard_failure" }),
+      }),
+    );
+
+    // Execution trace failed with the stderr captured.
+    const failedExecSet = dbMock.operations
+      .filter((op) => op.kind === "update")
+      .map((op) => op.setArg ?? {})
+      .find((set) => set.status === "failed" && "error" in set);
+    expect(failedExecSet?.error).toContain("command not found");
+  });
+
+  it("marks a hard failure (empty stdout, fatal stderr) failed and records the errored outcome", async () => {
+    sandboxMock.commandRun.mockResolvedValue({
+      exitCode: 1,
+      stdout: "",
+      stderr: "python3: [Errno 2] No such file or directory",
+    });
+    queueDbResults([{ id: "job-1" }], [{ id: "exec-1" }]);
+
+    const { executeJob } = await import("./execute-job.js");
+    await expect(executeJob(baseJob() as any, "heartbeat")).rejects.toThrow(
+      /No such file or directory/,
+    );
+
+    expect(createHeadlessAgentMock).not.toHaveBeenCalled();
+    expect(sendJobOpsNoticeMock).toHaveBeenCalled();
+    expect(insertValues()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          outcomeStatus: "errored",
+          error: expect.stringContaining("No such file or directory"),
+        }),
+      ]),
+    );
+  });
+
+  it("classifies a thrown sandbox error carrying exitCode/stderr as a hard failure", async () => {
+    sandboxMock.commandRun.mockRejectedValue(
+      Object.assign(new Error("Command exited with code 127"), {
+        exitCode: 127,
+        stdout: "",
+        stderr: "bash: node: command not found",
+      }),
+    );
+    queueDbResults([{ id: "job-1" }], [{ id: "exec-1" }]);
+
+    const { executeJob } = await import("./execute-job.js");
+    await expect(
+      executeJob(baseJob({ playbook: "Do the daily sync." }) as any, "heartbeat"),
+    ).rejects.toThrow();
+
+    expect(createHeadlessAgentMock).not.toHaveBeenCalled();
+    expect(sendJobOpsNoticeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringContaining("command not found"),
+      }),
+    );
+  });
+
+  it("falls through to the LLM on a soft failure and passes the script output as context", async () => {
+    sandboxMock.commandRun.mockResolvedValue({
+      exitCode: 1,
+      stdout: '{"rows": [1, 2]}',
+      stderr: "warning: one upstream page failed",
+    });
+
+    let capturedPrompt = "";
+    createHeadlessAgentMock.mockResolvedValue({
+      agent: {
+        generate: vi.fn(async ({ prompt }: { prompt: string }) => {
+          capturedPrompt = prompt;
+          throw new Error("stop-after-prompt-capture");
+        }),
+      },
+      modelId: "test-model",
+      getStepModelIds: () => [],
+    });
+    queueDbResults([{ id: "job-1" }], [{ id: "exec-1" }]);
+
+    const { executeJob } = await import("./execute-job.js");
+    await expect(
+      executeJob(baseJob({ playbook: "Do the daily sync." }) as any, "heartbeat"),
+    ).rejects.toThrow("stop-after-prompt-capture");
+
+    expect(createHeadlessAgentMock).toHaveBeenCalled();
+    expect(sendJobOpsNoticeMock).not.toHaveBeenCalled();
+    expect(capturedPrompt).toContain("Script layer soft failure");
+    expect(capturedPrompt).toContain('{"rows": [1, 2]}');
+    expect(capturedPrompt).toContain("warning: one upstream page failed");
+  });
+
+  it("keeps the existing hard-throw for non-zero exits on script-only jobs", async () => {
+    sandboxMock.commandRun.mockResolvedValue({
+      exitCode: 2,
+      stdout: "partial output",
+      stderr: "boom",
+    });
+    queueDbResults([{ id: "job-1" }], [{ id: "exec-1" }]);
+
+    const { executeJob } = await import("./execute-job.js");
+    // Soft failure + no playbook → original "Script exited with code N" path.
+    await expect(executeJob(baseJob() as any, "heartbeat")).rejects.toThrow(
+      "Script exited with code 2",
+    );
+    expect(sendJobOpsNoticeMock).not.toHaveBeenCalled();
   });
 });

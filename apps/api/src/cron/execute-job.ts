@@ -18,6 +18,7 @@ import {
   buildConversationSteps,
 } from "./persist-conversation.js";
 import { detectScriptOutputError } from "./script-output.js";
+import { sendJobOpsNotice, truncateJobFailureText } from "./job-notifications.js";
 import { buildStepUsages } from "../lib/cost-calculator.js";
 import { getScratchpadContents, cleanupScratchpad } from "../tools/scratchpad.js";
 import { withTrace } from "../lib/langfuse.js";
@@ -47,12 +48,55 @@ type ScriptExecutionOutput = {
 
 class ScriptJobError extends Error {
   readonly scriptOutput: ScriptExecutionOutput | null;
+  readonly hardFailure: boolean;
 
-  constructor(message: string, scriptOutput: ScriptExecutionOutput | null) {
+  constructor(
+    message: string,
+    scriptOutput: ScriptExecutionOutput | null,
+    hardFailure = false,
+  ) {
     super(message);
     this.name = "ScriptJobError";
     this.scriptOutput = scriptOutput;
+    this.hardFailure = hardFailure;
   }
+}
+
+// ── Script hard-failure detection (issue #961) ───────────────────────────────
+
+/**
+ * stderr signatures that mean the script itself is broken (missing file,
+ * missing interpreter/module, bad permissions) — retrying the LLM against a
+ * playbook cannot recover these and only masks the root cause.
+ */
+const FATAL_STDERR_PATTERNS: readonly RegExp[] = [
+  /No such file or directory/i,
+  /command not found/i,
+  /ModuleNotFoundError/i,
+  /ImportError/i,
+  /Permission denied/i,
+  /Cannot find module/i,
+];
+
+/**
+ * True when a script result is a HARD failure that must not fall through to
+ * the LLM (issue #961): the script produced nothing usable, so handing the
+ * playbook to the model just makes it confabulate a result.
+ *
+ * Hard = non-zero exit AND (empty/absent stdout, a shell exec-failure exit
+ * code 126/127, or stderr matching a known fatal signature). A non-zero exit
+ * WITH real stdout is a soft failure — partial output the LLM can work with.
+ */
+export function isHardFailure(result: {
+  exit_code: number | null;
+  stdout: string;
+  stderr: string;
+}): boolean {
+  const exitCode = result.exit_code;
+  if (exitCode === null || exitCode === 0) return false;
+  if (exitCode === 126 || exitCode === 127) return true;
+  if (!result.stdout || result.stdout.trim().length === 0) return true;
+  return FATAL_STDERR_PATTERNS.some((pattern) => pattern.test(result.stderr));
 }
 
 // ── Job-specific additive instructions ───────────────────────────────────────
@@ -219,9 +263,11 @@ export async function executeJob(
   try {
     // Atomically claim the job to prevent duplicate execution.
     // If another process already claimed it, this updates 0 rows.
+    // suspendedUntil is reset so a leftover webhook-suspension shield from a
+    // previous run (issue #1326) never protects this fresh run.
     const claimed = await db
       .update(jobs)
-      .set({ status: "running", updatedAt: new Date() })
+      .set({ status: "running", suspendedUntil: null, updatedAt: new Date() })
       .where(and(eq(jobs.id, jobId), eq(jobs.status, "pending"), eq(jobs.enabled, 1)))
       .returning({ id: jobs.id });
 
@@ -334,6 +380,9 @@ export async function executeJob(
 
     // ── Script execution layer ──────────────────────────────────────────────
     let scriptOutput: string | null = null;
+    // Set on a SOFT script failure that falls through to the LLM so the model
+    // sees what actually happened instead of confabulating (issue #961).
+    let scriptFailureContext: string | null = null;
 
     if (job.script) {
       try {
@@ -368,15 +417,32 @@ export async function executeJob(
         };
 
         if (exitCode !== 0) {
+          const outputTail = (stderr || stdout).slice(-2000);
+
+          // Hard failure (issue #961): the script produced nothing usable —
+          // never hand the playbook to the LLM, it would only confabulate.
+          // The catch below sends the ops notice and rethrows into the
+          // normal retry/escalation path.
+          if (isHardFailure(scriptExecutionOutput)) {
+            throw new ScriptJobError(
+              `Script hard failure (exit code ${exitCode}):\n${outputTail}`,
+              scriptExecutionOutput,
+              true,
+            );
+          }
+
           if (job.playbook) {
-            logger.warn("executeJob: script failed, falling through to LLM", {
+            logger.warn("executeJob: script soft-failed, falling through to LLM", {
               jobId,
               jobName: job.name,
               exitCode,
               stderr: stderr.slice(0, 500),
             });
+            scriptFailureContext =
+              `Script exited with code ${exitCode}.\n\n` +
+              `stderr tail:\n${truncatedStderr.slice(-2000)}\n\n` +
+              `stdout tail:\n${truncatedStdout.slice(-2000)}`;
           } else {
-            const outputTail = (stderr || stdout).slice(-2000);
             throw new ScriptJobError(
               `Script exited with code ${exitCode}:\n${outputTail}`,
               scriptExecutionOutput,
@@ -470,6 +536,51 @@ export async function executeJob(
         if (scriptOutput) {
           throw scriptErr;
         }
+
+        // Thrown execution errors (e.g. the sandbox SDK's CommandExitError)
+        // carry exitCode/stdout/stderr — snapshot them so they get the same
+        // hard-failure classification as returned results (issue #961).
+        if (!scriptExecutionOutput && typeof scriptErr?.exitCode === "number") {
+          scriptExecutionOutput = {
+            stdout: String(scriptErr.stdout ?? ""),
+            stderr: String(scriptErr.stderr ?? scriptErr.message ?? ""),
+            exit_code: scriptErr.exitCode,
+          };
+        }
+
+        const hardFailure =
+          scriptErr instanceof ScriptJobError
+            ? scriptErr.hardFailure
+            : scriptExecutionOutput !== null && isHardFailure(scriptExecutionOutput);
+
+        if (hardFailure) {
+          // Issue #961: surface the hard failure to ops, then rethrow into
+          // the outer catch so the execution is marked failed with the real
+          // stderr and the normal retry/escalation path takes over. The LLM
+          // is never invoked for this run.
+          const stderrTail = truncateJobFailureText(
+            scriptExecutionOutput?.stderr ||
+              scriptExecutionOutput?.stdout ||
+              scriptErr?.message,
+          );
+          await sendJobOpsNotice({
+            jobId,
+            jobName: job.name,
+            requestedBy: job.requestedBy,
+            text:
+              `:x: Script hard failure (exit code ${scriptExecutionOutput?.exit_code ?? "unknown"}) — ` +
+              `execution marked failed, LLM not invoked.\n\`\`\`${stderrTail}\`\`\``,
+            logContext: { event: "script_hard_failure", executionId },
+          });
+          throw scriptErr instanceof ScriptJobError
+            ? scriptErr
+            : new ScriptJobError(
+                scriptErr?.message ?? String(scriptErr),
+                scriptExecutionOutput,
+                true,
+              );
+        }
+
         if (!job.playbook) {
           throw scriptErr instanceof ScriptJobError
             ? scriptErr
@@ -480,11 +591,19 @@ export async function executeJob(
           jobName: job.name,
           error: scriptErr.message,
         });
+        scriptFailureContext ??= `Script execution error: ${
+          scriptErr?.message ?? String(scriptErr)
+        }`;
       }
     }
 
     if (scriptOutput) {
       prompt = `## Pre-computed data (from script)\n\n\`\`\`json\n${scriptOutput}\n\`\`\`\n\n---\n\n${prompt}`;
+    } else if (scriptFailureContext) {
+      prompt =
+        `## Script layer soft failure\n\nThe job's script failed before this step. ` +
+        `Diagnose or recover using your playbook and the output below — do NOT invent data the script did not produce.\n\n` +
+        `${scriptFailureContext}\n\n---\n\n${prompt}`;
     }
 
     const { agent, modelId, getStepModelIds, getCompactionTotals } = await createHeadlessAgent({
