@@ -60,6 +60,7 @@ function row(overrides: Record<string, unknown> = {}) {
     content: "Active launch incident",
     type: "event",
     source_channel_type: "public_channel",
+    extraction_source_role: null,
     related_user_ids: [],
     embedding: [0.1, 0.2, 0.3],
     relevance_score: 1,
@@ -331,5 +332,132 @@ describe("retrieveMemories temporal validity", () => {
     expect(hybridSql).toContain("valid_until");
     expect(hybridSql).toContain(asOf.toISOString().toLowerCase());
     expect(hybridSql).not.toContain("now()");
+  });
+});
+
+describe("provenance-aware retrieval scoring (#949 / #950)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-06-09T08:00:00.000Z"));
+    retrieveMocks.dbExecute.mockReset();
+    retrieveMocks.generateText.mockReset();
+    retrieveMocks.getRerankingModel.mockReset();
+    retrieveMocks.resolveEntityReadOnly.mockReset();
+    retrieveMocks.generateText.mockResolvedValue({
+      output: { entities: [] },
+      usage: {},
+    });
+    retrieveMocks.getRerankingModel.mockResolvedValue(null);
+    retrieveMocks.resolveEntityReadOnly.mockResolvedValue(null);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function retrieve() {
+    return retrieveMemories({
+      query: "does aura have access to the close api",
+      queryEmbedding: [0.1, 0.2, 0.3],
+      currentUserId: "U_current",
+      workspaceId: "workspace-1",
+      adminMode: true,
+      abstain: false,
+    });
+  }
+
+  it("quarantines assistant-sourced capability claims from injection entirely", async () => {
+    const confabulated = row({
+      id: "memory-confabulated",
+      content: "Aura does not have access to the Close API",
+      type: "fact",
+      extraction_source_role: "assistant",
+      similarity: 0.99,
+    });
+    const userStated = row({
+      id: "memory-user-stated",
+      content: "Aura does not have access to the Close API",
+      type: "fact",
+      extraction_source_role: "user",
+      similarity: 0.98,
+    });
+
+    retrieveMocks.dbExecute
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([confabulated, userStated]);
+
+    const result = await retrieve();
+
+    expect(result.map((m) => m.id)).toEqual(["memory-user-stated"]);
+  });
+
+  it("does not quarantine assistant-sourced memories that are not capability claims", async () => {
+    const deliverable = row({
+      id: "memory-deliverable",
+      content: "Aura recommended the International Budget Hostel in Amsterdam",
+      type: "fact",
+      extraction_source_role: "assistant",
+      similarity: 0.9,
+    });
+
+    retrieveMocks.dbExecute
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([deliverable]);
+
+    const result = await retrieve();
+
+    expect(result.map((m) => m.id)).toEqual(["memory-deliverable"]);
+  });
+
+  it("ranks a user-sourced memory above an equally relevant assistant-sourced one", async () => {
+    const assistantSourced = row({
+      id: "memory-assistant",
+      content: "The launch retro is scheduled for Thursday",
+      extraction_source_role: "assistant",
+      similarity: 0.9,
+      rrf_score: 0.03,
+    });
+    const userSourced = row({
+      id: "memory-user",
+      content: "The launch retro is scheduled for Thursday",
+      extraction_source_role: "user",
+      similarity: 0.9,
+      rrf_score: 0.03,
+    });
+
+    retrieveMocks.dbExecute
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([assistantSourced, userSourced]);
+
+    const result = await retrieve();
+
+    expect(result.map((m) => m.id)).toEqual(["memory-user", "memory-assistant"]);
+  });
+
+  it("demotes disputed memories below equally relevant current ones", async () => {
+    const disputed = row({
+      id: "memory-disputed",
+      content: "The launch retro is scheduled for Thursday",
+      extraction_source_role: "user",
+      status: "disputed",
+      similarity: 0.9,
+      rrf_score: 0.03,
+    });
+    const current = row({
+      id: "memory-current",
+      content: "The launch retro moved to Friday",
+      extraction_source_role: "user",
+      status: "current",
+      similarity: 0.9,
+      rrf_score: 0.03,
+    });
+
+    retrieveMocks.dbExecute
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([disputed, current]);
+
+    const result = await retrieve();
+
+    expect(result.map((m) => m.id)).toEqual(["memory-current", "memory-disputed"]);
   });
 });
