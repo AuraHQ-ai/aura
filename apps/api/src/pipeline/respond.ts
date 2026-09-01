@@ -508,10 +508,37 @@ export async function generateResponse(
     });
   }
 
+  /**
+   * Create the Slack stream lazily (issue #1012). The eager pre-generation
+   * stream could be opened with no real content (a whitespace keepalive or a
+   * continuation split while a tool was still running), leaving a visibly
+   * empty "ghost" bubble for the whole thinking/tool phase. Instead the
+   * stream now comes into existence on the first actual content append —
+   * first text delta or first task card.
+   */
+  function ensureStreamer(): void {
+    if (streamer || streamingFailed) return;
+    streamer = slackClient.chatStream(streamParams);
+    streamStartedAt = Date.now();
+    streamHasContent = false;
+  }
+
   async function tryStreamAppend(
     payload: Omit<ChatAppendStreamArguments, "channel" | "ts">,
+    appendOptions?: {
+      /**
+       * Set false for keepalive/housekeeping appends: they must never be the
+       * reason a new Slack message bubble gets created (issue #1012).
+       */
+      createStream?: boolean;
+    },
   ): Promise<boolean> {
-    if (streamingFailed || !streamer) return false;
+    if (streamingFailed) return false;
+    if (!streamer) {
+      if (appendOptions?.createStream === false) return false;
+      ensureStreamer();
+      if (!streamer) return false;
+    }
     try {
       await streamer.append(payload);
       streamHasContent = true;
@@ -752,10 +779,10 @@ export async function generateResponse(
   );
   streamParams.task_display_mode = configuredTaskDisplayMode;
 
-  if (!skipStreaming) {
-    streamer = slackClient.chatStream(streamParams);
-    streamStartedAt = Date.now();
-  }
+  // Issue #1012: no eager stream creation here — the stream is created
+  // lazily by ensureStreamer() on the first real content append, so the
+  // model can think or run tools for minutes without an empty Slack bubble
+  // hanging in the thread.
 
   let supersededDuringStream = false;
   const isSupersededError = (error: unknown): error is InvocationSupersededError => (
@@ -1258,34 +1285,30 @@ export async function generateResponse(
       await appendStreamTombstone();
     }
 
-    try {
-      await streamer.stop();
-    } catch (stopErr: any) {
-      logger.warn("Failed to stop stream for continuation", {
-        error: stopErr?.message,
-      });
+    if (streamer) {
+      try {
+        await streamer.stop();
+      } catch (stopErr: any) {
+        logger.warn("Failed to stop stream for continuation", {
+          error: stopErr?.message,
+        });
+      }
     }
 
-    try {
-      streamer = slackClient.chatStream(streamParams);
-      streamStartedAt = Date.now();
-      streamHasContent = false;
-      currentStreamLength = 0;
-      streamTombstoneSent = false;
-      continuationCount++;
-      currentSegmentIndex = continuationCount;
-      currentSegmentTextLength = 0;
-      currentSegmentToolRecordStart = toolCallRecords.length;
-      currentSegmentContinuationReason = reason;
-      return true;
-    } catch (startErr: any) {
-      logger.warn(
-        "Failed to start continuation stream, falling back to postMessage",
-        { error: startErr?.message },
-      );
-      streamingFailed = true;
-      return false;
-    }
+    // Issue #1012: the continuation stream is NOT opened here. Opening it at
+    // split time left an empty bubble sitting in the thread for the whole
+    // remaining tool call / post-tool reasoning phase. Instead the streamer
+    // is cleared and the next real content append lazily creates it.
+    streamer = null;
+    streamHasContent = false;
+    currentStreamLength = 0;
+    streamTombstoneSent = false;
+    continuationCount++;
+    currentSegmentIndex = continuationCount;
+    currentSegmentTextLength = 0;
+    currentSegmentToolRecordStart = toolCallRecords.length;
+    currentSegmentContinuationReason = reason;
+    return true;
   }
 
   function startLongToolSplitTimer() {
@@ -1512,7 +1535,10 @@ export async function generateResponse(
                 streamKeepAlive = null;
                 return;
               }
-              await tryStreamAppend(asAppendPayload({ markdown_text: " " }));
+              // Keepalives never CREATE a stream (issue #1012): a whitespace
+              // append opening a fresh bubble is exactly the ghost-message
+              // bug — it only keeps an already-visible stream alive.
+              await tryStreamAppend(asAppendPayload({ markdown_text: " " }), { createStream: false });
             }, 20_000);
           }
           break;
