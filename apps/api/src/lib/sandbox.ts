@@ -45,6 +45,22 @@ const DISK_RECLAIM_SCRIPT = [
 const TOOLS_REPO_CHECKOUT_DIR_NAME = ["aura", "tools"].join("-");
 const TOOLS_REPO_CHECKOUT_PATH = `/home/user/${TOOLS_REPO_CHECKOUT_DIR_NAME}`;
 
+// Self-authored tools live in this repo by default (issue #960). A workspace
+// can override it via the `tools_repo` setting, but the checkout must exist on
+// every sandbox acquisition — recurring jobs invoke tools via
+// `python3 /home/user/aura-tools/runner.py <tool> '{...}'` and die silently
+// when a recycled sandbox comes back without it.
+const AURA_TOOLS_DEFAULT_REPO = "realadvisor/aura-tools";
+
+// Marker file touched after a successful sync. When it is younger than
+// AURA_TOOLS_FRESH_MINUTES the entire bootstrap is a single cheap probe —
+// no git network round-trip — so sandbox startup is not measurably slowed.
+const AURA_TOOLS_SYNC_MARKER_PATH = `${TOOLS_REPO_CHECKOUT_PATH}/.aura-tools-synced`;
+const AURA_TOOLS_FRESH_MINUTES = 30;
+
+/** Sandbox ids already synced by this process (mirrors userHomeReady). */
+const auraToolsReady = new Set<string>();
+
 /** Per-invocation cache -- reuse the same sandbox within a single request.
  *  Keyed by userId so concurrent invocations for different users don't share state. */
 let cachedSandbox: any | null = null;
@@ -607,22 +623,39 @@ async function setupSandboxFilesystem(
 }
 
 /**
- * Clone or refresh the workspace-configured self-authored tools repository.
- * Non-fatal by design: a bad repo setting must not make the sandbox unusable.
+ * Ensure the self-authored tools repository is cloned, up to date, and has
+ * its Python dependencies installed at /home/user/aura-tools (issue #960).
+ *
+ * Defaults to `realadvisor/aura-tools`; a workspace can point elsewhere via
+ * the `tools_repo` setting. Idempotent and cheap by design:
+ *   - once per process per sandbox id via the `auraToolsReady` session cache;
+ *   - across processes via a marker file — when it is younger than
+ *     AURA_TOOLS_FRESH_MINUTES the bootstrap is a single local probe with no
+ *     git network round-trip;
+ *   - Python deps are (re)installed only when the checkout actually changed.
+ *
+ * Non-fatal by design: a bad repo setting or a clone/pull/pip failure must
+ * not make the sandbox unusable.
  */
-export async function bootstrapToolsRepo(
-  sandbox: SandboxCommandRunner,
+export async function ensureAuraTools(
+  sandbox: SandboxCommandRunner & { sandboxId?: string },
   envs: Record<string, string>,
 ): Promise<void> {
-  const rawToolsRepo = (await getSetting(TOOLS_REPO_SETTING_KEY))?.trim();
-  if (!rawToolsRepo) return;
+  const sessionKey = sandbox.sandboxId ?? "unknown-sandbox";
+  if (auraToolsReady.has(sessionKey)) return;
 
-  const toolsRepo = normalizeToolsRepo(rawToolsRepo);
-  if (!toolsRepo) {
-    logger.warn("Invalid tools_repo setting; expected a GitHub owner/name or HTTPS URL", {
-      value: rawToolsRepo,
-    });
-    return;
+  let toolsRepo = AURA_TOOLS_DEFAULT_REPO;
+  const rawToolsRepo = (await getSetting(TOOLS_REPO_SETTING_KEY))?.trim();
+  if (rawToolsRepo) {
+    const normalized = normalizeToolsRepo(rawToolsRepo);
+    if (normalized) {
+      toolsRepo = normalized;
+    } else {
+      logger.warn(
+        "Invalid tools_repo setting; expected a GitHub owner/name or HTTPS URL — falling back to the default tools repository",
+        { value: rawToolsRepo, defaultRepo: AURA_TOOLS_DEFAULT_REPO },
+      );
+    }
   }
 
   const commandEnvs = { ...envs };
@@ -632,8 +665,8 @@ export async function bootstrapToolsRepo(
 
   if (!commandEnvs.GITHUB_TOKEN) {
     recordError(
-      "sandbox.bootstrapToolsRepo",
-      new Error("Skipping tools_repo clone because GITHUB_TOKEN is not available"),
+      "sandbox.ensureAuraTools",
+      new Error("Skipping tools repo clone because GITHUB_TOKEN is not available"),
       { toolsRepo },
     );
     return;
@@ -641,54 +674,88 @@ export async function bootstrapToolsRepo(
 
   const checkoutPath = TOOLS_REPO_CHECKOUT_PATH;
   const checkoutPathArg = quoteShellArg(checkoutPath);
+  const markerArg = quoteShellArg(AURA_TOOLS_SYNC_MARKER_PATH);
+  const requirementsArg = quoteShellArg(`${checkoutPath}/requirements.txt`);
 
   try {
-    // Shell-level guard so the probe always exits 0 regardless of whether the
-    // checkout exists — the E2B SDK throws on non-zero exits, which previously
-    // made the `git clone` below unreachable exactly when the checkout was
-    // missing. Branch on stdout, never on the exit code.
-    const repoCheck = await runTolerant(
+    // Single cheap probe: fresh marker → done; valid checkout → pull; else
+    // clone. Shell-level guards keep the probe exiting 0 regardless of state —
+    // the E2B SDK throws on non-zero exits, which previously made the
+    // `git clone` below unreachable exactly when the checkout was missing
+    // (issue #1363). Branch on stdout, never on the exit code.
+    const probe = await runTolerant(
       sandbox,
-      `git -C ${checkoutPathArg} rev-parse --is-inside-work-tree 2>/dev/null && echo AURA_REPO_OK || echo AURA_REPO_MISSING`,
+      `if [ -f ${markerArg} ] && [ -n "$(find ${markerArg} -mmin -${AURA_TOOLS_FRESH_MINUTES} 2>/dev/null)" ]; then echo AURA_TOOLS_FRESH; elif git -C ${checkoutPathArg} rev-parse --is-inside-work-tree >/dev/null 2>&1; then echo AURA_TOOLS_PRESENT; else echo AURA_TOOLS_MISSING; fi`,
       { timeoutMs: 5_000, envs: commandEnvs },
     );
 
-    if (repoCheck.stdout.includes("AURA_REPO_OK")) {
+    if (probe.stdout.includes("AURA_TOOLS_FRESH")) {
+      auraToolsReady.add(sessionKey);
+      return;
+    }
+
+    let checkoutChanged: boolean;
+    if (probe.stdout.includes("AURA_TOOLS_PRESENT")) {
       const pullResult = await runTolerant(
         sandbox,
         `git -C ${checkoutPathArg} pull --ff-only`,
         { timeoutMs: 60_000, envs: commandEnvs },
       );
       if (pullResult.exitCode !== 0) {
-        logger.warn("Failed to refresh configured tools repository", {
+        // Keep the existing (stale but usable) checkout; do NOT touch the
+        // marker so the next acquisition retries the refresh.
+        logger.warn("Failed to refresh tools repository", {
           toolsRepo,
           checkoutPath,
           exitCode: pullResult.exitCode,
           stderr: redactGitAuth(pullResult.stderr),
         });
+        return;
       }
-      return;
+      checkoutChanged = !pullResult.stdout.includes("Already up to date");
+    } else {
+      const cloneResult = await runTolerant(
+        sandbox,
+        `git clone --depth=1 "https://x-access-token:$GITHUB_TOKEN@github.com/${toolsRepo}.git" ${checkoutPathArg}`,
+        { timeoutMs: 120_000, envs: commandEnvs },
+      );
+      if (cloneResult.exitCode !== 0) {
+        recordError(
+          "sandbox.ensureAuraTools",
+          new Error("Failed to clone tools repository"),
+          {
+            toolsRepo,
+            checkoutPath,
+            exitCode: cloneResult.exitCode,
+            stderr: redactGitAuth(cloneResult.stderr),
+          },
+        );
+        return;
+      }
+      checkoutChanged = true;
     }
 
-    const cloneResult = await runTolerant(
-      sandbox,
-      `git clone "https://x-access-token:$GITHUB_TOKEN@github.com/${toolsRepo}.git" ${checkoutPathArg}`,
-      { timeoutMs: 120_000, envs: commandEnvs },
-    );
-    if (cloneResult.exitCode !== 0) {
-      recordError(
-        "sandbox.bootstrapToolsRepo",
-        new Error("Failed to clone configured tools repository"),
-        {
-          toolsRepo,
-          checkoutPath,
-          exitCode: cloneResult.exitCode,
-          stderr: redactGitAuth(cloneResult.stderr),
-        },
-      );
+    // Install Python deps only when the checkout changed; pip failures are
+    // logged but don't block the marker — the repo itself is fresh and the
+    // failure will surface (with logs) on the next tool run.
+    const finalizeCommand = checkoutChanged
+      ? `if [ -f ${requirementsArg} ]; then python3 -m pip install --quiet --disable-pip-version-check -r ${requirementsArg} || echo AURA_TOOLS_DEPS_FAILED; fi; touch ${markerArg}`
+      : `touch ${markerArg}`;
+    const finalizeResult = await runTolerant(sandbox, finalizeCommand, {
+      timeoutMs: 300_000,
+      envs: commandEnvs,
+    });
+    if (finalizeResult.stdout.includes("AURA_TOOLS_DEPS_FAILED")) {
+      logger.warn("Tools repository Python dependency install failed", {
+        toolsRepo,
+        checkoutPath,
+        stderr: finalizeResult.stderr,
+      });
     }
+
+    auraToolsReady.add(sessionKey);
   } catch (error: any) {
-    recordError("sandbox.bootstrapToolsRepo", error, { toolsRepo, checkoutPath });
+    recordError("sandbox.ensureAuraTools", error, { toolsRepo, checkoutPath });
   }
 }
 
@@ -783,7 +850,7 @@ export async function getOrCreateSandbox(userId?: string): Promise<any> {
 
   const Sandbox = await loadE2B();
   // Resolve envs for the calling user so owner-scoped credentials (e.g. GITHUB_TOKEN)
-  // are available to bootstrapToolsRepo; fall back to "aura" when no user is known.
+  // are available to ensureAuraTools; fall back to "aura" when no user is known.
   const envs = await getSandboxEnvs(userId ?? "aura");
 
   const apiKey = envs.E2B_API_KEY;
@@ -845,7 +912,7 @@ export async function getOrCreateSandbox(userId?: string): Promise<any> {
       const diskOk = await ensureSandboxDiskSpace(cachedSandbox, envs);
       if (diskOk) {
         await setupSandboxFilesystem(cachedSandbox, envs);
-        await bootstrapToolsRepo(cachedSandbox, envs);
+        await ensureAuraTools(cachedSandbox, envs);
         return cachedSandbox;
       }
 
@@ -927,7 +994,7 @@ export async function getOrCreateSandbox(userId?: string): Promise<any> {
   }
 
   await setupSandboxFilesystem(sandbox, envs);
-  await bootstrapToolsRepo(sandbox, envs);
+  await ensureAuraTools(sandbox, envs);
 
   return sandbox;
 }
