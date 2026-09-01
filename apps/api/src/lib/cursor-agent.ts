@@ -4,9 +4,15 @@ import { resolveCredentialValue } from "./credentials.js";
 const CURSOR_API_BASE = "https://api.cursor.com/v0";
 
 /**
- * Resolve the Cursor API key from the credentials store. Shared by the raw
- * v0 REST calls below and by @cursor/sdk calls (the SDK takes `apiKey`
- * explicitly so it never falls back to ambient CURSOR_API_KEY env state).
+ * Resolve the Cursor API key from the credentials store. Shared by all raw
+ * v0 REST calls in this module. We no longer use @cursor/sdk anywhere here
+ * (see comments on launchCursorAgent / getCursorAgentStatus /
+ * followupCursorAgent / stopCursorAgent / listCursorAgents below) --
+ * @cursor/sdk@1.0.30's published dist is unbundlable under the Workflow
+ * DevKit's esbuild step-discovery pass (dynamic import() of its own
+ * .d.ts.map files, plus unresolvable bun:sqlite / vendor / ./errors.js /
+ * ./stubs.js references), which broke pnpm --filter aura-api build:vercel
+ * on main. See PR fixing #1389.
  */
 export async function getCursorApiKey(): Promise<string> {
   const key = await resolveCredentialValue("cursor_api_key");
@@ -301,11 +307,13 @@ export function resolveCursorModel(model?: string): string | undefined {
 /**
  * Dispatch a Cursor Cloud Agent.
  *
- * Intentionally still the raw v0 REST API, not @cursor/sdk: the SDK's
- * `Agent.create({ cloud })` (as of 1.0.30) has no equivalent for
- * `target.branchName` (explicit branch naming — our defense against branch
- * collisions) or `webhook` (completion webhook → Slack DM). Migrate this call
- * when the SDK grows those options.
+ * Intentionally still the raw v0 REST API, not @cursor/sdk: on top of the
+ * unbundlable-dist problem above, the SDK's `Agent.create({ cloud })` (as of
+ * 1.0.30) has no equivalent for `target.branchName` (explicit branch naming
+ * — our defense against branch collisions) or `webhook` (completion webhook
+ * → Slack DM). Do not re-attempt this migration without first confirming a
+ * newer @cursor/sdk version both has these fields AND builds cleanly under
+ * pnpm --filter aura-api build:vercel (not just tsc/pnpm build).
  */
 export async function launchCursorAgent(
   params: LaunchCursorAgentParams,
@@ -356,85 +364,58 @@ export async function launchCursorAgent(
 }
 
 /**
- * Map an @cursor/sdk lifecycle status (lowercase) to the uppercase form the
- * raw v0 API used, so callers (check_cursor_agent output, tracking notes)
- * keep seeing the same values as before the SDK migration.
+ * Intentionally still the raw v0 REST API, not @cursor/sdk: see the note on
+ * getCursorApiKey above -- 1.0.30's dist is unbundlable under the WDK
+ * esbuild pass.
  */
-function toV0Status(status?: string): string {
-  return status ? status.toUpperCase() : "UNKNOWN";
-}
-
 export async function getCursorAgentStatus(
   agentId: string,
 ): Promise<CursorAgentStatus> {
-  const { Agent } = await import("@cursor/sdk");
-  const apiKey = await getCursorApiKey();
+  const res = await fetch(`${CURSOR_API_BASE}/agents/${agentId}`, {
+    method: "GET",
+    headers: await headers(),
+  });
 
-  const info = await Agent.get(agentId, { apiKey });
-
-  // Live status and PR URL / branch come from the runs in the SDK
-  // (SDKAgentInfo.status is not populated by the backend today, and the
-  // agent object carries no git metadata). Latest run first.
-  let runStatus: string | undefined;
-  let prUrl: string | undefined;
-  let branchName: string | undefined;
-  try {
-    const runs = await Agent.listRuns(agentId, {
-      runtime: "cloud",
-      apiKey,
-      limit: 1,
-    });
-    const latest = runs.items[0];
-    runStatus = latest?.status;
-    const branchInfo = latest?.git?.branches?.[0];
-    prUrl = branchInfo?.prUrl;
-    branchName = branchInfo?.branch;
-  } catch (error) {
-    logger.warn("getCursorAgentStatus: run metadata unavailable", {
-      agentId,
-      error: error instanceof Error ? error.message : String(error),
-    });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(
+      `Cursor API GET /agents/${agentId} failed (${res.status}): ${text}`,
+    );
   }
 
-  return {
-    id: info.agentId,
-    status: toV0Status(info.status ?? runStatus),
-    target:
-      prUrl || branchName ? { prUrl, branchName } : undefined,
-    summary: info.summary || undefined,
-    createdAt: info.createdAt
-      ? new Date(info.createdAt).toISOString()
-      : undefined,
-    // The SDK does not expose finishedAt; leave it unset.
-    finishedAt: undefined,
-  };
+  return (await res.json()) as CursorAgentStatus;
 }
 
+/**
+ * Intentionally still the raw v0 REST API, not @cursor/sdk -- same
+ * unbundlable-dist reason as getCursorAgentStatus above.
+ */
 export async function followupCursorAgent(
   agentId: string,
   prompt: string,
 ): Promise<CursorAgentResponse> {
-  const { Agent } = await import("@cursor/sdk");
-  const apiKey = await getCursorApiKey();
-
-  const agent = await Agent.resume(agentId, { apiKey });
-  try {
-    const run = await agent.send(prompt);
-    logger.info("followupCursorAgent: sent", { agentId, runId: run.id });
-    return { id: agentId, status: toV0Status(run.status) };
-  } finally {
-    // Dispose the local handle only — the cloud run keeps going server-side.
-    agent.close();
+  const res = await fetch(`${CURSOR_API_BASE}/agents/${agentId}/followup`, {
+    method: "POST",
+    headers: await headers(),
+    body: JSON.stringify({ prompt: { text: prompt } }),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(
+      `Cursor API POST /agents/${agentId}/followup failed (${res.status}): ${text}`,
+    );
   }
+  return (await res.json()) as CursorAgentResponse;
 }
 
 /**
  * Full agent-level conversation (every step, file read, change).
  *
- * Intentionally still the raw v0 REST API: @cursor/sdk (as of 1.0.30) only
- * exposes per-run `run.conversation()`, and the webhook path depends on the
- * agent-level response shape (e.g. `.summary`). Migrate when the SDK exposes
- * an agent-level conversation read.
+ * Intentionally still the raw v0 REST API: @cursor/sdk only exposes
+ * per-run `run.conversation()`, and the webhook path depends on the
+ * agent-level response shape (e.g. `.summary`). On top of that,
+ * @cursor/sdk@1.0.30's dist is unbundlable under the WDK esbuild pass --
+ * see getCursorApiKey above.
  */
 export async function getCursorConversation(agentId: string): Promise<any> {
   const res = await fetch(
@@ -453,40 +434,32 @@ export async function getCursorConversation(agentId: string): Promise<any> {
   return await res.json();
 }
 
+/**
+ * Intentionally still the raw v0 REST API, not @cursor/sdk -- same
+ * unbundlable-dist reason as getCursorAgentStatus above.
+ */
 export async function stopCursorAgent(agentId: string): Promise<any> {
-  const { Agent } = await import("@cursor/sdk");
-  const apiKey = await getCursorApiKey();
-
-  const runs = await Agent.listRuns(agentId, { runtime: "cloud", apiKey });
-  const active = runs.items.find((run) => run.status === "running");
-
-  if (active) {
-    await active.cancel();
-    logger.info("stopCursorAgent: cancelled active run", {
-      agentId,
-      runId: active.id,
-    });
-    return { id: agentId, status: "CANCELLED" };
-  }
-
-  // Nothing to cancel — mirror the old idempotent stop by reporting the
-  // agent's current status.
-  const info = await Agent.get(agentId, { apiKey });
-  logger.info("stopCursorAgent: no active run", {
-    agentId,
-    status: info.status,
+  const res = await fetch(`${CURSOR_API_BASE}/agents/${agentId}/stop`, {
+    method: "POST",
+    headers: await headers(),
   });
-  return { id: agentId, status: toV0Status(info.status) };
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(
+      `Cursor API POST /agents/${agentId}/stop failed (${res.status}): ${text}`,
+    );
+  }
+  return await res.json();
 }
 
 /**
  * List agents, optionally filtered by PR URL.
  *
- * Intentionally still the raw v0 REST API: @cursor/sdk's `Agent.list()`
- * (as of 1.0.30, verified against production) drops per-agent `status`,
- * `source`, and `target` (branch/PR) from the response — a lossy read that
- * would be a visible regression for the list_cursor_agents tool. Migrate
- * when SDKAgentInfo carries status + git metadata.
+ * Intentionally still the raw v0 REST API: on top of the unbundlable-dist
+ * problem above, @cursor/sdk's `Agent.list()` (as of 1.0.30, verified
+ * against production) drops per-agent `status`, `source`, and `target`
+ * (branch/PR) from the response -- a lossy read that would be a visible
+ * regression for the list_cursor_agents tool.
  */
 export async function listCursorAgents(prUrl?: string): Promise<any> {
   const url = new URL(`${CURSOR_API_BASE}/agents`);

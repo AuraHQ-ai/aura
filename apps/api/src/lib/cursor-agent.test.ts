@@ -19,6 +19,7 @@ const {
   markPullRequestReadyForReview,
   parseGitHubPullRequestUrl,
   resolveCursorAgentPrUrl,
+  resolveCursorModel,
 } = await import("./cursor-agent.js");
 const { logger } = await import("./logger.js");
 
@@ -32,6 +33,33 @@ function jsonResponse(data: unknown): Response {
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe("resolveCursorModel", () => {
+  afterEach(() => {
+    delete process.env.CURSOR_DEFAULT_MODEL;
+  });
+
+  it("returns a trimmed explicit model", () => {
+    expect(resolveCursorModel(" claude-sonnet-4.5 ")).toBe(
+      "claude-sonnet-4.5",
+    );
+  });
+
+  it("falls back to CURSOR_DEFAULT_MODEL", () => {
+    process.env.CURSOR_DEFAULT_MODEL = "gpt-5";
+    expect(resolveCursorModel()).toBe("gpt-5");
+    expect(resolveCursorModel("")).toBe("gpt-5");
+  });
+
+  it("never resolves empty or 'auto' (the API rejects both)", () => {
+    expect(resolveCursorModel()).toBeUndefined();
+    expect(resolveCursorModel("")).toBeUndefined();
+    expect(resolveCursorModel("auto")).toBeUndefined();
+    expect(resolveCursorModel("Auto")).toBeUndefined();
+    process.env.CURSOR_DEFAULT_MODEL = "auto";
+    expect(resolveCursorModel()).toBeUndefined();
+  });
 });
 
 describe("launchCursorAgent model param", () => {
