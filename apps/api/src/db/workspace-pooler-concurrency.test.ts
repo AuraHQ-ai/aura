@@ -1,31 +1,32 @@
 /**
- * Adversarial pooler-concurrency test (issue #1393, review round 2).
+ * Adversarial transport test for withWorkspace() (issue #1393, review rounds
+ * 2 & 3). Runs the workspace-scoping matrix against BOTH transports the
+ * wrapper can use, because each has caught a production-only bug the other
+ * couldn't see:
  *
- * Production DATABASE_URL points at the Neon `-pooler` host — PgBouncer in
- * TRANSACTION pooling mode, where consecutive statements outside an explicit
- * transaction are NOT guaranteed to hit the same server backend. A
- * session-scoped GUC (`set_config(..., false)`) therefore does not follow the
- * scope: under concurrency, `current_setting('app.workspace_id')` returns
- * ANOTHER tenant's id, and every RLS policy silently evaluates against the
- * wrong tenant — cross-tenant reads AND writes while the code believes it is
- * scoped. Measured on the production DSN before the fix: 3/40 scopes correct.
+ *   - POOLED handle (WorkspaceScopedClient over node-postgres): the non-Neon
+ *     fallback. Exercised through a REAL local PgBouncer in TRANSACTION
+ *     pooling mode (started by scripts/workspace-isolation-test.sh with a
+ *     small server pool to force backend multiplexing). This is the leg that
+ *     went red in round 2 against a session-scoped GUC — `SET LOCAL` inside
+ *     BEGIN/COMMIT is what makes it green. Full read+write matrix, incl. a
+ *     cross-tenant RLS read and WITH CHECK.
  *
- * This suite runs through a REAL transaction pooler (the runner script starts
- * a local PgBouncer in transaction mode with a small server pool to force
- * backend multiplexing) and asserts, under >=40 concurrent scopes with async
- * gaps between statements — i.e. what the real pipeline does between queries:
+ *   - HTTP handle (neon-http batched transaction): the DEFAULT production
+ *     path (round 3). `SET LOCAL app.workspace_id` + the statement travel in
+ *     ONE HTTP request (`sql.transaction([...])`), so pooler multiplexing
+ *     cannot apply — it passes trivially. It stays in the matrix so a future
+ *     refactor cannot silently reintroduce the 4x-slower pooled path for
+ *     single statements without a test noticing. Plus a LATENCY assertion:
+ *     a scoped single statement must not cost more than 1.3x an unscoped one
+ *     (round 3 measured the pooled default at ~4x; #1382 makes that a
+ *     deadline-kill risk). Needs a real Neon DSN (NEON_HTTP_TEST_URL, set by
+ *     the runner from the ambient production DATABASE_URL); the http leg is
+ *     read-only.
  *
- *   1. every scope observes exactly its own workspace id, repeatedly;
- *   2. real RLS reads never return another tenant's rows.
- *
- * It FAILED against the session-GUC implementation (red) and passes against
- * the SET-LOCAL-per-transaction implementation (green). If someone regresses
- * the wrapper to session scoping, this is the test that catches it — unlike
- * the direct-connection legs, which pass regardless of scoping mode.
- *
- * Run via: pnpm --filter aura-api test:workspace-isolation
- * (WORKSPACE_POOLER_TEST=1 + DATABASE_URL pointing at the pooler is set by
- * scripts/workspace-isolation-test.sh). Skipped in the normal unit suite.
+ * Run via: pnpm --filter aura-api test:workspace-isolation (sets
+ * WORKSPACE_POOLER_TEST=1, DATABASE_URL=local pooler, DIRECT_DATABASE_URL,
+ * NEON_HTTP_TEST_URL). Skipped in the normal unit suite.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type pg from "pg";
@@ -34,6 +35,8 @@ const ENABLED =
   process.env.WORKSPACE_ISOLATION_TEST === "1" &&
   process.env.WORKSPACE_POOLER_TEST === "1";
 
+const HTTP_URL = process.env.NEON_HTTP_TEST_URL;
+
 const SCOPES = 48;
 const gap = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const rows = (out: unknown): Array<Record<string, unknown>> =>
@@ -41,7 +44,9 @@ const rows = (out: unknown): Array<Record<string, unknown>> =>
     Record<string, unknown>
   >;
 
-describe.runIf(ENABLED)("workspace scoping under a transaction pooler (RLS, #1393 r2)", () => {
+// ── Pooled leg: real PgBouncer, full read+write matrix ──────────────────────
+
+describe.runIf(ENABLED)("workspace scoping — POOLED handle via PgBouncer (RLS, #1393 r2)", () => {
   let withWorkspace: typeof import("./workspace.js").withWorkspace;
   let sql: typeof import("drizzle-orm").sql;
   let schema: typeof import("@aura/db/schema");
@@ -61,12 +66,11 @@ describe.runIf(ENABLED)("workspace scoping under a transaction pooler (RLS, #139
     directClient = new pgMod.default.Client({ connectionString: direct });
     await directClient.connect();
 
-    // Two tenants with one distinctly-marked note each, seeded through the
-    // real wrapper (exercises WITH CHECK through the pooler as well).
     await directClient.query(
       `INSERT INTO workspaces (id, name) VALUES ('ws-conc-a', 'Conc A'), ('ws-conc-b', 'Conc B')
        ON CONFLICT DO NOTHING`,
     );
+    // Seeded through the real wrapper — exercises WITH CHECK through the pooler.
     for (const ws of ["ws-conc-a", "ws-conc-b"] as const) {
       await withWorkspace(ws, async (db) => {
         await db
@@ -138,3 +142,108 @@ describe.runIf(ENABLED)("workspace scoping under a transaction pooler (RLS, #139
     expect(problems.length).toBe(0);
   }, 60_000);
 });
+
+// ── HTTP leg: the default production transport (neon-http batched txn) ───────
+
+describe.runIf(ENABLED && !!HTTP_URL)(
+  "workspace scoping — HTTP batched handle over Neon (RLS + latency, #1393 r3)",
+  () => {
+    let buildHttpScopedHandle: typeof import("./workspace.js").buildHttpScopedHandle;
+    let isNeonUrl: typeof import("./workspace.js").isNeonUrl;
+    let sql: typeof import("drizzle-orm").sql;
+    let schema: typeof import("@aura/db/schema");
+    // The neon-http client + an UNSCOPED drizzle baseline for the latency ratio.
+    let neonClient: unknown;
+    let baselineDb: { execute: (q: unknown) => Promise<unknown> };
+
+    beforeAll(async () => {
+      ({ buildHttpScopedHandle, isNeonUrl } = await import("./workspace.js"));
+      ({ sql } = await import("drizzle-orm"));
+      schema = await import("@aura/db/schema");
+      const { neon } = await import("@neondatabase/serverless");
+      const { drizzle } = await import("drizzle-orm/neon-http");
+      neonClient = neon(HTTP_URL as string);
+      baselineDb = drizzle(neonClient as never, { schema }) as never;
+    }, 60_000);
+
+    it("the production DSN routes withWorkspace to the HTTP transport (not the pooled path)", () => {
+      // withWorkspace() takes the neon-http batched-transaction branch iff
+      // isNeonUrl(DATABASE_URL). Asserting it here ties the fast path to the
+      // real production DSN: a refactor that narrows this predicate would send
+      // production back onto the 4x pooled path and fail this test.
+      expect(isNeonUrl(HTTP_URL as string)).toBe(true);
+    });
+
+    it(`${SCOPES} concurrent HTTP scopes each observe exactly their own workspace id`, async () => {
+      const results = await Promise.all(
+        Array.from({ length: SCOPES }, async (_unused, i) => {
+          const handle = await buildHttpScopedHandle(neonClient as never, `ws-http-${i}`);
+          const observed: Array<string | null> = [];
+          for (let round = 0; round < 3; round++) {
+            await gap(Math.floor(Math.random() * 40));
+            const out = await handle.execute(
+              sql`SELECT current_setting('app.workspace_id', true) AS ws`,
+            );
+            observed.push((rows(out)[0]?.ws as string | null) ?? null);
+          }
+          return { expected: `ws-http-${i}`, observed };
+        }),
+      );
+      const wrong = results.filter((r) => r.observed.some((ws) => ws !== r.expected));
+      expect(
+        wrong.slice(0, 10).map((w) => `${w.expected} observed ${JSON.stringify(w.observed)}`),
+      ).toEqual([]);
+      expect(wrong.length).toBe(0);
+    }, 60_000);
+
+    it("the batched GUC does not leak to the next unscoped statement on the same client", async () => {
+      await buildHttpScopedHandle(neonClient as never, "ws-http-leakcheck").then((h) =>
+        h.execute(sql`SELECT current_setting('app.workspace_id', true) AS ws`),
+      );
+      const out = await baselineDb.execute(
+        sql`SELECT current_setting('app.workspace_id', true) AS ws`,
+      );
+      // SET LOCAL died with the batched COMMIT — the shared client sees no GUC.
+      const ws = rows(out)[0]?.ws;
+      expect(ws === null || ws === "").toBe(true);
+    }, 30_000);
+
+    it("drizzle row mapping works through the HTTP scoped handle", async () => {
+      // Exercises the arrayMode:true + mapResultRow path (not just execute()).
+      // Reads the global `workspaces` registry (no RLS, no tenant data).
+      const handle = await buildHttpScopedHandle(neonClient as never, "default");
+      const out = await handle
+        .select({ id: schema.workspaces.id })
+        .from(schema.workspaces)
+        .limit(1);
+      expect(Array.isArray(out)).toBe(true);
+      if (out.length > 0) expect(typeof out[0].id).toBe("string");
+    }, 30_000);
+
+    it("a scoped single statement costs <= 1.3x an unscoped one (round-3 budget)", async () => {
+      const ITERS = 20;
+      const one = sql`SELECT 1 AS one`;
+      const unscoped = () => baselineDb.execute(one);
+      const scoped = async () => {
+        const h = await buildHttpScopedHandle(neonClient as never, "default");
+        return h.execute(one);
+      };
+
+      const mean = async (run: () => Promise<unknown>) => {
+        for (let i = 0; i < 5; i++) await run(); // warm
+        const t0 = performance.now();
+        for (let i = 0; i < ITERS; i++) await run();
+        return (performance.now() - t0) / ITERS;
+      };
+
+      const unscopedMs = await mean(unscoped);
+      const scopedMs = await mean(scoped);
+      const ratio = scopedMs / unscopedMs;
+      // Surfaced in the test log for the PR latency line.
+      console.log(
+        `[latency] unscoped=${unscopedMs.toFixed(1)}ms scoped=${scopedMs.toFixed(1)}ms ratio=${ratio.toFixed(2)}x`,
+      );
+      expect(ratio).toBeLessThanOrEqual(1.3);
+    }, 60_000);
+  },
+);

@@ -23,6 +23,13 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# Capture the ambient (production) DATABASE_URL BEFORE we override it to the
+# local pooler below. If it is a Neon host, the HTTP leg of the concurrency
+# test uses it (read-only) to exercise the DEFAULT production transport
+# (neon-http batched transaction) and measure the scoped/unscoped latency
+# ratio — the round-3 property a local pooler cannot show.
+ORIG_DATABASE_URL="${DATABASE_URL:-}"
+
 DB_NAME="${AURA_ISOLATION_DB_NAME:-aura_isolation_test}"
 OWNER_ROLE="${AURA_ISOLATION_DB_ROLE:-aura_isolation}"
 OWNER_PASS="${AURA_ISOLATION_DB_PASS:-aura_isolation}"
@@ -106,6 +113,19 @@ done
 export DATABASE_URL="postgres://$APP_ROLE:$APP_PASS@localhost:$POOLER_PORT/$DB_NAME"
 export DIRECT_DATABASE_URL="postgres://$APP_ROLE:$APP_PASS@localhost:$DB_PORT/$DB_NAME"
 
+# The HTTP leg of the concurrency test uses a real Neon DSN (read-only). Only
+# forward it when the ambient DATABASE_URL is a Neon host; otherwise the leg
+# skips (describe.runIf) rather than failing.
+case "$ORIG_DATABASE_URL" in
+  *.neon.tech*|*.neon.build*)
+    export NEON_HTTP_TEST_URL="$ORIG_DATABASE_URL"
+    echo "==> HTTP leg enabled against ambient Neon DSN (read-only)"
+    ;;
+  *)
+    echo "==> HTTP leg skipped (ambient DATABASE_URL is not a Neon host)"
+    ;;
+esac
+
 echo "==> running workspace isolation + pooler-concurrency tests as role $APP_ROLE via pgbouncer :$POOLER_PORT"
 # AI/rerank keys are cleared so the run is hermetic: retrieval falls back to
 # its heuristic entity extraction + legacy scoring paths (both DB-only).
@@ -118,4 +138,5 @@ COHERE_API_KEY="" \
 AI_GATEWAY_API_KEY="" \
 ANTHROPIC_API_KEY="" \
 OPENAI_API_KEY="" \
+NEON_HTTP_TEST_URL="${NEON_HTTP_TEST_URL:-}" \
 npx vitest run src/db/workspace-isolation.test.ts src/db/workspace-pooler-concurrency.test.ts "$@"
