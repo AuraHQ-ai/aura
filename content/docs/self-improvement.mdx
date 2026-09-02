@@ -10,7 +10,7 @@ Aura can modify her own source code through a controlled feedback loop. This is 
 ## The Loop
 
 ```
-Observe gap → Explore source → File issue → Dispatch agent → Open PR → Human review → Merge
+Observe gap → Explore source → File issue → Dispatch agent → Open PR → Human review → Merge → Issue auto-closed
 ```
 
 ### 1. Observe
@@ -57,6 +57,10 @@ The fix is committed to a feature branch and a PR is opened against `main`. The 
 ### 6. Human Review
 
 This is the critical safety constraint. **Aura cannot push to `main`.** Every change requires human approval. The team reviews the PR like any other -- checking logic, testing, and ensuring it aligns with the project's direction.
+
+### 7. Merge Closes the Loop Automatically
+
+A GitHub webhook (`apps/api/src/webhook/github.ts`) listens for `pull_request` events. When a PR is merged, it parses the PR body for closing keywords (`Fixes #N`, `Closes #N`, `Resolves #N`) and closes each referenced issue via the GitHub REST API -- no manual issue cleanup needed. Per-issue failures (already closed, not found, API error) are fail-soft and logged; one bad reference never blocks the rest. PR state (open/merged/closed, linked issues) is also persisted to the `github_pull_requests` table for tracking. Requires `GITHUB_WEBHOOK_SECRET` (see [Environment Variables](/deployment/environment-variables)) to verify webhook signatures -- deliveries are rejected without it.
 
 ## What Aura Has Improved
 
