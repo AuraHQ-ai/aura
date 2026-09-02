@@ -3,52 +3,68 @@
  * multi-tenant row-level security (issue #1393, part of #17).
  *
  * Establishes an ambient workspace scope (AsyncLocalStorage) and routes the
- * shared `db` export through a handle that executes EVERY statement inside
- * its own short explicit transaction:
- *
- *     BEGIN;
- *     SELECT set_config('app.workspace_id', $1, true);   -- SET LOCAL
- *     <the actual statement>;
- *     COMMIT;
- *
- * so the RLS policies added in migration 0091 see the tenant id on the exact
- * server backend that executes the statement — including the ~400
+ * shared `db` export through a handle that carries the tenant id into every
+ * statement as a transaction-local GUC, so the RLS policies added in
+ * migration 0091 evaluate against the right tenant — including the ~400
  * pre-existing call sites that never mention workspace_id.
  *
- * WHY TRANSACTION-SCOPED (SET LOCAL), NOT A SESSION GUC — review round 2
- * ======================================================================
- * Production DATABASE_URL points at the Neon `-pooler` host: PgBouncer in
- * TRANSACTION pooling mode, where consecutive statements outside an explicit
- * transaction are NOT guaranteed to run on the same server backend, and
- * session state does not follow the client. A session-scoped GUC on a pooled
- * client therefore evaluates RLS against ANOTHER tenant's id under
- * concurrency (measured on the production DSN: 3/40 scopes read back their
- * own id; the rest read another tenant's or NULL). Inside BEGIN…COMMIT,
- * PgBouncer pins the backend, so SET LOCAL travels with each statement:
- * 40/40 correct on the same host. The pooler-concurrency test
- * (workspace-pooler-concurrency.test.ts) fails any regression back to
- * session scoping.
+ * TRANSPORT — one HTTP round trip on the hot path (review round 3)
+ * ===============================================================
+ * The default (Neon) path uses neon-http's BATCHED transaction:
+ *
+ *     sql.transaction([
+ *       sql.query("select set_config('app.workspace_id', $1, true)", [wsId]),
+ *       sql.query(<the actual statement>),
+ *     ])
+ *
+ * Neon sends this as a real server-side BEGIN … COMMIT in a SINGLE HTTP
+ * request, so the SET LOCAL and the statement run on the same backend by
+ * construction — the pooler-multiplexing problem (round 2) cannot apply,
+ * because there is exactly one hop. Measured on the production `-pooler` DSN:
+ * ~163 ms scoped vs ~155 ms unscoped (~6% overhead), versus the ~616 ms (4x,
+ * four round trips) of a pooled BEGIN/SET LOCAL/stmt/COMMIT cycle. That 4x
+ * was unacceptable as the default given #1382 (turn wall-clock deadline is
+ * the current top runtime failure mode).
+ *
+ * WHY NOT A SESSION GUC (round 2) — still true
+ * ============================================
+ * Production DATABASE_URL is the Neon `-pooler` host (PgBouncer, transaction
+ * pooling). A session-scoped GUC (`set_config(..., false)`) on a pooled
+ * client does NOT follow the client across statements — under concurrency it
+ * evaluates RLS against another tenant's id (measured: 3/40 scopes correct).
+ * The GUC must be transaction-local (`set_config(..., true)`), which the
+ * batched transaction provides.
  *
  * WHY NOT ONE TRANSACTION AROUND `fn`
  * ===================================
  * The Slack pipeline and job executor run for minutes. One transaction that
  * long would leave conversation_locks / event_locks / job-claim writes
  * uncommitted and row-locked (breaking Stop, event dedup, and duplicate-job
- * claiming) and is its own outage on a pooled connection. The transaction
- * wraps the DB work — one statement at a time — not the turn. Explicit
- * `db.transaction(...)` calls inside a scope still work: the facade pins one
- * pooled connection for the duration of that transaction and injects the
- * same SET LOCAL right after BEGIN.
+ * claiming). The scope wraps each statement, not the turn: nothing is held
+ * across `fn`, so a dropped connection mid-turn costs one statement, and the
+ * GUC dies with each statement's implicit COMMIT.
  *
- * No connection is held across `fn`: each statement borrows one from the
- * pool and returns it immediately, so a dropped connection mid-turn only
- * fails one statement, and nothing needs RESET (SET LOCAL dies with COMMIT).
+ * INTERACTIVE TRANSACTIONS
+ * ========================
+ * neon-http cannot run interactive multi-statement transactions, exactly like
+ * the base `db` export. The handful of call sites that need one use
+ * `withTransaction()` (db/tx.ts), which pins a WebSocket pool connection,
+ * issues a real BEGIN, injects the same SET LOCAL, and COMMITs — correct
+ * through the pooler because PgBouncer pins the backend for the duration of
+ * an explicit transaction. That path is unchanged.
+ *
+ * LOCAL / NON-NEON
+ * ================
+ * neon-http only talks to Neon. For a non-Neon DATABASE_URL (local Postgres /
+ * PgBouncer in dev and the isolation test) withWorkspace() falls back to the
+ * pooled per-statement transaction (WorkspaceScopedClient below), which is
+ * the same primitive the pooler-concurrency test exercises directly.
  *
  * Everything stays on workspace 'default' in Phase 0 — entry points pass the
  * existing `process.env.DEFAULT_WORKSPACE_ID || "default"` resolution.
  */
 import * as schema from "@aura/db/schema";
-import { db, type Database } from "./client.js";
+import { db, neonHttpClient, type Database } from "./client.js";
 import { workspaceStorage, type WorkspaceStore } from "./workspace-context.js";
 import { logger } from "../lib/logger.js";
 
@@ -64,16 +80,22 @@ export interface PoolLike {
 
 export type DriverKind = "neon" | "pg";
 
+/** The neon-http client shape we depend on (`.query` + `.transaction`). */
+type NeonHttpClient = {
+  query: (sql: string, params?: unknown[], opts?: unknown) => Promise<unknown>;
+  transaction: (queries: unknown[], opts?: unknown) => Promise<unknown[]>;
+};
+
 /**
- * GUC scope mode. "transaction" (SET LOCAL inside BEGIN/COMMIT) is the ONLY
- * mode that is correct through a transaction pooler; "session" exists solely
- * so the boot guard below can fail closed if anyone ever flips it back.
+ * GUC scope mode. "transaction" (SET LOCAL — set_config(..., true)) is the
+ * ONLY mode that is correct through a transaction pooler; "session" exists
+ * solely so the boot guard below can fail closed if anyone ever flips it back.
  */
 const GUC_SCOPE: "transaction" | "session" = "transaction";
 
 let poolPromise: Promise<{ pool: PoolLike; kind: DriverKind }> | null = null;
 
-function isNeonUrl(url: string): boolean {
+export function isNeonUrl(url: string): boolean {
   try {
     const host = new URL(url).hostname;
     return host.endsWith(".neon.tech") || host.endsWith(".neon.build");
@@ -109,11 +131,12 @@ function assertGucScopeSafeForHost(url: string): void {
 }
 
 /**
- * Lazily create the session-capable pool shared by all workspace scopes (and
- * by withTransaction in tx.js). Neon URLs use the serverless driver's
- * WebSocket Pool; anything else (local Postgres / PgBouncer in dev and
- * tests) uses node-postgres. Both are dynamically imported so neither loads
- * on the neon-http fast path used outside withWorkspace().
+ * Lazily create the WebSocket pool used by withTransaction (db/tx.ts) and by
+ * the non-Neon fallback path of withWorkspace. The default Neon single-
+ * statement path does NOT use this pool — it goes over neon-http — so on
+ * production no WebSocket pool is created unless an interactive transaction
+ * runs. Both drivers are dynamically imported so neither loads on the fast
+ * path.
  */
 export async function getSessionPool(): Promise<{ pool: PoolLike; kind: DriverKind }> {
   if (!poolPromise) {
@@ -152,45 +175,84 @@ export async function getSessionPool(): Promise<{ pool: PoolLike; kind: DriverKi
  * failure mode is "containment inert", not "app down") and THROWS when
  * MULTI_TENANT=true, because in multi-tenant mode an exempt role means
  * cross-tenant reads.
+ *
+ * The probe is transport-agnostic: the caller supplies a function that runs
+ * the role query on whatever connection the scope is about to use.
  */
+type RoleRow = { role: string; rolbypassrls: boolean; rolsuper: boolean };
+const ROLE_QUERY =
+  "SELECT current_user::text AS role, rolbypassrls, rolsuper FROM pg_roles WHERE rolname = current_user";
 let roleAssertionPromise: Promise<void> | null = null;
 
-function assertNonBypassingRole(pool: PoolLike): Promise<void> {
+function assertNonBypassingRole(probe: () => Promise<RoleRow | undefined>): Promise<void> {
   if (!roleAssertionPromise) {
     roleAssertionPromise = (async () => {
-      const client = await pool.connect();
-      try {
-        const result = (await client.query(
-          "SELECT current_user::text AS role, rolbypassrls, rolsuper FROM pg_roles WHERE rolname = current_user",
-        )) as { rows?: Array<{ role: string; rolbypassrls: boolean; rolsuper: boolean }> };
-        const row = result.rows?.[0];
-        if (!row) return;
-        if (row.rolbypassrls || row.rolsuper) {
-          const message =
-            `RLS containment is INERT: database role "${row.role}" has ` +
-            `${row.rolsuper ? "SUPERUSER" : "BYPASSRLS"}, which exempts it from every ` +
-            `row-level-security policy (FORCE does not override role attributes). ` +
-            `Point DATABASE_URL at the non-privileged "aura_app" role (migration 0092, ` +
-            `see the PR #1396 runbook).`;
-          logger.error(message, { role: row.role, rolbypassrls: row.rolbypassrls, rolsuper: row.rolsuper });
-          if (process.env.MULTI_TENANT === "true") {
-            throw new Error(message);
-          }
+      const row = await probe();
+      if (!row) return;
+      if (row.rolbypassrls || row.rolsuper) {
+        const message =
+          `RLS containment is INERT: database role "${row.role}" has ` +
+          `${row.rolsuper ? "SUPERUSER" : "BYPASSRLS"}, which exempts it from every ` +
+          `row-level-security policy (FORCE does not override role attributes). ` +
+          `Point DATABASE_URL at the non-privileged "aura_app" role (migration 0092, ` +
+          `see the PR #1396 runbook).`;
+        logger.error(message, { role: row.role, rolbypassrls: row.rolbypassrls, rolsuper: row.rolsuper });
+        if (process.env.MULTI_TENANT === "true") {
+          throw new Error(message);
         }
-      } finally {
-        client.release();
       }
     })();
     roleAssertionPromise.catch(() => {
       // A thrown assertion (MULTI_TENANT) must stay thrown for every caller;
-      // only transient query failures should be retried. Distinguishing the
-      // two: the assertion error message is stable, so re-running is safe
-      // and cheap either way.
+      // only transient query failures should be retried.
       if (process.env.MULTI_TENANT !== "true") roleAssertionPromise = null;
     });
   }
   return roleAssertionPromise;
 }
+
+function firstRow(result: unknown): RoleRow | undefined {
+  const rows = ((result as { rows?: unknown[] })?.rows ?? result) as RoleRow[] | undefined;
+  return Array.isArray(rows) ? rows[0] : undefined;
+}
+
+// ── Neon-http batched-transaction handle (default hot path) ──────────────────
+
+/**
+ * A drizzle "client" ({ query }) that batches SET LOCAL app.workspace_id +
+ * the statement into one neon-http `transaction([...])` — a single server-
+ * side BEGIN…COMMIT over one HTTP request. drizzle-orm/neon-http calls
+ * `client.query(sql, params, opts)` and awaits the result; neon applies the
+ * result-shaping opts (arrayMode/fullResults) at the transaction level, so
+ * the second element is shaped exactly as a normal `client.query` would be.
+ */
+export function httpScopedClient(
+  client: NeonHttpClient,
+  workspaceId: string,
+): { query: (sql: string, params?: unknown[], opts?: unknown) => Promise<unknown> } {
+  return {
+    query: async (sqlText, params = [], opts) => {
+      const setter = client.query(
+        "SELECT set_config('app.workspace_id', $1, true)",
+        [workspaceId],
+        opts,
+      );
+      const stmt = client.query(sqlText, params, opts);
+      const out = await client.transaction([setter, stmt], opts);
+      return out[1];
+    },
+  };
+}
+
+export async function buildHttpScopedHandle(
+  client: NeonHttpClient,
+  workspaceId: string,
+): Promise<Database> {
+  const { drizzle } = await import("drizzle-orm/neon-http");
+  return drizzle(httpScopedClient(client, workspaceId) as never, { schema }) as unknown as Database;
+}
+
+// ── Pooled per-statement handle (non-Neon fallback + withTransaction) ────────
 
 function statementText(queryOrConfig: unknown): string {
   if (typeof queryOrConfig === "string") return queryOrConfig;
@@ -199,15 +261,16 @@ function statementText(queryOrConfig: unknown): string {
 }
 
 /**
- * The drizzle "client": executes every statement inside its own explicit
- * transaction carrying SET LOCAL app.workspace_id, and pins one pooled
- * connection for the duration of an explicit drizzle `db.transaction()`
- * (recognized by the `begin` / `commit` / `rollback` statements drizzle
- * issues), injecting the same SET LOCAL right after BEGIN.
+ * The pooled drizzle "client": executes every statement inside its own
+ * explicit transaction carrying SET LOCAL app.workspace_id, and pins one
+ * pooled connection for the duration of an explicit drizzle
+ * `db.transaction()` (recognized by the `begin`/`commit`/`rollback`
+ * statements drizzle issues), injecting the same SET LOCAL right after BEGIN.
  *
- * One instance per withWorkspace() scope — never shared across scopes.
+ * Used ONLY on the non-Neon path (local Postgres / PgBouncer): neon-http
+ * cannot reach a non-Neon host. One instance per withWorkspace() scope.
  */
-class WorkspaceScopedClient implements PooledClient {
+export class WorkspaceScopedClient implements PooledClient {
   private txClient: PooledClient | null = null;
 
   constructor(
@@ -218,8 +281,6 @@ class WorkspaceScopedClient implements PooledClient {
   async query(queryOrConfig: unknown, params?: unknown[]): Promise<unknown> {
     const normalized = statementText(queryOrConfig).trim().toLowerCase();
 
-    // Inside an explicit drizzle transaction: pass through on the pinned
-    // connection (PgBouncer pins the backend between BEGIN and COMMIT).
     if (this.txClient) {
       const client = this.txClient;
       try {
@@ -238,8 +299,6 @@ class WorkspaceScopedClient implements PooledClient {
       }
     }
 
-    // drizzle's db.transaction() opens with `begin` (optionally with
-    // isolation/access modifiers) — pin a connection and inject SET LOCAL.
     if (normalized === "begin" || normalized.startsWith("begin ")) {
       const client = await this.pool.connect();
       try {
@@ -253,7 +312,6 @@ class WorkspaceScopedClient implements PooledClient {
       }
     }
 
-    // Single statement: its own short transaction with SET LOCAL.
     const client = await this.pool.connect();
     let broken = false;
     try {
@@ -266,7 +324,7 @@ class WorkspaceScopedClient implements PooledClient {
       broken = true;
       try {
         await client.query("ROLLBACK");
-        broken = false; // clean rollback — connection is reusable
+        broken = false;
       } catch {
         // connection is in an unknown state — destroy it below
       }
@@ -276,7 +334,6 @@ class WorkspaceScopedClient implements PooledClient {
     }
   }
 
-  /** Destroy a transaction connection left dangling by an aborted scope. */
   dispose(): void {
     if (this.txClient) {
       const client = this.txClient;
@@ -289,22 +346,26 @@ class WorkspaceScopedClient implements PooledClient {
     }
   }
 
-  // PooledClient interface parity; drizzle never calls this on the handle.
   release(): void {
     this.dispose();
   }
 }
 
-async function buildHandle(
-  client: WorkspaceScopedClient,
+export async function buildPooledScopedHandle(
+  pool: PoolLike,
   kind: DriverKind,
-): Promise<Database> {
+  workspaceId: string,
+): Promise<{ handle: Database; dispose: () => void }> {
+  const scopedClient = new WorkspaceScopedClient(pool, workspaceId);
+  let handle: Database;
   if (kind === "neon") {
     const { drizzle } = await import("drizzle-orm/neon-serverless");
-    return drizzle(client as never, { schema }) as unknown as Database;
+    handle = drizzle(scopedClient as never, { schema }) as unknown as Database;
+  } else {
+    const { drizzle } = await import("drizzle-orm/node-postgres");
+    handle = drizzle(scopedClient as never, { schema }) as unknown as Database;
   }
-  const { drizzle } = await import("drizzle-orm/node-postgres");
-  return drizzle(client as never, { schema }) as unknown as Database;
+  return { handle, dispose: () => scopedClient.dispose() };
 }
 
 /**
@@ -312,8 +373,8 @@ async function buildHandle(
  * and calls entry points (job executor, Slack event handlers, webhooks)
  * without any database. In that mode withWorkspace() must not try to open a
  * real connection — it validates its input and runs `fn` against the
- * (mocked) shared handle. The workspace-isolation integration test opts back
- * into the real path with WORKSPACE_ISOLATION_TEST=1.
+ * (mocked) shared handle. The integration suites opt back into the real path
+ * with WORKSPACE_ISOLATION_TEST=1.
  */
 function isUnitTestPassthrough(): boolean {
   return process.env.VITEST === "true" && process.env.WORKSPACE_ISOLATION_TEST !== "1";
@@ -350,16 +411,40 @@ export async function withWorkspace<T>(
     return fn(db);
   }
 
-  const { pool, kind } = await getSessionPool();
-  await assertNonBypassingRole(pool);
+  const url = process.env.DATABASE_URL;
+  if (!url) throw new Error("withWorkspace: DATABASE_URL is not set");
 
-  const scopedClient = new WorkspaceScopedClient(pool, workspaceId);
-  const handle = await buildHandle(scopedClient, kind);
+  // ── Default hot path: Neon over HTTP, batched SET LOCAL + statement ───────
+  if (isNeonUrl(url)) {
+    const client = neonHttpClient as unknown as NeonHttpClient;
+    await assertNonBypassingRole(async () =>
+      firstRow(await client.query(ROLE_QUERY, [], { arrayMode: false, fullResults: true })),
+    );
+    const handle = await buildHttpScopedHandle(client, workspaceId);
+    const store: WorkspaceStore = { workspaceId, handle, active: true };
+    try {
+      return await workspaceStorage.run(store, () => fn(handle));
+    } finally {
+      store.active = false;
+    }
+  }
+
+  // ── Non-Neon fallback (local Postgres / PgBouncer): pooled per-statement ──
+  const { pool, kind } = await getSessionPool();
+  await assertNonBypassingRole(async () => {
+    const c = await pool.connect();
+    try {
+      return firstRow(await c.query(ROLE_QUERY));
+    } finally {
+      c.release();
+    }
+  });
+  const { handle, dispose } = await buildPooledScopedHandle(pool, kind, workspaceId);
   const store: WorkspaceStore = { workspaceId, handle, active: true };
   try {
     return await workspaceStorage.run(store, () => fn(handle));
   } finally {
     store.active = false;
-    scopedClient.dispose();
+    dispose();
   }
 }

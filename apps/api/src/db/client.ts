@@ -11,6 +11,15 @@ if (!connectionString) {
 
 const sql = neon(connectionString);
 
+/**
+ * The raw neon-http client (`neon()` tagged-template function with `.query`
+ * and `.transaction`). Exported so withWorkspace() can build a workspace-
+ * scoped handle that batches `SET LOCAL app.workspace_id` + the statement
+ * into a single HTTP round trip via `sql.transaction([...])` — see
+ * workspace.ts. Only meaningful when DATABASE_URL is a Neon host.
+ */
+export const neonHttpClient = sql;
+
 const baseDb = drizzle(sql, { schema });
 
 export type Database = typeof baseDb;
