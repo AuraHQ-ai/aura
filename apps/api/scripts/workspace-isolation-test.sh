@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
 # Cross-tenant leak test runner (issue #1393 acceptance criterion).
 #
-# Creates a DISPOSABLE database on a local Postgres, applies the full
-# migration chain (including the workspace_id backfill, RLS policies, and the
-# aura_app role) AS THE OWNER role, then runs the workspace-isolation
-# integration test AS THE `aura_app` ROLE — the same split production has
-# after the 0092 cutover (owner = migration runner only; aura_app = app
-# traffic, NOSUPERUSER NOBYPASSRLS, owns nothing). The test fails hard if the
-# role it runs under is RLS-exempt, so it can never again green-light a role
-# shape the deployment target doesn't have.
+# Provisions a DISPOSABLE local Postgres database, applies the full migration
+# chain (workspace_id backfill, RLS policies, aura_app role) AS THE OWNER
+# role, then runs the isolation suites AS THE `aura_app` ROLE **through a
+# local PgBouncer in TRANSACTION pooling mode** — the same topology production
+# has (Neon `-pooler` host): non-privileged role, no table ownership, and no
+# guarantee that consecutive statements share a server backend. Both blind
+# spots that previously let an inert configuration test green (BYPASSRLS role
+# shape, direct-connection session GUCs) are structurally closed:
+#   - the suite hard-fails under a bypassing/superuser/owner role;
+#   - the pooler-concurrency suite fails any wrapper whose GUC does not travel
+#     inside an explicit transaction (SET LOCAL).
 #
-# Requirements: a local Postgres 15+ with the pgvector extension available,
-# reachable as superuser via `sudo -u postgres psql` (Debian/Ubuntu layout)
-# or via $PGSUPER_URL.
+# Requirements: local Postgres 15+ with pgvector, and pgbouncer, reachable as
+# superuser via `sudo -u postgres psql` (Debian/Ubuntu) or $PGSUPER_URL.
+#   sudo apt-get install postgresql-16 postgresql-16-pgvector pgbouncer
 #
 # This never touches a remote database: apply-migrations-local.ts hard-fails
 # on non-localhost hosts.
@@ -26,6 +29,7 @@ OWNER_PASS="${AURA_ISOLATION_DB_PASS:-aura_isolation}"
 APP_ROLE="aura_app"
 APP_PASS="${AURA_ISOLATION_APP_PASS:-aura_app_test}"
 DB_PORT="${AURA_ISOLATION_DB_PORT:-5432}"
+POOLER_PORT="${AURA_ISOLATION_POOLER_PORT:-6432}"
 
 psql_super() {
   if [ -n "${PGSUPER_URL:-}" ]; then
@@ -63,12 +67,50 @@ DATABASE_URL="postgres://$OWNER_ROLE:$OWNER_PASS@localhost:$DB_PORT/$DB_NAME" \
 echo "==> setting aura_app password out of band (operator runbook step)"
 psql_super -c "ALTER ROLE $APP_ROLE LOGIN PASSWORD '$APP_PASS';"
 
-export DATABASE_URL="postgres://$APP_ROLE:$APP_PASS@localhost:$DB_PORT/$DB_NAME"
+echo "==> starting local PgBouncer (TRANSACTION pooling — production topology)"
+PGB_DIR="$(mktemp -d /tmp/aura-pgbouncer.XXXXXX)"
+cat > "$PGB_DIR/userlist.txt" <<USERS
+"$APP_ROLE" "$APP_PASS"
+USERS
+cat > "$PGB_DIR/pgbouncer.ini" <<INI
+[databases]
+$DB_NAME = host=127.0.0.1 port=$DB_PORT dbname=$DB_NAME
+[pgbouncer]
+listen_addr = 127.0.0.1
+listen_port = $POOLER_PORT
+auth_type = plain
+auth_file = $PGB_DIR/userlist.txt
+pool_mode = transaction
+; small server pool + many clients forces backend multiplexing, which is what
+; exposes session-scoped GUCs (the round-2 bug)
+default_pool_size = 5
+max_client_conn = 200
+logfile = $PGB_DIR/pgbouncer.log
+pidfile = $PGB_DIR/pgbouncer.pid
+INI
+pgbouncer -d "$PGB_DIR/pgbouncer.ini"
+cleanup() {
+  [ -f "$PGB_DIR/pgbouncer.pid" ] && kill "$(cat "$PGB_DIR/pgbouncer.pid")" 2>/dev/null || true
+}
+trap cleanup EXIT
+for i in $(seq 1 20); do
+  if PGPASSWORD="$APP_PASS" psql -h 127.0.0.1 -p "$POOLER_PORT" -U "$APP_ROLE" -d "$DB_NAME" -c "SELECT 1" >/dev/null 2>&1; then break; fi
+  sleep 0.25
+  [ "$i" = 20 ] && { echo "pgbouncer did not become ready"; exit 1; }
+done
 
-echo "==> running workspace isolation test as role $APP_ROLE"
+# App traffic goes THROUGH the pooler (as in production). The raw/maintenance
+# client in the tests uses the DIRECT connection (operator sessions are
+# direct per the 0091 runbook — session GUCs are unsafe through a transaction
+# pooler, which is the entire point of the concurrency suite).
+export DATABASE_URL="postgres://$APP_ROLE:$APP_PASS@localhost:$POOLER_PORT/$DB_NAME"
+export DIRECT_DATABASE_URL="postgres://$APP_ROLE:$APP_PASS@localhost:$DB_PORT/$DB_NAME"
+
+echo "==> running workspace isolation + pooler-concurrency tests as role $APP_ROLE via pgbouncer :$POOLER_PORT"
 # AI/rerank keys are cleared so the run is hermetic: retrieval falls back to
 # its heuristic entity extraction + legacy scoring paths (both DB-only).
 WORKSPACE_ISOLATION_TEST=1 \
+WORKSPACE_POOLER_TEST=1 \
 DEFAULT_WORKSPACE_ID=ws-a \
 DASHBOARD_API_SECRET="isolation-test-secret" \
 ELEVENLABS_API_KEY="placeholder" \
@@ -76,4 +118,4 @@ COHERE_API_KEY="" \
 AI_GATEWAY_API_KEY="" \
 ANTHROPIC_API_KEY="" \
 OPENAI_API_KEY="" \
-npx vitest run src/db/workspace-isolation.test.ts "$@"
+npx vitest run src/db/workspace-isolation.test.ts src/db/workspace-pooler-concurrency.test.ts "$@"

@@ -71,7 +71,14 @@ describe.runIf(ENABLED)("workspace isolation (RLS, issue #1393)", () => {
     ({ withWorkspace } = await import("./workspace.js"));
     schema = await import("@aura/db/schema");
     const pgMod = await import("pg");
-    rawClient = new pgMod.default.Client({ connectionString: process.env.DATABASE_URL });
+    // The raw/maintenance client uses the DIRECT connection: operator
+    // sessions are direct per the 0091 runbook (session GUCs like
+    // app.rls_bypass are unsafe through a transaction pooler — see
+    // workspace-pooler-concurrency.test.ts). App traffic (withWorkspace)
+    // stays on DATABASE_URL, which the runner points at the pooler.
+    rawClient = new pgMod.default.Client({
+      connectionString: process.env.DIRECT_DATABASE_URL || process.env.DATABASE_URL,
+    });
     await rawClient.connect();
 
     // HARD GATE (issue #1393 review): this suite must FAIL — not skip, not
