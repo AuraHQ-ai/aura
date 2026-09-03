@@ -1113,9 +1113,8 @@ app.post("/api/webhook/cursor-agent", async (c) => {
   // "completed" both mean done) and redelivers on uncertain delivery. Without
   // a claim here, every delivery re-runs processWebhook() and re-posts to
   // Slack — three identical DMs for one agent. Issue #1408.
-  const { cursorWebhookLockKey, claimCursorWebhook } = await import(
-    "./lib/cursor-webhook-dedup.js"
-  );
+  const { cursorWebhookLockKey, claimCursorWebhook, releaseCursorWebhookClaim } =
+    await import("./lib/cursor-webhook-dedup.js");
   const lockKey = cursorWebhookLockKey(agentId, status, webhookId);
   const claimed = await claimCursorWebhook(lockKey);
 
@@ -1323,6 +1322,10 @@ app.post("/api/webhook/cursor-agent", async (c) => {
         });
       }
     } catch (err) {
+      // The claim is already taken at this point. Leaving it would make
+      // Cursor's redelivery a no-op and lose the notification for good, so
+      // give the lock back and let the retry through.
+      await releaseCursorWebhookClaim(lockKey);
       recordError("cursor_agent_webhook", err, { agentId, status });
     }
   };

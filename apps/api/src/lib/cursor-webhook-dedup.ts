@@ -65,6 +65,33 @@ export async function claimCursorWebhook(key: string): Promise<boolean> {
 }
 
 /**
+ * Drop a single claimed lock by key.
+ *
+ * Used when processing failed after the claim: keeping the lock would turn a
+ * transient failure into a permanently lost notification, because Cursor's
+ * redelivery would be skipped as a duplicate.
+ */
+export async function releaseCursorWebhookClaim(key: string): Promise<void> {
+  if (!key) return;
+
+  try {
+    await db
+      .delete(eventLocks)
+      .where(
+        and(
+          eq(eventLocks.eventTs, key),
+          eq(eventLocks.channelId, CURSOR_WEBHOOK_LOCK_CHANNEL),
+        ),
+      );
+  } catch (error) {
+    logger.warn("Cursor webhook dedup: failed to release claim", {
+      key,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
  * Release an agent's terminal locks.
  *
  * A follow-up restarts a finished agent, which will emit "finished" again for

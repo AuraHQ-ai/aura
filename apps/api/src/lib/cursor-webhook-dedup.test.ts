@@ -34,6 +34,7 @@ vi.mock("./logger.js", () => ({
 const {
   claimCursorWebhook,
   cursorWebhookLockKey,
+  releaseCursorWebhookClaim,
   releaseCursorWebhookLocks,
 } = await import("./cursor-webhook-dedup.js");
 
@@ -95,6 +96,23 @@ describe("claimCursorWebhook", () => {
     mocks.returningMock.mockRejectedValueOnce(new Error("connection refused"));
     expect(await claimCursorWebhook("cursor-agent:bc-1:finished")).toBe(true);
     expect(mocks.loggerWarnMock).toHaveBeenCalled();
+  });
+});
+
+describe("releaseCursorWebhookClaim", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.deleteWhereMock.mockResolvedValue(undefined);
+  });
+
+  it("gives the lock back so a redelivery can retry after a failure", async () => {
+    await releaseCursorWebhookClaim("cursor-agent:bc-1:finished");
+    expect(mocks.deleteWhereMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does nothing without a key", async () => {
+    await releaseCursorWebhookClaim("");
+    expect(mocks.deleteWhereMock).not.toHaveBeenCalled();
   });
 });
 
