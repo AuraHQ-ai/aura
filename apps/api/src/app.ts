@@ -1109,6 +1109,26 @@ app.post("/api/webhook/cursor-agent", async (c) => {
     prUrl,
   });
 
+  // Cursor delivers the same outcome more than once per run ("finished" and
+  // "completed" both mean done) and redelivers on uncertain delivery. Without
+  // a claim here, every delivery re-runs processWebhook() and re-posts to
+  // Slack — three identical DMs for one agent. Issue #1408.
+  const { cursorWebhookLockKey, claimCursorWebhook } = await import(
+    "./lib/cursor-webhook-dedup.js"
+  );
+  const lockKey = cursorWebhookLockKey(agentId, status, webhookId);
+  const claimed = await claimCursorWebhook(lockKey);
+
+  if (!claimed) {
+    logger.info("Cursor agent webhook: duplicate delivery skipped", {
+      agentId,
+      status,
+      webhookId,
+      lockKey,
+    });
+    return c.json({ ok: true, duplicate: true });
+  }
+
   const processWebhook = async () => {
     try {
       let requester = "";
