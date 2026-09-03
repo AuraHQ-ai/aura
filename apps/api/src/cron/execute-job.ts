@@ -1,6 +1,7 @@
 import { WebClient } from "@slack/web-api";
 import { eq, and, sql, inArray } from "drizzle-orm";
 import { db } from "../db/client.js";
+import { withWorkspace } from "../db/workspace.js";
 import { jobs, notes, jobExecutions, credentials } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
 import { resolveUserCredentials } from "../lib/permissions.js";
@@ -320,6 +321,19 @@ export function describeMissingJobCredential(cred: MissingJobCredential): string
  *                   NOT reset the frequency-gate interval clock.
  */
 export async function executeJob(
+  job: typeof jobs.$inferSelect,
+  trigger: "heartbeat" | "dispatch" | "continuation" | "recovery" = "heartbeat",
+): Promise<boolean> {
+  // Issue #1393: every DB access in the run — claim, traces, tool queries,
+  // persistence — is scoped to the job's workspace so RLS constrains it.
+  // Jobs carry a NOT NULL workspace_id (default 'default' in Phase 0).
+  return withWorkspace(
+    job.workspaceId || process.env.DEFAULT_WORKSPACE_ID || "default",
+    () => executeJobScoped(job, trigger),
+  );
+}
+
+async function executeJobScoped(
   job: typeof jobs.$inferSelect,
   trigger: "heartbeat" | "dispatch" | "continuation" | "recovery" = "heartbeat",
 ): Promise<boolean> {
