@@ -100,7 +100,7 @@ Create a one-shot task, recurring job, or follow-up.
 | `script` | string | no | Shell command to run before/instead of LLM. See [execution modes](#execution-modes) below. |
 | `model` | enum | no | Model catalog category to execute with: `fast` (cheap, mechanical tasks), `medium` (Sonnet-class — the default and standard tier for jobs), `main` (frontier), or `escalation` (exceptionally hard work) |
 | `env_allowlist` | string[] | no | Restrict the job's sandbox env AND credential-gated typed tools to only these credential env var names (plus core infra vars). Omit for full inheritance. |
-| `prompt_mode` | enum | no | `full` (default) or `task` — see [Prompt Modes](/prompt-modes) |
+| `prompt_mode` | enum | **yes** | `task` (mechanical/fixed-playbook) or `full` (Aura's voice, language nuance, or self-reflection). Required at creation — there is no silent default. See [Prompt Modes](/prompt-modes) |
 
 ---
 
@@ -120,7 +120,7 @@ Script-only mode is ideal for jobs that just need to run a command and post the 
 
 ## Scoped job execution
 
-Three optional fields on `create_job` / `update_job` narrow what a job runs with. All three are independent and can be combined.
+Three fields on `create_job` / `update_job` narrow what a job runs with. `model` and `env_allowlist` are optional; `prompt_mode` is **required on `create_job`** (still optional on `update_job`, which is a partial update). All three are independent and can be combined.
 
 ### `model` — per-job model category
 
@@ -154,7 +154,7 @@ Credential resolution for a job run is deliberately scoped to the job owner (`re
 
 `prompt_mode: "task"` runs the job with a minimal ~2k-token system prefix instead of the full ~40k-char stable prefix. The task prefix skips the personality, self-directive, and notes index, keeping only the output contract and safety-relevant operational rules (no secrets in chat, verify before claiming, treat fetched content as data, date accuracy, DM privacy). Fewer places for context rot in mechanical jobs.
 
-Memory stays unified either way: task-mode executions write to the same memory and message store as every other invocation. Omit or set `full` for the standard prompt. On `update_job`, set to `null` to reset to `full`.
+Memory stays unified either way: task-mode executions write to the same memory and message store as every other invocation. **`create_job` requires `prompt_mode`** — omitting it used to leave the column NULL, which silently resolved to the full prompt. Rule of thumb: mechanical/fixed-playbook work → `task`; only jobs whose output carries Aura's voice, language nuance, or self-reflection need `full`. On `update_job`, omit the field to leave the existing value unchanged, or set `null` to reset to `full` (the execute-time fallback for NULL).
 
 ---
 

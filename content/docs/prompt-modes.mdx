@@ -49,7 +49,7 @@ The authoritative version is always the running code. `GET /api/dashboard/jobs/t
 
 ## How to set it
 
-- **Slack tools**: `create_job` and `update_job` accept `prompt_mode: "full" | "task"`. On `update_job`, set it to `null` to reset to the default.
+- **Slack tools**: `create_job` **requires** `prompt_mode: "full" | "task"` — there is no silent default. `update_job` still accepts it as an optional partial field; set it to `null` to reset to the execute-time fallback (`full`).
 - **Dashboard API**: `PATCH /api/dashboard/jobs/:id` with `{ "promptMode": "task" }` (or `"full"` / `null`). See the [API reference](/api-reference/overview).
 - **Dashboard UI**: the Prompt Mode dropdown on each job's detail page, which also carries the live task-prompt preview.
 
@@ -57,6 +57,8 @@ The authoritative version is always the running code. `GET /api/dashboard/jobs/t
 
 Use `task` when the job is mechanical and fully specified by its description/playbook — classification, moderation, scheduled digests, health checks. The smaller prefix is cheaper and leaves fewer places for stale context to leak into output.
 
-Stay on `full` (the default) when the job writes user-facing prose in Aura's voice, or depends on the notes index (skills, playbooks, org knowledge) to do its work.
+Use `full` only when the job writes user-facing prose in Aura's voice, or depends on the notes index (skills, playbooks, org knowledge) to do its work. Mechanical/fixed-playbook work should not run on `full`.
+
+`create_job` makes you pick: there is no omit-and-default path. Rows created outside the tool (or with `update_job` setting `null`) still resolve NULL → `full` at execute time as a defensive fallback.
 
 Prompt mode composes with the other scoped-execution fields on a job: `model` (route to a cheaper catalog category — see [Jobs & Scheduling](/tools/jobs)) and `env_allowlist` (narrow the sandbox env and credential-gated typed tools).
