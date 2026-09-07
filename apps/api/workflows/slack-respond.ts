@@ -120,6 +120,13 @@ interface SlackAgentStepResult {
    * decisions replay deterministically.
    */
   elapsedMs: number;
+  /**
+   * Per-step context-compaction stats (issue #1328). The legacy path reports
+   * these via prepareStep's `recordCompaction` hook; this path calls
+   * compactMessages directly, so it must return them itself or the totals
+   * never reach the conversation trace (issue #1406).
+   */
+  compaction: { compactedCount: number; estimatedTokensSaved: number };
 }
 
 /**
@@ -819,6 +826,10 @@ async function runSlackAgentStep(
     return {
       superseded: false,
       elapsedMs: Date.now() - turn.turnStartedAt,
+      compaction: {
+        compactedCount: compaction.compactedCount,
+        estimatedTokensSaved: compaction.estimatedTokensSaved,
+      },
       responseMessages: response.messages as ModelMessage[],
       finishReason: String(finishReason),
       text,
@@ -911,6 +922,7 @@ function supersededResult(
     hadToolFailure: false,
     stepModelId: "",
     elapsedMs,
+    compaction: { compactedCount: 0, estimatedTokensSaved: 0 },
   };
 }
 
@@ -926,6 +938,8 @@ async function finalizeSlackRespond(params: {
   stepModelIds: string[];
   toolRecords: ToolCallRecord[];
   outcome: "completed" | "superseded" | "failed";
+  /** Turn-level compaction totals for the conversation trace (issue #1406). */
+  compactionTotals?: { compactedToolResults: number; compactionTokensSaved: number };
   /** Set when outcome === "failed": the step error, shown to the user (truncated). */
   failureMessage?: string;
 }): Promise<void> {
@@ -1053,6 +1067,7 @@ async function finalizeSlackRespond(params: {
       userPrompt: input.userMessage,
       stepsPromise: Promise.resolve(steps),
       stepModelIds,
+      compactionTotals: params.compactionTotals,
       replyThreadTs: input.threadTs,
     });
   } catch (error: any) {
@@ -1099,6 +1114,10 @@ export async function slackRespondWorkflow(input: SlackRespondWorkflowInput) {
   // N-1 — a durable value — so replays take the same branches.
   const turnClock = await startTurnClock();
   let elapsedMs = 0;
+  // Turn-level compaction totals (issue #1406): accumulated across steps and
+  // handed to runBackgroundTasks so the conversation trace records them, the
+  // same way the legacy prepareStep path does via recordCompaction.
+  const compactionTotals = { compactedToolResults: 0, compactionTokensSaved: 0 };
   let hardDeadlineHandled = false;
   let continuationSpawned = false;
 
@@ -1139,6 +1158,7 @@ export async function slackRespondWorkflow(input: SlackRespondWorkflowInput) {
         stepModelIds,
         toolRecords,
         outcome: "superseded",
+        compactionTotals,
       });
       return { interrupted: true, text: fullText };
     }
@@ -1150,6 +1170,8 @@ export async function slackRespondWorkflow(input: SlackRespondWorkflowInput) {
     stepModelIds.push(r.stepModelId);
     toolRecords.push(...r.toolRecords);
     elapsedMs = r.elapsedMs;
+    compactionTotals.compactedToolResults += r.compaction.compactedCount;
+    compactionTotals.compactionTokensSaved += r.compaction.estimatedTokensSaved;
     if (r.hadToolFailure) failureCount++;
     if (!escalate && stepIndex > 15 && failureCount >= 3) {
       escalate = true;
@@ -1192,6 +1214,7 @@ export async function slackRespondWorkflow(input: SlackRespondWorkflowInput) {
       stepModelIds,
       toolRecords,
       outcome: "failed",
+      compactionTotals,
       failureMessage,
     });
     return { interrupted: false, failed: true, text: fullText, error: failureMessage };
@@ -1205,6 +1228,7 @@ export async function slackRespondWorkflow(input: SlackRespondWorkflowInput) {
     stepModelIds,
     toolRecords,
     outcome: "completed",
+    compactionTotals,
   });
 
   return { interrupted: false, text: fullText };
