@@ -233,6 +233,7 @@ export const entityAliases = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
     entityId: uuid("entity_id")
       .notNull()
       .references(() => entities.id, { onDelete: "cascade" }),
@@ -242,7 +243,11 @@ export const entityAliases = pgTable(
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("entity_aliases_lower_entity_idx").on(table.aliasLower, table.entityId),
+    uniqueIndex("entity_aliases_workspace_lower_entity_idx").on(
+      table.workspaceId,
+      table.aliasLower,
+      table.entityId,
+    ),
     index("entity_aliases_trgm_idx").using("gin", sql`${table.aliasLower} gin_trgm_ops`),
   ],
 );
@@ -252,6 +257,10 @@ export const entityAliases = pgTable(
 export const memoryEntities = pgTable(
   "memory_entities",
   {
+    // The (memory_id, entity_id) PK stays as-is: both sides are globally
+    // unique uuids, so a workspace-first PK adds nothing — workspace_id here
+    // exists for RLS enforcement and tenant-scoped bulk operations.
+    workspaceId: workspaceId().references(() => workspaces.id),
     memoryId: uuid("memory_id")
       .notNull()
       .references(() => memories.id, { onDelete: "cascade" }),
@@ -488,6 +497,7 @@ export const resources = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
     url: text("url").notNull(),
     parentUrl: text("parent_url"),
     title: text("title"),
@@ -510,7 +520,7 @@ export const resources = pgTable(
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("resources_url_idx").on(table.url),
+    uniqueIndex("resources_workspace_url_idx").on(table.workspaceId, table.url),
     index("resources_embedding_idx").using(
       "hnsw",
       table.embedding.op("vector_cosine_ops"),
@@ -1197,7 +1207,8 @@ export const voiceCalls = pgTable(
     id: uuid("id")
       .primaryKey()
       .default(sql`gen_random_uuid()`),
-    conversationId: text("conversation_id").notNull().unique(),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    conversationId: text("conversation_id").notNull(),
     agentId: text("agent_id"),
     direction: text("direction").notNull().default("outbound"),
     phoneNumber: text("phone_number"),
@@ -1214,6 +1225,10 @@ export const voiceCalls = pgTable(
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
   (table) => [
+    uniqueIndex("voice_calls_workspace_conversation_id_idx").on(
+      table.workspaceId,
+      table.conversationId,
+    ),
     index("voice_calls_agent_id_idx").on(table.agentId),
     index("voice_calls_status_idx").on(table.status),
     index("voice_calls_created_at_idx").on(table.createdAt),
