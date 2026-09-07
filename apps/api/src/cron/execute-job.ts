@@ -131,6 +131,14 @@ export const SILENT_SUCCESS_CLAUSE =
   " However, if your playbook or task instructions say to stay silent on success, or this run produced no user-facing deliverable, post NOTHING — do not post status updates, receipts, or confirmations that the job ran." +
   " If your playbook says to stay silent on no-op/no-finding runs and this run has nothing to report: make ZERO Slack-posting tool calls (no send_channel_message, send_thread_reply, send_direct_message, draw_table, draw_chart, draw_cards, or upload_file to a channel) and output exactly `NO_OP` (optionally `NO_OP: <one-line reason>`) as your ENTIRE final message. Never post narration like 'Checked X, nothing new' — the `NO_OP` sentinel is how you report a quiet run.";
 
+/**
+ * Appended when a job has no channel_id so the model cannot invent a Slack
+ * destination (issue #1413). Internal maintenance jobs must not post to
+ * public channels; the work itself is the deliverable.
+ */
+export const NO_CHANNEL_CLAUSE =
+  " This job has no output channel. Make ZERO Slack-posting tool calls (no send_channel_message, send_thread_reply, send_direct_message, draw_table, draw_chart, draw_cards, or upload_file to a channel). The deliverable is the work itself (notes, DB writes, dispatches). If something genuinely urgent must reach a human, DM the job requester and nobody else — never a public channel. Otherwise output exactly `NO_OP` as your ENTIRE final message.";
+
 // ── NO_OP sentinel (hard silent-run contract, issue #1185) ──────────────────
 
 /** Stored in result/lastResult/summary for a clean no-op run. */
@@ -480,6 +488,8 @@ export async function executeJob(
       prompt += `\n\nIMPORTANT: Post your results using send_thread_reply(channel="${job.channelId}", thread_ts="${job.threadTs}"). If your response is too long for one message, post the first part with send_thread_reply, then post each continuation ALSO with send_thread_reply(channel="${job.channelId}", thread_ts="${job.threadTs}") — all parts in the same thread. Do NOT call send_direct_message.${SILENT_SUCCESS_CLAUSE}`;
     } else if (job.channelId) {
       prompt += `\n\nIMPORTANT: Post your results to channel "${job.channelId}" using send_channel_message. Do NOT use send_direct_message.${SILENT_SUCCESS_CLAUSE}`;
+    } else {
+      prompt += `\n\nIMPORTANT:${NO_CHANNEL_CLAUSE} The job requester is <@${job.requestedBy}>.`;
     }
 
     // ── Script execution layer ──────────────────────────────────────────────
