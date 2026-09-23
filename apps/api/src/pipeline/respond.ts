@@ -45,6 +45,10 @@ import {
 } from "../lib/slack-chunks.js";
 import { getSupersedeReason, interruptionNote, isInvocationCurrent } from "../lib/invocation-lock.js";
 import { getSameDestinationPostText, isSubstantialDuplicate } from "./duplicate-reply.js";
+import {
+  createToolMarkupBuffer,
+  isLeakedMarkupToolName,
+} from "./sanitize-tool-markup.js";
 
 // ── Tool I/O Persistence ─────────────────────────────────────────────────────
 // Accumulated during streaming and attached as invisible Slack message metadata
@@ -757,6 +761,10 @@ export async function generateResponse(
   // Declared before the agent so the getAccumulatedText closure below is
   // always safe to invoke; appended to in handleTextDelta during streaming.
   let accumulatedText = "";
+  // Issue #1515: hold ChatML `<tool_call>` XML split across text-deltas so
+  // it never reaches Slack (or the persisted `raw` / continuation text).
+  const toolMarkupBuffer = createToolMarkupBuffer();
+  let toolMarkupLeakLogged = false;
 
   // ── Build agent ──────────────────────────────────────────────────────
   const { agent, tools, modelId, getStepModelIds, getCompactionTotals } = await createInteractiveAgent({
@@ -1180,7 +1188,27 @@ export async function generateResponse(
     }
   }
 
-  async function appendTextDelta(text: string): Promise<void> {
+  function logToolMarkupLeak(path: string): void {
+    if (toolMarkupLeakLogged || !toolMarkupBuffer.didLeak()) return;
+    toolMarkupLeakLogged = true;
+    const samples = toolMarkupBuffer.samples();
+    logger.warn("Stripped leaked tool-call markup from assistant text before Slack delivery", {
+      modelId,
+      path,
+      samples,
+    });
+    logError({
+      errorName: "ToolCallMarkupLeaked",
+      errorMessage:
+        "Model emitted raw ChatML tool-call markup in assistant text; stripped before Slack delivery",
+      errorCode: "tool_call_markup_leaked",
+      channelId,
+      userId: options.recipientUserId,
+      context: { modelId, path, samples },
+    });
+  }
+
+  async function deliverAssistantText(text: string): Promise<void> {
     if (!text) return;
     // Age-based split happens at the delta boundary, before any append.
     await splitForStreamAge();
@@ -1195,6 +1223,19 @@ export async function generateResponse(
       return;
     }
     await streamTextToSlack(text);
+  }
+
+  async function appendTextDelta(text: string): Promise<void> {
+    if (!text) return;
+    const emit = toolMarkupBuffer.push(text);
+    logToolMarkupLeak("delivery");
+    await deliverAssistantText(emit);
+  }
+
+  async function flushToolMarkupBuffer(): Promise<void> {
+    const emit = toolMarkupBuffer.flush();
+    logToolMarkupLeak("delivery");
+    await deliverAssistantText(emit);
   }
 
   async function streamTextToSlack(text: string): Promise<void> {
@@ -1442,6 +1483,10 @@ export async function generateResponse(
           if (typeof toolCallId !== "string" || typeof toolName !== "string") {
             break;
           }
+          // Issue #1515: the XML blob must never be treated as a tool name.
+          if (isLeakedMarkupToolName(toolName)) {
+            break;
+          }
           if (optimisticToolCards.has(toolCallId)) {
             break;
           }
@@ -1467,6 +1512,27 @@ export async function generateResponse(
         }
 
         case "tool-call": {
+          if (isLeakedMarkupToolName(chunk.toolName)) {
+            logger.warn("Ignoring leaked markup tool-call — refusing to execute XML as a tool name", {
+              modelId,
+              toolCallId: chunk.toolCallId,
+            });
+            logError({
+              errorName: "ToolCallMarkupLeaked",
+              errorMessage:
+                "Model emitted a native tool-call whose name was ChatML XML; not executing",
+              errorCode: "tool_call_markup_leaked",
+              channelId,
+              userId: options.recipientUserId,
+              context: {
+                modelId,
+                path: "tool_call_name",
+                toolCallId: chunk.toolCallId,
+                sample: String(chunk.toolName).slice(0, 240),
+              },
+            });
+            break;
+          }
           // Flush any pending table buffer before tool cards
           if ((tableBuffer.length > 0 || lineCarry) && !streamingFailed) {
             const preToolFlush = flushRemainingTableBuffer();
@@ -1719,6 +1785,8 @@ export async function generateResponse(
         }
       }
 
+      await flushToolMarkupBuffer();
+
       // Flush any remaining table buffer content before deciding whether the
       // completed attempt produced user-visible text.
       const finalTableFlush = flushRemainingTableBuffer();
@@ -1750,6 +1818,7 @@ export async function generateResponse(
             finishReason,
           });
           await appendTextDelta(finalResultText);
+          await flushToolMarkupBuffer();
           const recoveredTableFlush = flushRemainingTableBuffer();
           if (recoveredTableFlush && !streamingFailed) {
             currentStreamLength += recoveredTableFlush.length;

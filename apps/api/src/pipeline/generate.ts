@@ -9,6 +9,7 @@ import {
   type LanguageModelUsage,
 } from "ai";
 import { createInteractivePrepareStep } from "./prepare-step.js";
+import { repairLeakedToolCall } from "./sanitize-tool-markup.js";
 import { buildCachedSystemMessages, getEscalationModel } from "../lib/ai.js";
 import { getDeferredToolManifest } from "../tools/deferred.js";
 import { appendDeferredToolsBlock } from "../personality/system-prompt.js";
@@ -107,6 +108,7 @@ export function createAgenticStream(options: AgenticStreamOptions) {
         instructions: system,
         messages: options.messages,
         tools: options.tools,
+        experimental_repairToolCall: repairLeakedToolCall,
         prepareStep,
         stopWhen: isStepCount(options.maxSteps ?? 250),
         telemetry: aiTelemetry("agent-chat", {
