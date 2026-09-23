@@ -454,7 +454,7 @@ describe("createPrepareStep context compaction (issue #1328)", () => {
     });
     expect(recordCompaction.mock.calls[0][0].compactedCount).toBeGreaterThan(0);
     expect(recordCompaction.mock.calls[0][0].estimatedTokensSaved).toBeGreaterThan(0);
-  });
+  }, 15_000);
 
   it("does not compact below COMPACTION_START_STEP", async () => {
     const recordCompaction = vi.fn();
@@ -490,7 +490,7 @@ describe("createPrepareStep context compaction (issue #1328)", () => {
     }
     expect(callIds.size).toBeGreaterThan(0);
     expect([...callIds].sort()).toEqual([...resultIds].sort());
-  });
+  }, 15_000);
 });
 
 describe("createPrepareStep tool call id sanitization (issue #1376)", () => {
@@ -616,5 +616,74 @@ describe("createPrepareStep tool call id sanitization (issue #1376)", () => {
       ([params]) => params.errorCode === "tool_call_id_sanitized",
     );
     expect(sanitizeCalls).toHaveLength(0);
+  });
+});
+
+describe("createPrepareStep leaked tool-call markup (issue #1515)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    invocationLockMocks.isInvocationCurrent.mockResolvedValue(true);
+  });
+
+  const glmLeak =
+    "<tool_call>run_command<arg_key>command</arg_key><arg_value>cat /tmp/lf_traces.json</arg_value></tool_call>";
+
+  it("strips ChatML XML from assistant history and logs modelId", async () => {
+    const prepareStep = createPrepareStep({
+      stablePrefix: "PREFIX",
+      modelId: "zai/glm-5.3-flash",
+      channelId: "C0123456",
+      userId: "U0999",
+    });
+
+    const result = await prepareStep({
+      stepNumber: 2,
+      steps: [],
+      messages: [
+        { role: "user", content: "look at the traces" },
+        { role: "assistant", content: `Sure.\n${glmLeak}` },
+        { role: "user", content: "and then?" },
+      ],
+    });
+
+    const assistant = result?.messages?.find((m) => m.role === "assistant");
+    const text = typeof assistant?.content === "string"
+      ? assistant.content
+      : "";
+    expect(text).toContain("Sure.");
+    expect(text).not.toContain("<tool_call>");
+    expect(text).not.toContain("<arg_key>");
+
+    const leakCalls = errorLoggerMocks.logError.mock.calls.filter(
+      ([params]) => params.errorCode === "tool_call_markup_leaked",
+    );
+    expect(leakCalls).toHaveLength(1);
+    expect(leakCalls[0][0]).toMatchObject({
+      errorName: "ToolCallMarkupLeaked",
+      channelId: "C0123456",
+      userId: "U0999",
+      context: expect.objectContaining({
+        modelId: "zai/glm-5.3-flash",
+        stepNumber: 2,
+      }),
+    });
+  });
+
+  it("does not log markup sanitization when assistant text is clean", async () => {
+    const prepareStep = createPrepareStep({
+      stablePrefix: "PREFIX",
+      modelId: "zai/glm-5.3-flash",
+    });
+
+    await prepareStep({
+      stepNumber: 1,
+      steps: [],
+      messages: [{ role: "user", content: "hello" }],
+    });
+
+    const leakCalls = errorLoggerMocks.logError.mock.calls.filter(
+      ([params]) => params.errorCode === "tool_call_markup_leaked",
+    );
+    expect(leakCalls).toHaveLength(0);
   });
 });

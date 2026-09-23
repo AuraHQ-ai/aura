@@ -21,8 +21,12 @@
  * it, with a reason) BEFORE it is sent, and the types are the real
  * `@slack/types` ones so a wrong enum or a missing required field is a
  * compile-time error at the call site rather than a silent runtime drop.
+ *
+ * Text-bearing chunks also pass through `stripToolCallMarkup` (issue #1515)
+ * so ChatML `<tool_call>` / `<invoke>` XML never reaches Slack.
  */
 import type { ChatAppendStreamArguments } from "@slack/web-api";
+import { stripToolCallMarkup } from "../pipeline/sanitize-tool-markup.js";
 
 // Derived from the v8 `chat.appendStream` argument type (which is built on
 // `@slack/types`' `AnyChunk`), so these stay in lock-step with the installed
@@ -71,6 +75,8 @@ export interface DroppedChunk {
 export interface SanitizedChunks {
   chunks: AnyChunk[];
   dropped: DroppedChunk[];
+  /** How many text fields had ChatML tool-call markup stripped (issue #1515). */
+  toolMarkupStripped: number;
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -109,7 +115,7 @@ function coerceSources(value: unknown): URLSource[] | undefined {
  */
 export function sanitizeChunk(
   input: unknown,
-): { chunk: AnyChunk } | { reason: string } {
+): { chunk: AnyChunk; toolMarkupStripped?: boolean } | { reason: string } {
   if (!isPlainObject(input)) return { reason: "not an object" };
   const type = input.type;
 
@@ -124,7 +130,11 @@ export function sanitizeChunk(
         }
         return { reason: "markdown_text.text is not a string" };
       }
-      return { chunk: { type: "markdown_text", text } };
+      const stripped = stripToolCallMarkup(text);
+      return {
+        chunk: { type: "markdown_text", text: stripped.text },
+        ...(stripped.stripped ? { toolMarkupStripped: true } : {}),
+      };
     }
 
     case "task_update": {
@@ -146,13 +156,22 @@ export function sanitizeChunk(
         title: optionalText(input.title) ?? DEFAULT_TASK_TITLE,
         status,
       };
-      const details = optionalText(input.details);
-      if (details) chunk.details = details;
-      const output = optionalText(input.output);
-      if (output) chunk.output = output;
+      let toolMarkupStripped = false;
+      const detailsRaw = optionalText(input.details);
+      if (detailsRaw) {
+        const details = stripToolCallMarkup(detailsRaw);
+        if (details.stripped) toolMarkupStripped = true;
+        if (details.text) chunk.details = details.text;
+      }
+      const outputRaw = optionalText(input.output);
+      if (outputRaw) {
+        const output = stripToolCallMarkup(outputRaw);
+        if (output.stripped) toolMarkupStripped = true;
+        if (output.text) chunk.output = output.text;
+      }
       const sources = coerceSources(input.sources);
       if (sources) chunk.sources = sources;
-      return { chunk };
+      return { chunk, ...(toolMarkupStripped ? { toolMarkupStripped: true } : {}) };
     }
 
     case "plan_update": {
@@ -186,12 +205,17 @@ export function sanitizeChunk(
 export function sanitizeChunks(inputs: readonly unknown[] | undefined | null): SanitizedChunks {
   const chunks: AnyChunk[] = [];
   const dropped: DroppedChunk[] = [];
+  let toolMarkupStripped = 0;
   for (const input of inputs ?? []) {
     const result = sanitizeChunk(input);
-    if ("chunk" in result) chunks.push(result.chunk);
-    else dropped.push({ reason: result.reason, chunk: input });
+    if ("chunk" in result) {
+      chunks.push(result.chunk);
+      if (result.toolMarkupStripped) toolMarkupStripped++;
+    } else {
+      dropped.push({ reason: result.reason, chunk: input });
+    }
   }
-  return { chunks, dropped };
+  return { chunks, dropped, toolMarkupStripped };
 }
 
 /** Keep only the text-bearing chunks — the safest possible retry payload. */
