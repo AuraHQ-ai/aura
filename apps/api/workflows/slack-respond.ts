@@ -1240,6 +1240,35 @@ export async function slackRespondWorkflow(input: SlackRespondWorkflowInput) {
       escalate = true;
     }
 
+    const {
+      detectToolThrashFromSteps,
+      formatToolThrashUserMessage,
+      logToolThrashBreaker,
+    } = await import("../src/pipeline/tool-thrash.js");
+    const thrash = detectToolThrashFromSteps(steps);
+    if (thrash) {
+      logToolThrashBreaker({
+        trip: thrash,
+        modelId: r.stepModelId || input.modelId,
+        channelId: input.channelId,
+        userId: input.userId,
+        path: "interactive",
+        step: stepIndex,
+      });
+      const note = formatToolThrashUserMessage(thrash);
+      fullText = fullText.trim() ? `${fullText}\n\n${note}` : note;
+      await finalizeSlackRespond({
+        input,
+        streamState,
+        fullText,
+        steps,
+        stepModelIds,
+        toolRecords,
+        outcome: "completed",
+      });
+      return { interrupted: true, text: fullText };
+    }
+
     // Past the hard deadline the step ran with no tools — its output is the
     // final message, regardless of finishReason.
     if (hardDeadlineReached) break;

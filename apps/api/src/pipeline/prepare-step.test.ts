@@ -63,6 +63,7 @@ import {
   getProviderThinkingOptions,
   resolveProviderThinkingOptions,
   TOOL_LOOP_THRESHOLD,
+  ToolThrashError,
 } from "./prepare-step.js";
 import type { ModelMessage } from "ai";
 
@@ -789,6 +790,78 @@ describe("createPrepareStep tool-call loop (issue #1524)", () => {
     expect(
       errorLoggerMocks.logError.mock.calls.some(
         ([params]) => params.errorCode === "tool_call_loop",
+      ),
+    ).toBe(false);
+  });
+});
+
+function failedSearchSteps(count: number) {
+  return Array.from({ length: count }, (_, i) => ({
+    text: "",
+    toolCalls: [{ toolName: "archive_emails", toolCallId: `fail-${i}` }],
+    toolResults: [{
+      toolName: "archive_emails",
+      toolCallId: `fail-${i}`,
+      output: { ok: false, error: "nope" },
+    }],
+  }));
+}
+
+describe("createPrepareStep tool-thrash breaker (issue #1524)", () => {
+  const messages: ModelMessage[] = [{ role: "user", content: "do the thing" }];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    invocationLockMocks.isInvocationCurrent.mockResolvedValue(true);
+    turnDeadlineMocks.spawnTurnContinuationJob.mockResolvedValue(true);
+  });
+
+  it("aborts the turn after 5 consecutive tool execution errors", async () => {
+    const prepareStep = createPrepareStep({
+      stablePrefix: "PREFIX",
+      modelId: "zai/glm-5.3-flash",
+      channelId: "C0123456",
+      userId: "U0999",
+    });
+
+    await expect(
+      prepareStep({
+        stepNumber: 6,
+        steps: failedSearchSteps(5),
+        messages,
+      }),
+    ).rejects.toBeInstanceOf(ToolThrashError);
+
+    const thrashCalls = errorLoggerMocks.logError.mock.calls.filter(
+      ([params]) => params.errorCode === "tool_thrash_breaker",
+    );
+    expect(thrashCalls).toHaveLength(1);
+    expect(thrashCalls[0][0]).toMatchObject({
+      errorName: "ToolThrashBreaker",
+      channelId: "C0123456",
+      userId: "U0999",
+      context: expect.objectContaining({
+        reason: "consecutive_errors",
+        consecutiveErrors: 5,
+        modelId: "zai/glm-5.3-flash",
+      }),
+    });
+  });
+
+  it("does not abort after 4 consecutive errors", async () => {
+    const prepareStep = createPrepareStep({
+      stablePrefix: "PREFIX",
+    });
+
+    const result = await prepareStep({
+      stepNumber: 5,
+      steps: failedSearchSteps(4),
+      messages,
+    });
+    expect(result?.instructions).toBeUndefined();
+    expect(
+      errorLoggerMocks.logError.mock.calls.some(
+        ([params]) => params.errorCode === "tool_thrash_breaker",
       ),
     ).toBe(false);
   });

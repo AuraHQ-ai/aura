@@ -28,6 +28,14 @@ import { createInteractiveAgent } from "../lib/agents.js";
 import { getMainModel, buildCachedSystemMessages } from "../lib/ai.js";
 import { aiTelemetry } from "../lib/langfuse.js";
 import { InvocationSupersededError } from "./prepare-step.js";
+import {
+  formatToolThrashUserMessage,
+  isToolThrashError,
+  logToolThrashBreaker,
+  ToolThrashBreaker,
+  ToolThrashError,
+  type ToolThrashTrip,
+} from "./tool-thrash.js";
 import { cleanupScratchpad } from "../tools/scratchpad.js";
 import { cacheDeferredToolResolutions } from "../tools/deferred.js";
 import type { DetailedTokenUsage } from "@aura/db/schema";
@@ -719,12 +727,14 @@ export async function generateResponse(
   }
 
   // ── Inactivity timeout ───────────────────────────────────────────────
-  type StreamAbortReason = "inactivity" | "long_tool" | "superseded" | "unknown";
+  type StreamAbortReason = "inactivity" | "long_tool" | "superseded" | "tool_thrash" | "unknown";
   type ContinuationReason = "length" | "long_tool" | "stream_age";
 
   const abortController = new AbortController();
   let inactivityTimer: ReturnType<typeof setTimeout> = undefined as any;
   let lastAbortReason: StreamAbortReason = "unknown";
+  const toolThrashBreaker = new ToolThrashBreaker();
+  let toolThrashTrip: ToolThrashTrip | null = null;
 
   const resetTimer = () => {
     clearTimeout(inactivityTimer);
@@ -790,6 +800,22 @@ export async function generateResponse(
   );
   streamParams.task_display_mode = configuredTaskDisplayMode;
 
+  function tripToolThrash(trip: ToolThrashTrip): never {
+    if (!toolThrashTrip) {
+      toolThrashTrip = trip;
+      lastAbortReason = "tool_thrash";
+      logToolThrashBreaker({
+        trip,
+        modelId,
+        channelId,
+        userId: options.recipientUserId,
+        path: "interactive",
+      });
+      abortController.abort("tool_thrash");
+    }
+    throw new ToolThrashError(trip);
+  }
+
   // Issue #1012: no eager stream creation here — the stream is created
   // lazily by ensureStreamer() on the first real content append, so the
   // model can think or run tools for minutes without an empty Slack bubble
@@ -847,12 +873,17 @@ export async function generateResponse(
   const baseStreamCallOptions: Record<string, any> = {
     abortSignal: abortController.signal,
     onError: ({ error }: { error: unknown }) => {
-      if (isSupersededError(error)) {
-        supersededDuringStream = true;
-        logger.info("Stream onError ignored — invocation superseded", {
-          invocationId,
-          channelId,
-        });
+      if (isSupersededError(error) || isToolThrashError(error)) {
+        if (isSupersededError(error)) supersededDuringStream = true;
+        logger.info(
+          isSupersededError(error)
+            ? "Stream onError ignored — invocation superseded"
+            : "Stream onError ignored — tool-thrash abort",
+          {
+            invocationId,
+            channelId,
+          },
+        );
         return;
       }
 
@@ -1572,6 +1603,8 @@ export async function generateResponse(
             });
             break;
           }
+          const callTrip = toolThrashBreaker.recordCall(chunk.toolName);
+          if (callTrip) tripToolThrash(callTrip);
           // Flush any pending table buffer before tool cards
           if ((tableBuffer.length > 0 || lineCarry) && !streamingFailed) {
             const preToolFlush = flushRemainingTableBuffer();
@@ -1745,6 +1778,8 @@ export async function generateResponse(
             is_error: !!isError,
             rawOutput: output,
           });
+          const resultTrip = toolThrashBreaker.recordResult(!isError, chunk.toolName);
+          if (resultTrip) tripToolThrash(resultTrip);
           // Issue #1343: the turn just posted into its own delivery
           // destination — remember what it said so the final assistant text
           // can be suppressed if it merely restates it.
@@ -1824,6 +1859,8 @@ export async function generateResponse(
             output: truncateToBytes(JSON.stringify({ error: errorMsg }), 1500),
             is_error: true,
           });
+          const errorTrip = toolThrashBreaker.recordResult(false, errToolName || "unknown");
+          if (errorTrip) tripToolThrash(errorTrip);
           pendingToolInputs.delete(errToolCallId);
           optimisticToolCards.delete(errToolCallId);
           slackPostToolInputs.delete(errToolCallId);
@@ -2502,6 +2539,62 @@ export async function generateResponse(
       turnMarkerStatus = "completed";
       return {
         raw: accumulatedText + `\n\n${interruptedNote}`,
+        alreadyPosted: true,
+        usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
+        toolCalls: toolCallRecords,
+        modelId,
+        stepModelIds: getStepModelIds(),
+        compactionTotals: getCompactionTotals?.(),
+        interrupted: true,
+      };
+    }
+
+    const thrashTrip = (isToolThrashError(error) ? error.trip : null) ?? toolThrashTrip;
+    if (thrashTrip) {
+      const thrashNote = formatToolThrashUserMessage(thrashTrip);
+      logger.warn("Stream interrupted — tool-thrash breaker", {
+        reason: thrashTrip.reason,
+        callCount: thrashTrip.callCount,
+        consecutiveErrors: thrashTrip.consecutiveErrors,
+        channelId,
+        modelId,
+      });
+      if (streamer && !streamingFailed) {
+        try {
+          await streamer.stop({
+            chunks: [
+              ...buildOptimisticToolErrorChunks("Stopped after tool thrash"),
+              toChunkMarkdownText(`\n\n${thrashNote}`),
+            ],
+          });
+          optimisticToolCards.clear();
+        } catch {
+          try {
+            await safePostMessage(slackClient, {
+              channel: channelId,
+              text: thrashNote,
+              thread_ts: threadTs,
+            });
+          } catch {
+            // Best effort; the error_event is the durable record.
+          }
+        }
+      } else {
+        try {
+          await safePostMessage(slackClient, {
+            channel: channelId,
+            text: thrashNote,
+            thread_ts: threadTs,
+          });
+        } catch {
+          // Best effort; the error_event is the durable record.
+        }
+      }
+
+      await persistDeferredToolCache();
+      turnMarkerStatus = "completed";
+      return {
+        raw: accumulatedText + `\n\n${thrashNote}`,
         alreadyPosted: true,
         usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
         toolCalls: toolCallRecords,

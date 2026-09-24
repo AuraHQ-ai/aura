@@ -2693,4 +2693,89 @@ describe("generateResponse deferred stream creation (issue #1012)", () => {
     expect(markdown).not.toContain("_history");
     expect(markdown).not.toContain("read_channel_history");
   });
+
+  it("aborts after 5 consecutive tool execution errors (issue #1524)", async () => {
+    const streamer = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([streamer]);
+
+    mockAgentStream((async function* () {
+      for (let i = 0; i < 5; i++) {
+        yield {
+          type: "tool-error",
+          toolCallId: `fail-${i}`,
+          toolName: "archive_emails",
+          error: new Error("nope"),
+        };
+      }
+      yield { type: "text-delta", text: "should never reach Slack" };
+    })());
+
+    const result = await generateResponse(baseOptions(slackClient));
+
+    expect(result.interrupted).toBe(true);
+    expect(result.alreadyPosted).toBe(true);
+    expect(result.raw).toContain("5 tools in a row failed");
+    expect(result.raw).not.toContain("should never reach Slack");
+
+    const thrashLogs = vi.mocked(logError).mock.calls.filter(
+      ([params]) => params.errorCode === "tool_thrash_breaker",
+    );
+    expect(thrashLogs).toHaveLength(1);
+    expect(thrashLogs[0][0]).toMatchObject({
+      errorName: "ToolThrashBreaker",
+      context: expect.objectContaining({
+        reason: "consecutive_errors",
+        consecutiveErrors: 5,
+        modelId: "test-model",
+      }),
+    });
+
+    const stopChunks = streamer.stop.mock.calls.flatMap((c) => c[0]?.chunks ?? []);
+    const markdown = stopChunks
+      .filter((chunk: any) => chunk.type === "markdown_text")
+      .map((chunk: any) => chunk.text)
+      .join("");
+    expect(markdown).toContain("5 tools in a row failed");
+  });
+
+  it("aborts when the per-turn tool-call cap is exceeded (issue #1524)", async () => {
+    const streamer = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([streamer]);
+
+    mockAgentStream((async function* () {
+      for (let i = 0; i < 41; i++) {
+        yield {
+          type: "tool-call",
+          toolCallId: `cap-${i}`,
+          toolName: "read_canvas",
+          input: {},
+        };
+      }
+      yield { type: "text-delta", text: "should never reach Slack" };
+    })());
+
+    const result = await generateResponse(baseOptions(slackClient));
+
+    expect(result.interrupted).toBe(true);
+    expect(result.raw).toContain("41 tools without wrapping up");
+    expect(result.raw).not.toContain("should never reach Slack");
+
+    const thrashLogs = vi.mocked(logError).mock.calls.filter(
+      ([params]) => params.errorCode === "tool_thrash_breaker",
+    );
+    expect(thrashLogs).toHaveLength(1);
+    expect(thrashLogs[0][0]).toMatchObject({
+      context: expect.objectContaining({
+        reason: "max_tool_calls",
+        callCount: 41,
+        modelId: "test-model",
+      }),
+    });
+  });
 });

@@ -13,7 +13,14 @@ import {
   type TurnDeadlinePath,
   type TurnDeadlines,
 } from "./turn-deadline.js";
+import {
+  detectToolThrashFromSteps,
+  logToolThrashBreaker,
+  ToolThrashError,
+} from "./tool-thrash.js";
 import type { ModelCapabilities } from "@aura/db/schema";
+
+export { ToolThrashError } from "./tool-thrash.js";
 
 export class InvocationSupersededError extends Error {
   constructor(public readonly invocationId: string) {
@@ -449,6 +456,23 @@ export function createPrepareStep(opts: {
     const effectiveModelId = (hasEscalatedModel && escalatedModel) ? escalatedModel.modelId : opts.modelId;
     opts.recordStepModelId?.(stepNumber, effectiveModelId);
     providerOptions = await getCachedProviderThinkingOptions(effectiveModelId, opts.thinkingBudget);
+
+    // --- Execution-side thrash breaker (issue #1524) ---
+    // Consecutive tool-result errors (or a per-turn call cap) abort the turn
+    // instead of feeding another error round-trip to the model. Logged as
+    // `tool_thrash_breaker` so leak/thrash rate is measurable per model.
+    const thrash = detectToolThrashFromSteps(steps);
+    if (thrash) {
+      logToolThrashBreaker({
+        trip: thrash,
+        modelId: effectiveModelId,
+        channelId: opts.channelId,
+        userId: opts.userId,
+        path: opts.turnPath,
+        step: stepNumber,
+      });
+      throw new ToolThrashError(thrash);
+    }
 
     // --- Turn wall-clock deadline (issue #1318) ---
     // The step budget never binds in practice (turns die around step 40 while
