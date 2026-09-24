@@ -1,20 +1,145 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+type JobRow = {
+  id: string;
+  name: string;
+  status: string;
+  channelId: string;
+  threadTs: string | null;
+  [key: string]: unknown;
+};
+
 const dbMock = vi.hoisted(() => {
+  type MockJob = {
+    id: string;
+    name: string;
+    status: string;
+    channelId: string;
+    threadTs: string | null;
+    [key: string]: unknown;
+  };
+
   const state = {
     insertError: null as Error | null,
+    selectError: null as Error | null,
     insertValues: [] as Record<string, unknown>[],
+    jobs: [] as MockJob[],
     insert: vi.fn(),
+    select: vi.fn(),
+    reset() {
+      state.insertError = null;
+      state.selectError = null;
+      state.insertValues = [];
+      state.jobs = [];
+    },
   };
+
+  function likeMatch(value: string, pattern: string): boolean {
+    const escaped = pattern
+      .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+      .replace(/%/g, ".*")
+      .replace(/_/g, ".");
+    return new RegExp(`^${escaped}$`).test(value);
+  }
+
+  function rowMatchesSql(job: MockJob, sql: string, params: unknown[]): boolean {
+    const nameLike = /(?:jobs\.)?name like \$(\d+)/i.exec(sql);
+    if (nameLike) {
+      const pat = String(params[Number(nameLike[1])]);
+      if (!likeMatch(String(job.name), pat)) return false;
+    }
+
+    const statusIn = /(?:jobs\.)?status in \(([^)]+)\)/i.exec(sql);
+    if (statusIn) {
+      const idxs = [...statusIn[1].matchAll(/\$(\d+)/g)].map((m) => Number(m[1]));
+      const allowed = idxs.map((i) => params[i]);
+      if (!allowed.includes(job.status)) return false;
+    }
+
+    const channelEq = /(?:jobs\.)?channel_id = \$(\d+)/i.exec(sql);
+    if (channelEq) {
+      if ((job.channelId ?? "") !== params[Number(channelEq[1])]) return false;
+    }
+
+    if (/(?:jobs\.)?thread_ts is null/i.test(sql)) {
+      if (job.threadTs != null) return false;
+    } else {
+      const threadEq = /(?:jobs\.)?thread_ts = \$(\d+)/i.exec(sql);
+      if (threadEq) {
+        if (job.threadTs !== params[Number(threadEq[1])]) return false;
+      }
+    }
+
+    return true;
+  }
+
+  function executeSelect(where: unknown, limit: number): MockJob[] {
+    if (state.selectError) throw state.selectError;
+    if (!where || typeof (where as { toQuery?: unknown }).toQuery !== "function") {
+      return [];
+    }
+    const { sql, params } = (
+      where as {
+        toQuery: (config: {
+          escapeName: (n: string) => string;
+          escapeParam: (i: number) => string;
+          escapeString: (s: string) => string;
+          casing: { getColumnCasing: (c: { name: string }) => string };
+        }) => { sql: string; params: unknown[] };
+      }
+    ).toQuery({
+      escapeName: (n: string) => n,
+      escapeParam: (i: number) => `$${i}`,
+      escapeString: (s: string) => s,
+      casing: { getColumnCasing: (c: { name: string }) => c.name },
+    });
+
+    return state.jobs.filter((job) => rowMatchesSql(job, sql, params)).slice(0, limit);
+  }
 
   state.insert.mockImplementation(() => ({
     values: vi.fn((valuesArg: Record<string, unknown>) => {
+      if (state.insertError) return Promise.reject(state.insertError);
       state.insertValues.push(valuesArg);
-      return state.insertError
-        ? Promise.reject(state.insertError)
-        : Promise.resolve([]);
+      state.jobs.push({
+        id: `job-${state.jobs.length + 1}`,
+        status: "pending",
+        ...valuesArg,
+      } as MockJob);
+      return Promise.resolve([]);
     }),
   }));
+
+  state.select.mockImplementation(() => {
+    const chain = {
+      _where: undefined as unknown,
+      _limit: Number.POSITIVE_INFINITY,
+      from: vi.fn(),
+      where: vi.fn(),
+      limit: vi.fn(),
+      then(onFulfilled?: (value: unknown) => unknown, onRejected?: (reason: unknown) => unknown) {
+        try {
+          const rows = executeSelect(chain._where, chain._limit).map((job) => ({
+            id: job.id,
+            name: job.name,
+          }));
+          return Promise.resolve(rows).then(onFulfilled, onRejected);
+        } catch (err) {
+          return Promise.reject(err).then(onFulfilled, onRejected);
+        }
+      },
+    };
+    chain.from.mockImplementation(() => chain);
+    chain.where.mockImplementation((cond: unknown) => {
+      chain._where = cond;
+      return chain;
+    });
+    chain.limit.mockImplementation((n: number) => {
+      chain._limit = n;
+      return chain;
+    });
+    return chain;
+  });
 
   return state;
 });
@@ -22,6 +147,7 @@ const dbMock = vi.hoisted(() => {
 vi.mock("../db/client.js", () => ({
   db: {
     insert: dbMock.insert,
+    select: dbMock.select,
   },
 }));
 
@@ -130,8 +256,7 @@ describe("resolveTurnDeadlines", () => {
 describe("spawnTurnContinuationJob", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    dbMock.insertError = null;
-    dbMock.insertValues = [];
+    dbMock.reset();
   });
 
   it("inserts a [CONTINUE:...] job carrying the thread metadata", async () => {
@@ -222,13 +347,15 @@ describe("spawnTurnContinuationJob", () => {
   });
 
   it("omits the cut-off framing when truncatedMessage is absent or blank (backward compatible)", async () => {
+    // Distinct channels so the #1418 live-continuation dedupe does not collapse
+    // these two description-shape probes into a single insert.
     await spawnTurnContinuationJob({
-      channelId: "C0123456",
+      channelId: "C-ABSENT-TRUNC",
       elapsedMs: 720_000,
       step: 12,
     });
     await spawnTurnContinuationJob({
-      channelId: "C0123456",
+      channelId: "C-BLANK-TRUNC",
       elapsedMs: 720_000,
       step: 12,
       truncatedMessage: "   \n  ",
@@ -241,7 +368,9 @@ describe("spawnTurnContinuationJob", () => {
       expect(description).not.toContain('"""');
       // Exactly the pre-#1336 description shape.
       expect(description).toMatch(
-        /^\[CONTINUE:turn-deadline-[^\]]+\] The previous turn in Slack channel C0123456 hit its wall-clock budget after 720s \(step 12\) and was stopped before finishing\. Read the recent messages in that thread to see what was requested and what was already done, then complete the remaining work and post the results in the same thread\.$/,
+        new RegExp(
+          `^\\[CONTINUE:turn-deadline-[^\\]]+\\] The previous turn in Slack channel ${row.channelId} hit its wall-clock budget after 720s \\(step 12\\) and was stopped before finishing\\. Read the recent messages in that thread to see what was requested and what was already done, then complete the remaining work and post the results in the same thread\\.$`,
+        ),
       );
     }
   });
@@ -267,8 +396,7 @@ describe("spawnTurnContinuationJob", () => {
 describe("spawnTurnContinuationJob depth cap (issue #1320)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    dbMock.insertError = null;
-    dbMock.insertValues = [];
+    dbMock.reset();
   });
 
   it("encodes the requested depth in the [CONTINUE:topic:dN] tag", async () => {
@@ -369,3 +497,144 @@ describe("spawnTurnContinuationJob depth cap (issue #1320)", () => {
     );
   });
 });
+
+const LIVE_CONTINUATION_STATUSES = new Set(["pending", "running"]);
+
+function spawnArgs(
+  channelId?: string,
+  threadTs?: string,
+  extra: { invocationId?: string; depth?: number } = {},
+) {
+  return {
+    channelId,
+    threadTs,
+    elapsedMs: 720_000,
+    step: 12,
+    ...extra,
+  };
+}
+
+function threadKey(channelId: unknown, threadTs: unknown): string {
+  return JSON.stringify({
+    channelId: channelId || "",
+    threadTs: threadTs || null,
+  });
+}
+
+function liveContinuationsByThread(): Map<string, JobRow[]> {
+  const groups = new Map<string, JobRow[]>();
+  for (const job of dbMock.jobs as JobRow[]) {
+    if (typeof job.name !== "string" || !job.name.startsWith("continue-turn-deadline")) {
+      continue;
+    }
+    if (!LIVE_CONTINUATION_STATUSES.has(job.status)) continue;
+    const key = threadKey(job.channelId, job.threadTs);
+    const list = groups.get(key) ?? [];
+    list.push(job);
+    groups.set(key, list);
+  }
+  return groups;
+}
+
+/** Invariant (#1418): at most one non-terminal continuation per (channelId, threadTs). */
+function assertAtMostOneLiveContinuationPerThread() {
+  for (const [key, rows] of liveContinuationsByThread()) {
+    expect(rows, `live continuations for ${key}`).toHaveLength(1);
+  }
+}
+
+describe("spawnTurnContinuationJob live-continuation invariant (issue #1418)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMock.reset();
+  });
+
+  it("keeps at most one non-terminal continuation per (channelId, threadTs)", async () => {
+    const parent = { channelId: "C-RETRY", threadTs: "111.001" };
+
+    // Retry pattern: same thread, several calls as if from separate parent executions.
+    const retryResults: boolean[] = [];
+    for (let i = 0; i < 4; i++) {
+      retryResults.push(
+        await spawnTurnContinuationJob(
+          spawnArgs(parent.channelId, parent.threadTs, {
+            invocationId: `parent-exec-${i}-xxxxxxxx`,
+          }),
+        ),
+      );
+    }
+    expect(retryResults[0]).toBe(true);
+    expect(retryResults.slice(1)).toEqual([false, false, false]);
+    expect(logger.info).toHaveBeenCalledWith(
+      "turn-deadline: continuation already live, skipping spawn",
+      expect.objectContaining({
+        existingJobId: "job-1",
+        existingJobName: expect.stringMatching(/^continue-turn-deadline-/),
+        channelId: parent.channelId,
+        threadTs: parent.threadTs,
+      }),
+    );
+
+    // Dedupe is per-thread, not global: other identities still get their own row.
+    expect(await spawnTurnContinuationJob(spawnArgs("C-RETRY", "111.002"))).toBe(true);
+    expect(await spawnTurnContinuationJob(spawnArgs("C-OTHER", "111.001"))).toBe(true);
+    expect(await spawnTurnContinuationJob(spawnArgs("C-RETRY"))).toBe(true);
+    expect(await spawnTurnContinuationJob(spawnArgs("C-RETRY"))).toBe(false);
+    expect(await spawnTurnContinuationJob(spawnArgs(""))).toBe(true);
+    expect(await spawnTurnContinuationJob(spawnArgs())).toBe(false);
+
+    // A running continuation is still live and must block siblings.
+    const retryLive = liveContinuationsByThread().get(
+      threadKey(parent.channelId, parent.threadTs),
+    );
+    expect(retryLive).toHaveLength(1);
+    retryLive![0].status = "running";
+    expect(
+      await spawnTurnContinuationJob(
+        spawnArgs(parent.channelId, parent.threadTs, { invocationId: "after-running-xx" }),
+      ),
+    ).toBe(false);
+
+    assertAtMostOneLiveContinuationPerThread();
+    expect(liveContinuationsByThread().size).toBe(5);
+    expect(dbMock.insertValues).toHaveLength(5);
+  });
+
+  it("does not let a terminal prior continuation block a new one", async () => {
+    const channelId = "C-TERMINAL";
+    const threadTs = "222.002";
+
+    for (const terminal of ["completed", "failed"] as const) {
+      expect(await spawnTurnContinuationJob(spawnArgs(channelId, threadTs))).toBe(true);
+      assertAtMostOneLiveContinuationPerThread();
+      const live = liveContinuationsByThread().get(threadKey(channelId, threadTs));
+      expect(live).toHaveLength(1);
+      live![0].status = terminal;
+      expect(liveContinuationsByThread().has(threadKey(channelId, threadTs))).toBe(false);
+    }
+
+    expect(await spawnTurnContinuationJob(spawnArgs(channelId, threadTs))).toBe(true);
+    assertAtMostOneLiveContinuationPerThread();
+    expect(dbMock.insertValues).toHaveLength(3);
+  });
+
+  it("falls through to insert when the live-continuation lookup throws", async () => {
+    dbMock.selectError = new Error("select failed");
+
+    const ok = await spawnTurnContinuationJob(spawnArgs("C-LOOKUP-ERR", "333.003"));
+
+    expect(ok).toBe(true);
+    expect(dbMock.insertValues).toHaveLength(1);
+    expect(logger.warn).toHaveBeenCalledWith(
+      "turn-deadline: live-continuation lookup failed; falling through to insert",
+      expect.objectContaining({ error: "select failed" }),
+    );
+
+    // Fail-open: a lookup error must not drop a legitimate continuation even
+    // when a sibling is already live (duplicate is cheaper than a lost resume).
+    dbMock.jobs[0].status = "pending";
+    expect(await spawnTurnContinuationJob(spawnArgs("C-LOOKUP-ERR", "333.003"))).toBe(true);
+    expect(dbMock.insertValues).toHaveLength(2);
+  });
+});
+
