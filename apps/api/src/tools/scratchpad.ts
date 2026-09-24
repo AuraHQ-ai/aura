@@ -14,6 +14,9 @@ export function createScratchpadTools(invocationId: string) {
   const scratchpad_write = tool({
     description:
       "Write or update a section in the working scratchpad. Use this during long-running jobs to save intermediate results, running tallies, or key findings that you'll need later. Each section is identified by a key. Writing to an existing key overwrites it. The scratchpad persists for the duration of this invocation only.",
+    // Bypasses defineTool(); opt out of provider-side strict validation
+    // so optional/partial schemas don't fail at the tool-call layer (#1517).
+    strict: false,
     inputSchema: z.object({
       key: z
         .string()
@@ -36,6 +39,8 @@ export function createScratchpadTools(invocationId: string) {
   const scratchpad_read = tool({
     description:
       "Read the current scratchpad contents. Returns all sections if no key specified, or a specific section by key. Use this to recall your intermediate findings during long-running jobs instead of re-reading tool results from many steps ago.",
+    // key is optional — cannot be represented as strict JSON Schema (#1517).
+    strict: false,
     inputSchema: z.object({
       key: z
         .string()
