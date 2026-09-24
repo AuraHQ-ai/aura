@@ -13,6 +13,7 @@ const mocks = vi.hoisted(() => ({
   recordErrorMock: vi.fn(),
   resolveSlackDestinationMock: vi.fn(),
   safePostMessageMock: vi.fn(),
+  eventLockClaimMock: vi.fn(),
   waitUntilPromises: [] as Array<Promise<unknown>>,
 }));
 
@@ -125,7 +126,13 @@ vi.mock("./db/client.js", () => ({
     insert: vi.fn(() => ({
       values: vi.fn(() => ({
         catch: vi.fn(),
+        onConflictDoNothing: vi.fn(() => ({
+          returning: mocks.eventLockClaimMock,
+        })),
       })),
+    })),
+    delete: vi.fn(() => ({
+      where: vi.fn(async () => undefined),
     })),
     select: vi.fn(() => ({
       from: vi.fn(() => ({
@@ -162,6 +169,8 @@ describe("Cursor agent webhook", () => {
     mocks.getCredentialMock.mockResolvedValue("gh-token");
     mocks.resolveSlackDestinationMock.mockResolvedValue("DADMIN");
     mocks.safePostMessageMock.mockResolvedValue({ ok: true });
+    // Default: the dedup claim succeeds, i.e. this is a first delivery.
+    mocks.eventLockClaimMock.mockResolvedValue([{ id: "lock-1" }]);
     mocks.fetchMock.mockImplementation(async (url: string) => {
       if (url === "https://api.github.com/graphql") {
         return {
@@ -219,5 +228,63 @@ describe("Cursor agent webhook", () => {
       }),
     );
     expect(mocks.recordErrorMock).not.toHaveBeenCalled();
+  });
+
+  it("skips a redelivered terminal event instead of posting twice", async () => {
+    const body = (status: string) =>
+      JSON.stringify({
+        id: "bc-168ac11a",
+        status,
+        target: { prUrl: "https://github.com/AuraHQ-ai/aura/pull/1407" },
+      });
+
+    const post = async (status: string, webhookId: string) =>
+      app.request("/api/webhook/cursor-agent", {
+        method: "POST",
+        headers: {
+          "x-webhook-signature": sign(body(status)),
+          "x-webhook-id": webhookId,
+          "content-type": "application/json",
+        },
+        body: body(status),
+      });
+
+    // First delivery claims the (agent, outcome) lock and notifies.
+    mocks.eventLockClaimMock.mockResolvedValueOnce([{ id: "lock-1" }]);
+    expect((await post("FINISHED", "wh-1")).status).toBe(200);
+    await Promise.all(mocks.waitUntilPromises);
+    expect(mocks.safePostMessageMock).toHaveBeenCalledTimes(1);
+
+    // Redelivery of the same outcome — distinct webhook id, synonym status —
+    // must not produce a second Slack message.
+    mocks.eventLockClaimMock.mockResolvedValueOnce([]);
+    const second = await post("COMPLETED", "wh-2");
+    expect(second.status).toBe(200);
+    expect(await second.json()).toEqual({ ok: true, duplicate: true });
+    await Promise.all(mocks.waitUntilPromises);
+    expect(mocks.safePostMessageMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("still notifies when the lock table is unreachable", async () => {
+    mocks.eventLockClaimMock.mockRejectedValueOnce(new Error("db down"));
+
+    const rawBody = JSON.stringify({
+      id: "bc-degraded",
+      status: "FINISHED",
+      target: { prUrl: "https://github.com/AuraHQ-ai/aura/pull/1407" },
+    });
+
+    const response = await app.request("/api/webhook/cursor-agent", {
+      method: "POST",
+      headers: {
+        "x-webhook-signature": sign(rawBody),
+        "content-type": "application/json",
+      },
+      body: rawBody,
+    });
+
+    expect(response.status).toBe(200);
+    await Promise.all(mocks.waitUntilPromises);
+    expect(mocks.safePostMessageMock).toHaveBeenCalledTimes(1);
   });
 });

@@ -303,6 +303,14 @@ export function createCursorAgentTools(context?: ScheduleContext) {
 
           const result = await followupCursorAgent(agent_id, prompt);
 
+          // The follow-up run will emit its own terminal event. Clear the
+          // dedup locks from the previous run so that notification is not
+          // suppressed as a duplicate. See issue #1408.
+          const { releaseCursorWebhookLocks } = await import(
+            "../lib/cursor-webhook-dedup.js"
+          );
+          await releaseCursorWebhookLocks(agent_id);
+
           const followupNote = [
             `\n\n## Follow-up (${new Date().toISOString()})`,
             `- **Requester**: ${context?.userId || "unknown"}`,

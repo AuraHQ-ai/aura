@@ -2188,4 +2188,45 @@ describe("generateResponse deferred stream creation (issue #1012)", () => {
       })],
     });
   });
+
+  it("strips ChatML tool-call XML from Slack text and does not invoke it as a tool (issue #1515)", async () => {
+    const streamer = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([streamer]);
+    const glmLeak =
+      "<tool_call>run_command<arg_key>command</arg_key><arg_value>cat /tmp/lf_traces.json</arg_value></tool_call>";
+
+    mockAgentStream((async function* () {
+      yield { type: "text-delta", text: `I'll check the traces.\n${glmLeak}` };
+      yield {
+        type: "tool-call",
+        toolCallId: "call-xml",
+        toolName: glmLeak,
+        input: {},
+      };
+    })());
+
+    const result = await generateResponse(baseOptions(slackClient));
+
+    expect(result.raw).toContain("I'll check the traces.");
+    expect(result.raw).not.toContain("<tool_call>");
+    expect(result.raw).not.toContain("<arg_key>");
+    expect(result.toolCalls).toEqual([]);
+
+    const posted = streamer.append.mock.calls.flatMap((c) => c[0]?.chunks ?? []);
+    const markdown = posted
+      .filter((chunk: any) => chunk.type === "markdown_text")
+      .map((chunk: any) => chunk.text)
+      .join("");
+    expect(markdown).toContain("I'll check the traces.");
+    expect(markdown).not.toContain("<tool_call>");
+    expect(markdown).not.toContain("<arg_key>");
+    expect(posted.some((chunk: any) => chunk.type === "task_update")).toBe(false);
+
+    expect(vi.mocked(logError).mock.calls.some(
+      ([params]) => params.errorCode === "tool_call_markup_leaked",
+    )).toBe(true);
+  });
 });

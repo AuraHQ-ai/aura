@@ -129,10 +129,11 @@ export function defineTool<TInput, TOutput>(config: {
   requiredCredentials?: string[];
   /**
    * Provider-side strict schema validation for tool-call inputs (AI SDK
-   * BaseFunctionTool.strict). Defaults to true so malformed inputs are
-   * rejected at the tool-call layer instead of failing deep in execute().
-   * Set to false only for tools whose inputSchema can't be represented as
-   * strict JSON schema (e.g. z.record() with free-form values).
+   * BaseFunctionTool.strict). Defaults to false: most tool schemas have
+   * optional fields, and strict JSON Schema requires `required` to list
+   * every key in `properties` (#1517). Set to true only for tools whose
+   * inputSchema is already strict-compatible (no optional properties,
+   * no z.record() free-form values).
    */
   strict?: boolean;
   /**
@@ -236,7 +237,7 @@ export function defineTool<TInput, TOutput>(config: {
     }
   };
 
-  const toolConfig = { ...rest, strict: strict ?? true, execute: auditedExecute };
+  const toolConfig = { ...rest, strict: strict ?? false, execute: auditedExecute };
   const t = tool<TInput, TOutput, any>(
     toolConfig as unknown as Tool<TInput, TOutput, any>,
   );

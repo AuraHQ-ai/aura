@@ -444,12 +444,14 @@ describe("executeJob reply-routing prompt", () => {
     expect(prompt).toContain("output exactly `NO_OP`");
   });
 
-  it("does not inject reply-routing for jobs without a channel", async () => {
+  it("includes the no-channel clause when the job has no output channel", async () => {
+    const { NO_CHANNEL_CLAUSE } = await import("./execute-job.js");
     const prompt = await capturePromptForJob({ channelId: null, threadTs: null });
 
-    expect(prompt).not.toContain("Post your results");
-    expect(prompt).not.toContain("post NOTHING");
-    expect(prompt).not.toContain("NO_OP");
+    expect(prompt).toContain(NO_CHANNEL_CLAUSE);
+    expect(prompt).toContain("<@U_REQUESTER>");
+    expect(prompt).not.toContain("using send_channel_message");
+    expect(prompt).not.toContain("Post your results to channel");
   });
 });
 
