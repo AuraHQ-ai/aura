@@ -115,6 +115,7 @@ describe("BigQuery row sanitization", () => {
     const result = await (tools.bq_execute_query as any).execute({
       sql: "SELECT CAST(1.23 AS NUMERIC) AS x",
       max_rows: 10,
+      label: "casting a numeric for clone checks",
     });
 
     expect(result).toMatchObject({

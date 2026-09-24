@@ -185,4 +185,30 @@ describe("registered tool JSON schemas vs strict mode", () => {
 
     expect(offenders).toEqual([]);
   });
+
+  it("requires a verb-first label of at most 60 chars on wave-2 tools", async () => {
+    const coreTools = await createCoreTools(
+      { userId: "U_TEST", channelId: "C_TEST" },
+      undefined,
+      undefined,
+    );
+
+    const cases: Array<{ name: string; base: Record<string, unknown> }> = [
+      { name: "bq_execute_query", base: { sql: "SELECT 1" } },
+      { name: "browse", base: { url: "https://example.com" } },
+      { name: "run_subagent", base: { task: "sweep channels" } },
+      { name: "dispatch_cursor_agent", base: { issue_description: "fix the bug" } },
+    ];
+
+    for (const { name, base } of cases) {
+      const schema = (coreTools as Record<string, { inputSchema: { parse: (v: unknown) => unknown } }>)[name]
+        ?.inputSchema;
+      expect(schema, name).toBeDefined();
+      expect(() => schema.parse(base), name).toThrow();
+      expect(() => schema.parse({ ...base, label: "x".repeat(61) }), name).toThrow();
+      expect(schema.parse({ ...base, label: "verb first example" })).toMatchObject({
+        label: "verb first example",
+      });
+    }
+  });
 });

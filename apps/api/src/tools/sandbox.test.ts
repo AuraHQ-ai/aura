@@ -142,6 +142,13 @@ function mockCommandLifecycle(options: {
   });
 }
 
+function parseRun(
+  tool: { inputSchema: { parse: (input: unknown) => any } },
+  input: Record<string, unknown>,
+) {
+  return tool.inputSchema.parse({ label: "running test command", ...input });
+}
+
 describe("sandbox command tools", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -166,7 +173,12 @@ describe("sandbox command tools", () => {
 
   it("defaults timeout_seconds to 90 seconds", async () => {
     const tool = createSandboxTools({ userId: "U123" } as any).run_command as any;
-    const input = tool.inputSchema.parse({ command: "true" });
+    expect(() => tool.inputSchema.parse({ command: "true" })).toThrow();
+    expect(() =>
+      tool.inputSchema.parse({ command: "true", label: "x".repeat(61) }),
+    ).toThrow();
+    const input = parseRun(tool, { command: "true" });
+    expect(input).toMatchObject({ command: "true", label: "running test command" });
 
     expect(input.timeout_seconds).toBe(90);
 
@@ -191,7 +203,7 @@ describe("sandbox command tools", () => {
   it("allows explicit timeouts above 90 seconds up to the 750 second ceiling", async () => {
     const tool = createSandboxTools({ userId: "U123" } as any).run_command as any;
 
-    const input = tool.inputSchema.parse({ command: "sleep 200", timeout_seconds: 200 });
+    const input = parseRun(tool, { command: "sleep 200", timeout_seconds: 200 });
     expect(input.timeout_seconds).toBe(200);
 
     await tool.execute(input);
@@ -203,7 +215,7 @@ describe("sandbox command tools", () => {
       envs: expect.objectContaining({ AURA_INLINE_TIMEOUT_SECONDS: "200" }),
     }));
     expect(() =>
-      tool.inputSchema.parse({ command: "sleep too long", timeout_seconds: 751 })
+      parseRun(tool, { command: "sleep too long", timeout_seconds: 751 })
     ).toThrow();
   });
 
@@ -212,7 +224,7 @@ describe("sandbox command tools", () => {
     const tool = createSandboxTools({ userId: "U123" } as any).run_command as any;
 
     const result = await tool.execute(
-      tool.inputSchema.parse({ command: "sleep 300", timeout_seconds: 1 }),
+      parseRun(tool, { command: "sleep 300", timeout_seconds: 1 }),
     );
 
     expect(result.ok).toBe(false);
@@ -232,7 +244,7 @@ describe("sandbox command tools", () => {
     });
     const tool = createSandboxTools({ userId: "U123" } as any).run_command as any;
 
-    const result = await tool.execute(tool.inputSchema.parse({ command: "echo hello" }));
+    const result = await tool.execute(parseRun(tool, { command: "echo hello" }));
 
     expect(result).toEqual({
       ok: true,
@@ -252,7 +264,7 @@ describe("sandbox command tools", () => {
     const tool = createSandboxTools({ userId: "U123" } as any).run_command as any;
 
     const result = await tool.execute(
-      tool.inputSchema.parse({ command: "printf 'real failure\\n' >&2; exit 1" }),
+      parseRun(tool, { command: "printf 'real failure\\n' >&2; exit 1" }),
     );
 
     expect(result).toEqual({
@@ -270,8 +282,10 @@ describe("sandbox command tools", () => {
       threadTs: "1710000000.000000",
     } as any).run_command_detached as any;
 
+    expect(() => tool.inputSchema.parse({ command: "sleep 300" })).toThrow();
+
     const result = await tool.execute(
-      tool.inputSchema.parse({
+      parseRun(tool, {
         command: "sleep 300",
         workdir: "/home/user/repo",
         env: { FOO: "bar" },
@@ -313,7 +327,7 @@ describe("sandbox command tools", () => {
   it("returns explicit no-suspend guidance when the context has no Slack thread", async () => {
     const tool = createSandboxTools({ userId: "U123" } as any).run_command_detached as any;
 
-    const result = await tool.execute(tool.inputSchema.parse({ command: "sleep 300" }));
+    const result = await tool.execute(parseRun(tool, { command: "sleep 300" }));
 
     expect(result.id).toMatch(/^[a-f0-9]{8}$/);
     expect(result.pid).toBe(4321);
@@ -333,7 +347,7 @@ describe("sandbox command tools", () => {
       threadTs: "1710000000.000000",
     } as any).run_command_detached as any;
 
-    const result = await tool.execute(tool.inputSchema.parse({ command: "sleep 300" }));
+    const result = await tool.execute(parseRun(tool, { command: "sleep 300" }));
 
     expect(result.resume).toBe("none");
     expect(toolMocks.markTurnSuspendedByDetachedCommand).not.toHaveBeenCalled();
@@ -348,7 +362,7 @@ describe("sandbox command tools", () => {
     });
     const tool = createSandboxTools({ userId: "U123" } as any).run_command_detached as any;
 
-    const result = await tool.execute(tool.inputSchema.parse({ command: "sleep 300" }));
+    const result = await tool.execute(parseRun(tool, { command: "sleep 300" }));
 
     expect(dbMocks.insertValues).toHaveBeenCalledWith(expect.objectContaining({
       id: result.id,
@@ -370,7 +384,7 @@ describe("sandbox command tools", () => {
       threadTs: "1710000000.000000",
     } as any).run_command_detached as any;
 
-    const result = await tool.execute(tool.inputSchema.parse({ command: "sleep 300" }));
+    const result = await tool.execute(parseRun(tool, { command: "sleep 300" }));
 
     expect(toolMocks.markTurnSuspendedByDetachedCommand).toHaveBeenCalledWith(result.id);
     expect(jobSuspensionMocks.markJobSuspendedForDetachedCommand).toHaveBeenCalledWith({
@@ -388,7 +402,7 @@ describe("sandbox command tools", () => {
       threadTs: "1710000000.000000",
     } as any).run_command_detached as any;
 
-    await tool.execute(tool.inputSchema.parse({ command: "sleep 300" }));
+    await tool.execute(parseRun(tool, { command: "sleep 300" }));
 
     expect(toolMocks.markTurnSuspendedByDetachedCommand).toHaveBeenCalled();
     expect(jobSuspensionMocks.markJobSuspendedForDetachedCommand).not.toHaveBeenCalled();
@@ -413,7 +427,7 @@ describe("sandbox command tools", () => {
     });
     const tool = createSandboxTools({ userId: "U123" } as any).run_command_detached as any;
 
-    const result = await tool.execute(tool.inputSchema.parse({ command: "sleep 300" }));
+    const result = await tool.execute(parseRun(tool, { command: "sleep 300" }));
 
     expect(result.pid).toBe(9876);
     expect(pidReads).toBe(4);
@@ -445,7 +459,7 @@ describe("sandbox command tools", () => {
     });
     const tool = createSandboxTools({ userId: "U123" } as any).run_command_detached as any;
 
-    const resultPromise = tool.execute(tool.inputSchema.parse({ command: "sleep 300" }));
+    const resultPromise = tool.execute(parseRun(tool, { command: "sleep 300" }));
     await vi.advanceTimersByTimeAsync(20_000);
     const result = await resultPromise;
 
@@ -480,7 +494,7 @@ describe("sandbox command tools", () => {
     });
     const tool = createSandboxTools({ userId: "U123" } as any).run_command_detached as any;
 
-    const result = await tool.execute(tool.inputSchema.parse({ command: "echo hello" }));
+    const result = await tool.execute(parseRun(tool, { command: "echo hello" }));
 
     expect(result.ok).toBe(false);
     expect(result.error).toContain("launch command failed");
@@ -497,8 +511,8 @@ describe("sandbox command tools", () => {
     const { createSandboxTools: createFreshSandboxTools } = await import("./sandbox.js");
     const tool = createFreshSandboxTools({ userId: "U123" } as any).run_command_detached as any;
 
-    await tool.execute(tool.inputSchema.parse({ command: "sleep 300" }));
-    await tool.execute(tool.inputSchema.parse({ command: "sleep 301" }));
+    await tool.execute(parseRun(tool, { command: "sleep 300" }));
+    await tool.execute(parseRun(tool, { command: "sleep 301" }));
 
     expect(toolMocks.markTurnSuspendedByDetachedCommand).not.toHaveBeenCalled();
     expect(loggerMocks.warn).toHaveBeenCalledTimes(1);
@@ -517,7 +531,7 @@ describe("sandbox command tools", () => {
     const { createSandboxTools: createFreshSandboxTools } = await import("./sandbox.js");
     const tool = createFreshSandboxTools({ userId: "U123" } as any).run_command_detached as any;
 
-    await tool.execute(tool.inputSchema.parse({ command: "sleep 300" }));
+    await tool.execute(parseRun(tool, { command: "sleep 300" }));
 
     expect(loggerMocks.warn).not.toHaveBeenCalled();
   });

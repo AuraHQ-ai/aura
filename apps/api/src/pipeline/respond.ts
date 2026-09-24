@@ -18,6 +18,7 @@ import {
   isMsgTooLong,
 } from "../lib/slack-messaging.js";
 import { getDetachedCommandSuspendState, getSlackMeta } from "../lib/tool.js";
+import { rememberLaunchLabelFromCall, resolveToolCardTitle } from "../lib/tool-card-title.js";
 import {
   startTurnMarker,
   finishTurnMarker,
@@ -906,6 +907,7 @@ export async function generateResponse(
   const toolCallRecords: ToolCallRecord[] = [];
   const pendingToolInputs = new Map<string, { name: string; input: string }>();
   const optimisticToolCards = new Map<string, { title: string }>();
+  const launchLabels = new Map<string, string>();
   // ── Duplicate final message suppression (issue #1343) ───────────────
   // Full (untruncated) inputs of in-flight Slack posting tool calls, so a
   // successful post to THIS turn's own destination can be recorded.
@@ -1035,13 +1037,46 @@ export async function generateResponse(
     }
   }
 
+  function parsePendingToolInput(raw: string | undefined): unknown {
+    if (!raw) return {};
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function resolveCardTitle(opts: {
+    toolName?: string;
+    input?: unknown;
+    toolCallId?: string;
+    fallback: string;
+  }): string {
+    const slackMeta = opts.toolName ? getSlackMeta(tools[opts.toolName]) : undefined;
+    const cached = opts.toolCallId
+      ? optimisticToolCards.get(opts.toolCallId)?.title
+      : undefined;
+    return resolveToolCardTitle({
+      input: opts.input,
+      status: slackMeta?.status,
+      fallback: cached ?? opts.fallback,
+      toolName: opts.toolName,
+      launchLabels,
+    });
+  }
+
   function buildStreamTombstoneChunks(): SlackStreamChunk[] {
     const chunks: SlackStreamChunk[] = [];
     for (const [toolCallId, pending] of pendingToolInputs.entries()) {
-      const slackMeta = getSlackMeta(tools[pending.name]);
+      const cached = optimisticToolCards.get(toolCallId)?.title;
       chunks.push(toTaskUpdateChunk({
         id: toolCallId,
-        title: slackMeta?.status ?? "Working on it...",
+        title: cached ?? resolveCardTitle({
+          toolName: pending.name,
+          input: parsePendingToolInput(pending.input),
+          fallback: "Working on it...",
+        }),
         status: "complete",
         output: TOOL_CONTINUATION_OUTPUT,
       }));
@@ -1491,8 +1526,10 @@ export async function generateResponse(
             break;
           }
 
-          const slackMeta = getSlackMeta(tools[toolName]);
-          const title = slackMeta?.status ?? "Working on it...";
+          const title = resolveCardTitle({
+            toolName,
+            fallback: "Working on it...",
+          });
           optimisticToolCards.set(toolCallId, { title });
           const toolInputStartPayload = asAppendPayload({
             chunks: [toTaskUpdateChunk({
@@ -1548,8 +1585,14 @@ export async function generateResponse(
           }
 
           const slackMeta = getSlackMeta(tools[chunk.toolName]);
-          const title = slackMeta?.status ?? "Working on it...";
           const inputArgs = (chunk as any).input ?? {};
+          const title = resolveCardTitle({
+            toolName: chunk.toolName,
+            input: inputArgs,
+            toolCallId: chunk.toolCallId,
+            fallback: "Working on it...",
+          });
+          optimisticToolCards.set(chunk.toolCallId, { title });
           let details: string | undefined;
           try { details = slackMeta?.detail?.(inputArgs); } catch { /* partial input args — safe to ignore */ }
           const toolCallPayload = asAppendPayload({
@@ -1581,7 +1624,6 @@ export async function generateResponse(
               input: inputArgs,
             });
           }
-          optimisticToolCards.delete(chunk.toolCallId);
           startLongToolSplitTimer();
 
           // Keep resetting inactivity timer during long tool execution;
@@ -1612,8 +1654,20 @@ export async function generateResponse(
 
         case "tool-result": {
           const resultSlackMeta = getSlackMeta(tools[chunk.toolName]);
-          const title = resultSlackMeta?.status ?? "Done";
+          const pending = pendingToolInputs.get(chunk.toolCallId);
+          const title = resolveCardTitle({
+            toolName: chunk.toolName,
+            input: pending ? parsePendingToolInput(pending.input) : (chunk as any).input,
+            toolCallId: chunk.toolCallId,
+            fallback: "Done",
+          });
           const output = chunk.output;
+          rememberLaunchLabelFromCall({
+            cache: launchLabels,
+            toolName: chunk.toolName,
+            input: pending ? parsePendingToolInput(pending.input) : (chunk as any).input,
+            output,
+          });
           const isError = output && typeof output === "object" &&
             "ok" in output && output.ok === false;
 
@@ -1682,7 +1736,6 @@ export async function generateResponse(
             }
           }
 
-          const pending = pendingToolInputs.get(chunk.toolCallId);
           toolCallRecords.push({
             name: chunk.toolName,
             input: pending?.input ?? "{}",
@@ -1738,8 +1791,13 @@ export async function generateResponse(
         case "tool-error": {
           const errToolName = (chunk as any).toolName;
           const errToolCallId = (chunk as any).toolCallId;
-          const errSlackMeta = getSlackMeta(tools[errToolName]);
-          const title = errSlackMeta?.status ?? "Failed";
+          const pending = pendingToolInputs.get(errToolCallId);
+          const title = resolveCardTitle({
+            toolName: errToolName,
+            input: parsePendingToolInput(pending?.input),
+            toolCallId: errToolCallId,
+            fallback: "Failed",
+          });
           const err = (chunk as any).error;
           const errorMsg = err instanceof Error ? err.message : String(err);
           const toolErrorPayload = asAppendPayload({
@@ -1758,7 +1816,6 @@ export async function generateResponse(
             }
           }
 
-          const pending = pendingToolInputs.get(errToolCallId);
           toolCallRecords.push({
             name: errToolName || "unknown",
             input: pending?.input ?? "{}",

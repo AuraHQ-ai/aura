@@ -257,6 +257,7 @@ async function runSlackAgentStep(
   const { isInvocationCurrent } = await import("../src/lib/invocation-lock.js");
   const { executionContext } = await import("../src/lib/tool.js");
   const { getSlackMeta } = await import("../src/lib/tool.js");
+  const { rememberLaunchLabelFromCall, resolveToolCardTitle } = await import("../src/lib/tool-card-title.js");
   const { pruneMessages } = await import("ai");
   const { compactMessages, summarizeEvictedToolResult } = await import(
     "../src/pipeline/compact-messages.js"
@@ -587,6 +588,8 @@ async function runSlackAgentStep(
 
   // Keep the Slack stream session alive during long tool executions.
   const pendingTools = new Set<string>();
+  const pendingToolInputs = new Map<string, unknown>();
+  const launchLabels = new Map<string, string>();
   const keepAlive = setInterval(() => {
     if (pendingTools.size === 0) return;
     if (!state.streamingFailed && state.streamTs) {
@@ -687,7 +690,12 @@ async function runSlackAgentStep(
             {
               type: "task_update",
               id: startId,
-              title: meta?.status ?? "Working on it...",
+              title: resolveToolCardTitle({
+                status: meta?.status,
+                fallback: "Working on it...",
+                toolName: (chunk as any).toolName,
+                launchLabels,
+              }),
               status: "in_progress",
             },
           ]);
@@ -705,17 +713,30 @@ async function runSlackAgentStep(
             {
               type: "task_update",
               id: chunk.toolCallId,
-              title: meta?.status ?? "Working on it...",
+              title: resolveToolCardTitle({
+                input: inputArgs,
+                status: meta?.status,
+                fallback: "Working on it...",
+                toolName: chunk.toolName,
+                launchLabels,
+              }),
               status: "in_progress",
               ...(details ? { details: truncate(details, 200) } : {}),
             },
           ]);
           pendingTools.add(chunk.toolCallId);
+          pendingToolInputs.set(chunk.toolCallId, inputArgs);
           break;
         }
         case "tool-result": {
           const meta = getSlackMeta((tools as any)[chunk.toolName]);
           const output = chunk.output as any;
+          rememberLaunchLabelFromCall({
+            cache: launchLabels,
+            toolName: chunk.toolName,
+            input: pendingToolInputs.get(chunk.toolCallId) ?? (chunk as any).input,
+            output,
+          });
           const isError = Boolean(
             output && typeof output === "object" && "ok" in output && output.ok === false,
           );
@@ -728,7 +749,13 @@ async function runSlackAgentStep(
             {
               type: "task_update",
               id: chunk.toolCallId,
-              title: meta?.status ?? "Done",
+              title: resolveToolCardTitle({
+                input: pendingToolInputs.get(chunk.toolCallId) ?? (chunk as any).input,
+                status: meta?.status,
+                fallback: "Done",
+                toolName: chunk.toolName,
+                launchLabels,
+              }),
               status: isError ? "error" : "complete",
               ...(taskOutput ? { output: truncate(taskOutput, 200) } : {}),
             },
@@ -740,6 +767,7 @@ async function runSlackAgentStep(
             is_error: isError,
           });
           pendingTools.delete(chunk.toolCallId);
+          pendingToolInputs.delete(chunk.toolCallId);
           break;
         }
         case "tool-error": {
@@ -752,7 +780,13 @@ async function runSlackAgentStep(
             {
               type: "task_update",
               id: errToolCallId,
-              title: meta?.status ?? "Failed",
+              title: resolveToolCardTitle({
+                input: pendingToolInputs.get(errToolCallId),
+                status: meta?.status,
+                fallback: "Failed",
+                toolName: errToolName,
+                launchLabels,
+              }),
               status: "error",
               output: truncate(errorMsg, 200),
             },
@@ -764,6 +798,7 @@ async function runSlackAgentStep(
             is_error: true,
           });
           pendingTools.delete(errToolCallId);
+          pendingToolInputs.delete(errToolCallId);
           break;
         }
       }
