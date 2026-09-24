@@ -43,7 +43,7 @@ import {
 } from "./tool.js";
 
 describe("defineTool strict + inputExamples forwarding", () => {
-  it("defaults strict to true when omitted", () => {
+  it("defaults strict to false when omitted", () => {
     const t = defineTool({
       description: "a tool",
       inputSchema: z.object({ q: z.string() }),
@@ -52,7 +52,7 @@ describe("defineTool strict + inputExamples forwarding", () => {
 
     // vi.mock("ai") makes tool() an identity function, so the returned
     // object is exactly the config passed to the underlying tool() call.
-    expect((t as any).strict).toBe(true);
+    expect((t as any).strict).toBe(false);
     expect((t as any).inputExamples).toBeUndefined();
   });
 
@@ -65,6 +65,17 @@ describe("defineTool strict + inputExamples forwarding", () => {
     });
 
     expect((t as any).strict).toBe(false);
+  });
+
+  it("forwards strict: true so a tool can opt into provider-side validation", () => {
+    const t = defineTool({
+      description: "a tool with a strict-compatible schema",
+      inputSchema: z.object({ q: z.string() }),
+      strict: true,
+      execute: async () => ({ ok: true }),
+    });
+
+    expect((t as any).strict).toBe(true);
   });
 
   it("forwards inputExamples unchanged into the tool() config", () => {
@@ -80,7 +91,7 @@ describe("defineTool strict + inputExamples forwarding", () => {
     });
 
     expect((t as any).inputExamples).toEqual(examples);
-    expect((t as any).strict).toBe(true);
+    expect((t as any).strict).toBe(false);
   });
 
   it("still injects strict when defineTool-only metadata fields are present", () => {
@@ -92,7 +103,7 @@ describe("defineTool strict + inputExamples forwarding", () => {
       execute: async () => ({ ok: true }),
     });
 
-    expect((t as any).strict).toBe(true);
+    expect((t as any).strict).toBe(false);
     expect((t as any).__requiredCredentials).toEqual(["some_key"]);
   });
 });
