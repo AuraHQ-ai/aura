@@ -150,6 +150,12 @@ export function createBigQueryTools(context?: ScheduleContext) {
     sql: z
       .string()
       .describe("The SQL query to execute (BigQuery Standard SQL, SELECT/WITH only)"),
+    label: z
+      .string()
+      .max(60)
+      .describe(
+        'Human-readable intent for the Slack tool card: the QUESTION this query answers, not the table name. Verb-first, no trailing period, never generic. Good: "counting Stripe MRR for churned ES customers". Bad: "query subscriptions table". Examples: "counting Stripe MRR for churned ES customers", "listing unpaid invoices this week", "comparing FR vs ES conversion", "ranking top churn reasons"',
+      ),
     max_rows: z
       .number()
       .min(1)
@@ -472,12 +478,14 @@ export function createBigQueryTools(context?: ScheduleContext) {
           input: {
             sql: "SELECT status, COUNT(*) AS n FROM `project.crm.leads` WHERE created_at >= '2026-01-01' GROUP BY status ORDER BY n DESC",
             max_rows: 100,
+            label: "counting leads by status this year",
           },
         },
         {
           input: {
             sql: "WITH recent AS (SELECT * FROM `project.analytics.events` WHERE event_date >= DATE_SUB(CURRENT_DATE(), INTERVAL 7 DAY)) SELECT event_name, COUNT(*) AS total FROM recent GROUP BY event_name",
             max_rows: 50,
+            label: "ranking events from the last 7 days",
           },
         },
       ],

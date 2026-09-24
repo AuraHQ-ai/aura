@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   TOOL_CARD_LABEL_MAX_CHARS,
+  extractLaunchId,
+  formatPollerCardTitle,
+  rememberLaunchLabel,
+  rememberLaunchLabelFromCall,
   resolveToolCardTitle,
   sanitizeToolCardLabel,
 } from "./tool-card-title.js";
@@ -75,5 +79,84 @@ describe("resolveToolCardTitle", () => {
       status: staticStatus,
       fallback: "Working on it...",
     })).toBe("y".repeat(TOOL_CARD_LABEL_MAX_CHARS));
+  });
+
+  it("reuses a cached launcher label for pollers and misses to static status", () => {
+    const cache = new Map<string, string>();
+    expect(rememberLaunchLabelFromCall({
+      cache,
+      toolName: "run_command_detached",
+      input: { command: "git pull", label: "pulling latest git" },
+      output: { id: "abcdef12", pid: 9 },
+    })).toBe(true);
+    expect(rememberLaunchLabelFromCall({
+      cache,
+      toolName: "dispatch_cursor_agent",
+      input: { label: "fixing stream-age-split bug in respond.ts" },
+      output: { agent_id: "bc-123", id: "bc-123" },
+    })).toBe(true);
+
+    expect(resolveToolCardTitle({
+      input: { id: "abcdef12" },
+      status: "Checking command...",
+      fallback: "Working on it...",
+      toolName: "check_command",
+      launchLabels: cache,
+    })).toBe("checking job 'pulling latest git'");
+
+    expect(resolveToolCardTitle({
+      input: { agent_id: "bc-123" },
+      status: "Checking agent status...",
+      fallback: "Working on it...",
+      toolName: "check_cursor_agent",
+      launchLabels: cache,
+    })).toBe("checking agent 'fixing stream-age-split bug in respond.ts'");
+
+    expect(resolveToolCardTitle({
+      input: { id: "deadbeef" },
+      status: "Checking command...",
+      fallback: "Working on it...",
+      toolName: "check_command",
+      launchLabels: cache,
+    })).toBe("Checking command...");
+  });
+
+  it("does not populate the launch-label cache without an id or a label", () => {
+    const cache = new Map<string, string>();
+    expect(rememberLaunchLabelFromCall({
+      cache,
+      toolName: "run_command",
+      input: { command: "echo ok", label: "echoing ok" },
+      output: { ok: true, exit_code: 0 },
+    })).toBe(false);
+    expect(rememberLaunchLabelFromCall({
+      cache,
+      toolName: "run_command_detached",
+      input: { command: "sleep 1" },
+      output: { id: "abcdef12" },
+    })).toBe(false);
+    expect(rememberLaunchLabelFromCall({
+      cache,
+      toolName: "web_search",
+      input: { query: "x", label: "should not cache" },
+      output: { id: "not-a-launcher" },
+    })).toBe(false);
+    expect(cache.size).toBe(0);
+  });
+
+  it("populates the cache from a timed-out run_command result id", () => {
+    const cache = new Map<string, string>();
+    expect(rememberLaunchLabelFromCall({
+      cache,
+      toolName: "run_command",
+      input: { command: "sleep 300", label: "  pulling latest git  " },
+      output: { ok: false, id: "abcdef12", pid: 44, error: "timed out" },
+    })).toBe(true);
+    expect(cache.get("abcdef12")).toBe("pulling latest git");
+    expect(extractLaunchId({ agent_id: "bc-9" })).toBe("bc-9");
+    expect(rememberLaunchLabel(cache, "bc-9", "fixing stream-age-split")).toBe(true);
+    expect(formatPollerCardTitle("agent", "fixing stream-age-split")).toBe(
+      "checking agent 'fixing stream-age-split'",
+    );
   });
 });

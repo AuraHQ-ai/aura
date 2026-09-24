@@ -18,7 +18,7 @@ import {
   isMsgTooLong,
 } from "../lib/slack-messaging.js";
 import { getDetachedCommandSuspendState, getSlackMeta } from "../lib/tool.js";
-import { resolveToolCardTitle } from "../lib/tool-card-title.js";
+import { rememberLaunchLabelFromCall, resolveToolCardTitle } from "../lib/tool-card-title.js";
 import {
   startTurnMarker,
   finishTurnMarker,
@@ -907,6 +907,7 @@ export async function generateResponse(
   const toolCallRecords: ToolCallRecord[] = [];
   const pendingToolInputs = new Map<string, { name: string; input: string }>();
   const optimisticToolCards = new Map<string, { title: string }>();
+  const launchLabels = new Map<string, string>();
   // ── Duplicate final message suppression (issue #1343) ───────────────
   // Full (untruncated) inputs of in-flight Slack posting tool calls, so a
   // successful post to THIS turn's own destination can be recorded.
@@ -1060,6 +1061,8 @@ export async function generateResponse(
       input: opts.input,
       status: slackMeta?.status,
       fallback: cached ?? opts.fallback,
+      toolName: opts.toolName,
+      launchLabels,
     });
   }
 
@@ -1659,6 +1662,12 @@ export async function generateResponse(
             fallback: "Done",
           });
           const output = chunk.output;
+          rememberLaunchLabelFromCall({
+            cache: launchLabels,
+            toolName: chunk.toolName,
+            input: pending ? parsePendingToolInput(pending.input) : (chunk as any).input,
+            output,
+          });
           const isError = output && typeof output === "object" &&
             "ok" in output && output.ok === false;
 
