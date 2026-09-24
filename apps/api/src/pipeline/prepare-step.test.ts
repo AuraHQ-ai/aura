@@ -59,8 +59,10 @@ vi.mock("../lib/langfuse.js", () => ({
 
 import {
   createPrepareStep,
+  detectToolCallLoop,
   getProviderThinkingOptions,
   resolveProviderThinkingOptions,
+  TOOL_LOOP_THRESHOLD,
 } from "./prepare-step.js";
 import type { ModelMessage } from "ai";
 
@@ -685,5 +687,109 @@ describe("createPrepareStep leaked tool-call markup (issue #1515)", () => {
       ([params]) => params.errorCode === "tool_call_markup_leaked",
     );
     expect(leakCalls).toHaveLength(0);
+  });
+});
+
+function searchSteps(count: number, text = ""): Array<{ text: string; toolCalls: Array<{ toolName: string }> }> {
+  return Array.from({ length: count }, (_, i) => ({
+    text,
+    toolCalls: [{ toolName: "search_messages", toolCallId: `call-${i}` } as any],
+  }));
+}
+
+describe("detectToolCallLoop (issue #1524)", () => {
+  it("returns null below the threshold and when text interrupts the streak", () => {
+    expect(detectToolCallLoop(searchSteps(TOOL_LOOP_THRESHOLD - 1))).toBeNull();
+    expect(
+      detectToolCallLoop([
+        ...searchSteps(TOOL_LOOP_THRESHOLD, "still searching"),
+      ]),
+    ).toBeNull();
+    expect(
+      detectToolCallLoop([
+        ...searchSteps(8),
+        { text: "partial update", toolCalls: [] },
+        ...searchSteps(8),
+      ]),
+    ).toBeNull();
+  });
+
+  it("detects a silent streak of the same tool at the threshold", () => {
+    expect(detectToolCallLoop(searchSteps(TOOL_LOOP_THRESHOLD))).toEqual({
+      toolName: "search_messages",
+      callCount: TOOL_LOOP_THRESHOLD,
+    });
+  });
+});
+
+describe("createPrepareStep tool-call loop (issue #1524)", () => {
+  const messages: ModelMessage[] = [{ role: "user", content: "find the deploy" }];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    invocationLockMocks.isInvocationCurrent.mockResolvedValue(true);
+    turnDeadlineMocks.spawnTurnContinuationJob.mockResolvedValue(true);
+  });
+
+  it("injects a stop/summarize nudge when the same tool repeats without text", async () => {
+    const prepareStep = createPrepareStep({
+      stablePrefix: "PREFIX",
+      channelId: "C0123456",
+      userId: "U0999",
+    });
+
+    const below = await prepareStep({
+      stepNumber: TOOL_LOOP_THRESHOLD - 1,
+      steps: searchSteps(TOOL_LOOP_THRESHOLD - 1),
+      messages,
+    });
+    expect(below?.instructions).toBeUndefined();
+
+    const tripped = await prepareStep({
+      stepNumber: TOOL_LOOP_THRESHOLD,
+      steps: searchSteps(TOOL_LOOP_THRESHOLD),
+      messages,
+    });
+    expect(tripped?.instructions).toContain("tool loop");
+    expect(tripped?.instructions).toContain("search_messages");
+    expect(tripped?.instructions).toContain(String(TOOL_LOOP_THRESHOLD));
+    expect(tripped?.activeTools).toBeUndefined();
+    expect(tripped?.toolChoice).toBeUndefined();
+
+    const loopCalls = errorLoggerMocks.logError.mock.calls.filter(
+      ([params]) => params.errorCode === "tool_call_loop",
+    );
+    expect(loopCalls).toHaveLength(1);
+    expect(loopCalls[0][0]).toMatchObject({
+      errorName: "ToolCallLoop",
+      channelId: "C0123456",
+      userId: "U0999",
+      context: expect.objectContaining({
+        toolName: "search_messages",
+        callCount: TOOL_LOOP_THRESHOLD,
+      }),
+    });
+  });
+
+  it("does not inject the loop nudge past the hard deadline", async () => {
+    const prepareStep = createPrepareStep({
+      stablePrefix: "PREFIX",
+      turnDeadlines: { softDeadlineMs: 0, hardDeadlineMs: 0 },
+    });
+
+    const result = await prepareStep({
+      stepNumber: 20,
+      steps: searchSteps(TOOL_LOOP_THRESHOLD),
+      messages,
+    });
+
+    expect(result?.toolChoice).toBe("none");
+    expect(result?.instructions).toContain("wall-clock budget is exhausted");
+    expect(result?.instructions).not.toContain("tool loop");
+    expect(
+      errorLoggerMocks.logError.mock.calls.some(
+        ([params]) => params.errorCode === "tool_call_loop",
+      ),
+    ).toBe(false);
   });
 });

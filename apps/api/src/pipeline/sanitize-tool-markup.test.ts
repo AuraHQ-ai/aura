@@ -8,6 +8,7 @@ import {
   repairLeakedToolCall,
   salvageLeakedToolCall,
   sanitizeAssistantToolMarkup,
+  stripLeakedToolNameFragments,
   stripToolCallMarkup,
 } from "./sanitize-tool-markup.js";
 
@@ -181,5 +182,53 @@ describe("sanitizeAssistantToolMarkup (issue #1515)", () => {
     expect(text).toContain("Sure.");
     expect(text).not.toContain("<tool_call>");
     expect(result.messages.some((m) => m.role === "tool")).toBe(false);
+  });
+});
+
+const HISTORY_TOOLS = ["read_channel_history", "read_dm_history", "search_messages"];
+
+describe("stripLeakedToolNameFragments (issue #1524)", () => {
+  it("neutralizes a bare `_history` fragment from read_channel_history", () => {
+    const result = stripLeakedToolNameFragments("I'll look.\n_history\nDone.", HISTORY_TOOLS);
+    expect(result.stripped).toBe(true);
+    expect(result.text).toContain("I'll look.");
+    expect(result.text).toContain("Done.");
+    expect(result.text).not.toContain("_history");
+    expect(result.samples.join("")).toContain("_history");
+  });
+
+  it("strips a full registry tool name left as the entire reply", () => {
+    const result = stripLeakedToolNameFragments("read_channel_history", HISTORY_TOOLS);
+    expect(result.stripped).toBe(true);
+    expect(result.text.trim()).toBe("");
+  });
+
+  it("leaves ordinary prose that mentions history without an underscore prefix", () => {
+    const text = "I'll check the channel history and report back.";
+    expect(stripLeakedToolNameFragments(text, HISTORY_TOOLS)).toEqual({
+      text,
+      stripped: false,
+      samples: [],
+    });
+  });
+
+  it("does nothing when no tool registry is provided", () => {
+    expect(stripLeakedToolNameFragments("_history")).toEqual({
+      text: "_history",
+      stripped: false,
+      samples: [],
+    });
+  });
+});
+
+describe("createToolMarkupBuffer bare tool-name fragments (issue #1524)", () => {
+  it("strips `_history` and a split `read_channel` + `_history` name before emit", () => {
+    const buf = createToolMarkupBuffer(HISTORY_TOOLS);
+    expect(buf.push("I'll look.\n")).toBe("I'll look.\n");
+    expect(buf.push("_history\n")).toBe("\n");
+    expect(buf.push("read_channel")).toBe("");
+    expect(buf.push("_history\nDone.")).toBe("\nDone.");
+    expect(buf.flush()).toBe("");
+    expect(buf.didLeak()).toBe(true);
   });
 });

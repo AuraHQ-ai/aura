@@ -762,9 +762,6 @@ export async function generateResponse(
   // Declared before the agent so the getAccumulatedText closure below is
   // always safe to invoke; appended to in handleTextDelta during streaming.
   let accumulatedText = "";
-  // Issue #1515: hold ChatML `<tool_call>` XML split across text-deltas so
-  // it never reaches Slack (or the persisted `raw` / continuation text).
-  const toolMarkupBuffer = createToolMarkupBuffer();
   let toolMarkupLeakLogged = false;
 
   // ── Build agent ──────────────────────────────────────────────────────
@@ -782,6 +779,11 @@ export async function generateResponse(
     // own "remaining work" promises verbatim (issue #1336).
     getAccumulatedText: () => accumulatedText,
   });
+
+  // Issue #1515 / #1524: hold ChatML `<tool_call>` XML split across
+  // text-deltas and strip bare registry names / `_suffix` fragments
+  // (`_history`) so they never reach Slack (or the persisted `raw`).
+  const toolMarkupBuffer = createToolMarkupBuffer(Object.keys(tools));
 
   const configuredTaskDisplayMode = normalizeTaskDisplayMode(
     (await getSettingJSON<SlackTaskDisplayMode>("slack_task_display_mode", "timeline")) ?? "timeline",
@@ -1235,7 +1237,7 @@ export async function generateResponse(
     logError({
       errorName: "ToolCallMarkupLeaked",
       errorMessage:
-        "Model emitted raw ChatML tool-call markup in assistant text; stripped before Slack delivery",
+        "Model emitted raw ChatML tool-call markup or bare tool-name fragments in assistant text; stripped before Slack delivery",
       errorCode: "tool_call_markup_leaked",
       channelId,
       userId: options.recipientUserId,

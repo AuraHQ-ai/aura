@@ -150,6 +150,12 @@ function mockAgentStreams(results: any[]) {
           detail: (input: any) => input.command,
         },
       },
+      read_channel_history: {
+        slack: { status: "Reading channel history..." },
+      },
+      search_messages: {
+        slack: { status: "Searching messages..." },
+      },
     },
     modelId: "test-model",
     getStepModelIds: () => ["test-model"],
@@ -2654,5 +2660,37 @@ describe("generateResponse deferred stream creation (issue #1012)", () => {
     expect(vi.mocked(logError).mock.calls.some(
       ([params]) => params.errorCode === "tool_call_markup_leaked",
     )).toBe(true);
+  });
+
+  it("strips bare tool-name fragments like _history from Slack text (issue #1524)", async () => {
+    const streamer = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([streamer]);
+
+    mockAgentStream((async function* () {
+      yield { type: "text-delta", text: "I'll look at the channel.\n" };
+      yield { type: "text-delta", text: "_history" };
+      yield { type: "text-delta", text: "\nread_channel" };
+      yield { type: "text-delta", text: "_history\nThat's the latest." };
+    })());
+
+    const result = await generateResponse(baseOptions(slackClient));
+
+    expect(result.raw).toContain("I'll look at the channel.");
+    expect(result.raw).toContain("That's the latest.");
+    expect(result.raw).not.toContain("_history");
+    expect(result.raw).not.toContain("read_channel_history");
+
+    const posted = streamer.append.mock.calls.flatMap((c) => c[0]?.chunks ?? []);
+    const markdown = posted
+      .filter((chunk: any) => chunk.type === "markdown_text")
+      .map((chunk: any) => chunk.text)
+      .join("");
+    expect(markdown).toContain("I'll look at the channel.");
+    expect(markdown).toContain("That's the latest.");
+    expect(markdown).not.toContain("_history");
+    expect(markdown).not.toContain("read_channel_history");
   });
 });

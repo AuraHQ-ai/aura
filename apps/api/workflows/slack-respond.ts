@@ -142,6 +142,8 @@ export interface TurnDeadlineStepState {
   hardDeadlineReached: boolean;
   /** Whether the hard-deadline continuation job was actually spawned. */
   continuationSpawned: boolean;
+  /** Completed SDK-style steps so far (issue #1524 tool-loop detection). */
+  previousSteps: Array<{ text?: string; toolCalls?: Array<{ toolName?: string }> }>;
 }
 
 /**
@@ -253,6 +255,8 @@ async function runSlackAgentStep(
     TURN_SOFT_DEADLINE_MESSAGE,
     TURN_HARD_DEADLINE_MESSAGE_WITH_CONTINUATION,
     TURN_HARD_DEADLINE_MESSAGE_WITHOUT_CONTINUATION,
+    detectToolCallLoop,
+    formatToolLoopMessage,
   } = await import("../src/pipeline/prepare-step.js");
   const { isInvocationCurrent } = await import("../src/lib/invocation-lock.js");
   const { executionContext } = await import("../src/lib/tool.js");
@@ -262,6 +266,7 @@ async function runSlackAgentStep(
   const { compactMessages, summarizeEvictedToolResult } = await import(
     "../src/pipeline/compact-messages.js"
   );
+  const { createToolMarkupBuffer } = await import("../src/pipeline/sanitize-tool-markup.js");
   const { logger } = await import("../src/lib/logger.js");
 
   const { logError } = await import("../src/lib/error-logger.js");
@@ -362,6 +367,38 @@ async function runSlackAgentStep(
         .replace("{stepCount}", String(stepIndex))
         .replace("{limit}", String(SLACK_STEP_LIMIT)),
     );
+  }
+
+  if (!turn.hardDeadlineReached) {
+    const loop = detectToolCallLoop(turn.previousSteps ?? []);
+    if (loop) {
+      const alreadyNudged = detectToolCallLoop(
+        (turn.previousSteps ?? []).slice(0, -1),
+      );
+      logger.warn("slackRespondWorkflow: tool-call loop detected — injecting stop/summarize nudge", {
+        toolName: loop.toolName,
+        callCount: loop.callCount,
+        stepIndex,
+        channelId: input.channelId,
+      });
+      if (!alreadyNudged) {
+        logError({
+          errorName: "ToolCallLoop",
+          errorMessage:
+            `Turn called ${loop.toolName} ${loop.callCount} times without intervening text; wrap-up nudge injected`,
+          errorCode: "tool_call_loop",
+          channelId: input.channelId,
+          userId: input.userId,
+          context: {
+            toolName: loop.toolName,
+            callCount: loop.callCount,
+            step: stepIndex,
+            path: "interactive",
+          },
+        });
+      }
+      appendNudge(formatToolLoopMessage(loop));
+    }
   }
 
   const system = buildCachedSystemMessages(
@@ -629,6 +666,7 @@ async function runSlackAgentStep(
   const toolRecords: ToolCallRecord[] = [];
   let textBuffer = "";
   let lastFlush = Date.now();
+  const toolMarkupBuffer = createToolMarkupBuffer(Object.keys(tools));
 
   async function flushText(force = false): Promise<void> {
     if (!textBuffer) return;
@@ -638,6 +676,15 @@ async function runSlackAgentStep(
     lastFlush = Date.now();
     await append([{ type: "markdown_text", text: chunk }]);
     await splitIfNeeded();
+  }
+
+  async function flushPendingText(force = false): Promise<void> {
+    const rest = toolMarkupBuffer.flush();
+    if (rest) {
+      text += rest;
+      textBuffer += rest;
+    }
+    await flushText(force);
   }
 
   try {
@@ -673,8 +720,10 @@ async function runSlackAgentStep(
       resetTimer();
       switch (chunk.type) {
         case "text-delta": {
-          text += chunk.text;
-          textBuffer += chunk.text;
+          const emit = toolMarkupBuffer.push(chunk.text);
+          if (!emit) break;
+          text += emit;
+          textBuffer += emit;
           await flushText();
           break;
         }
@@ -685,7 +734,7 @@ async function runSlackAgentStep(
           // had no id and poisoned the whole append batch (issue #1348).
           const startId = (chunk as any).toolCallId ?? (chunk as any).id;
           if (typeof startId !== "string") break;
-          await flushText(true);
+          await flushPendingText(true);
           await append([
             {
               type: "task_update",
@@ -708,7 +757,7 @@ async function runSlackAgentStep(
           try {
             details = meta?.detail?.(inputArgs);
           } catch { /* partial input args */ }
-          await flushText(true);
+          await flushPendingText(true);
           await append([
             {
               type: "task_update",
@@ -804,7 +853,7 @@ async function runSlackAgentStep(
       }
     }
 
-    await flushText(true);
+    await flushPendingText(true);
 
     // Mid-tool Stop (issue #1355): the abort may end the stream gracefully
     // (no throw) with the SDK surfacing an AbortError via onError. Resolve
@@ -1160,6 +1209,7 @@ export async function slackRespondWorkflow(input: SlackRespondWorkflowInput) {
       softDeadlineReached,
       hardDeadlineReached,
       continuationSpawned,
+      previousSteps: steps,
     });
 
     if (r.superseded) {
