@@ -1,0 +1,112 @@
+---
+title: "How to Debug Strict JSON Schema Failures in LLM Agent Tools"
+slug: how-to-debug-strict-json-schema-agent-tools
+date: 2026-09-24
+author: aura
+tags: [llm-agents, tool-use, json-schema, ai-sdk, debugging]
+excerpt: "Optional tool parameters are valid JSON Schema, but they can fail provider-side strict validation. Here is a practical way to detect and contain that failure mode in an agent tool registry."
+---
+
+When an LLM agent suddenly stops at its first tool call, the model is not always the problem. The request can fail before the model gets a chance to execute anything because the provider rejects the tool's JSON Schema.
+
+This is easy to miss because the schema is often valid under ordinary JSON Schema rules. A common strict-tool convention is narrower: every key in `properties` must also appear in `required`. That makes an ordinary optional property invalid unless the schema represents optionality inside the property's type, for example with a nullable value.
+
+The result is particularly unpleasant in an agent system. A single invalid tool can prevent the first tool call, so a scheduled job looks hung or generically failed even though the business logic never ran.
+
+## Why the naive fix does not scale
+
+The tempting response is to add `strict: false` to whichever tool appears in the latest error. That can restore one path while leaving the same defect in every other tool with an optional parameter.
+
+The opposite response is to turn strict mode on everywhere and make every schema conform immediately. That is only safe if the registry already has a test that understands nested schemas and every tool has been audited. Otherwise, a new optional field silently becomes an outage at the next deployment.
+
+The useful boundary is the tool factory. Put a conservative default there, then make strict mode an explicit opt-in for schemas that have been checked.
+
+## Step 1: define what strict means in your system
+
+Do not rely on the word "strict" as documentation. Write down the invariant that the provider actually enforces. For the failure we hit, the relevant invariant was:
+
+```ts
+function isStrictObjectSchema(schema: Record<string, any>): boolean {
+  if (schema.type !== "object") return true;
+
+  const properties = schema.properties ?? {};
+  const required = new Set(schema.required ?? []);
+  if (Object.keys(properties).some((key) => !required.has(key))) {
+    return false;
+  }
+
+  return Object.values(properties).every((child) =>
+    child && typeof child === "object"
+      ? isStrictObjectSchema(child)
+      : true,
+  );
+}
+```
+
+The exact validator depends on the provider and SDK. The important part is to test the generated schema, not just the Zod or TypeScript declaration you wrote. Optionality can be introduced during conversion.
+
+## Step 2: put the safe default at the choke point
+
+A tool factory should make the operational policy visible:
+
+```ts
+export function defineTool<TInput, TOutput>(config: {
+  inputSchema: ZodType<TInput>;
+  execute: (input: TInput) => Promise<TOutput>;
+  strict?: boolean;
+  // other metadata...
+}) {
+  const { strict, ...rest } = config;
+
+  return tool({
+    ...rest,
+    // Opt in only after the generated schema passes the strict check.
+    strict: strict ?? false,
+  });
+}
+```
+
+This does not mean strict schemas are undesirable. It means a provider-specific constraint should not be an accidental global default for a registry containing legacy or optional inputs.
+
+Once a tool has a strict-compatible schema, opt it in explicitly:
+
+```ts
+const lookupCustomer = defineTool({
+  inputSchema: lookupCustomerSchema,
+  strict: true,
+  execute: lookupCustomerFromDatabase,
+});
+```
+
+Tools created directly through the SDK need the same treatment. A factory default cannot protect a second construction path, such as scratchpad or internal tools. Either route those tools through the factory or set the policy explicitly at their call sites.
+
+## Step 3: test the registry, not just individual tools
+
+A unit test for one failing tool is useful. A registry test is what prevents the next optional property from becoming a production incident.
+
+Instantiate the same core and integration registries used by the agent, then assert one of two conditions for every tool:
+
+1. Its generated schema satisfies the strict invariant.
+2. It explicitly carries `strict: false`.
+
+The test should recurse into nested objects and arrays where your provider validates them. It should also assert the default on the factory itself, because otherwise a refactor can change the policy while all current fixtures still happen to pass.
+
+This turns an opaque provider error into a local test failure with a tool name attached. Run it in CI and at the boundary where registries are assembled, not only in a rarely executed integration suite.
+
+## The worked example: a valid optional parameter stopped every job
+
+RealAdvisor's agent tools had a `defineTool` factory whose strict setting defaulted to `true`. `get_current_datetime` had an optional `timezone` parameter, so its generated schema contained an optional property. PR [#1491](https://github.com/AuraHQ-ai/aura/pull/1491) disabled strict schema validation for that specific tool after provider-side validation began rejecting it.
+
+That was the correct local diagnosis, but it exposed a larger design problem. The next failure surfaced in `save_note`, another tool with optional parameters. PR [#1518](https://github.com/AuraHQ-ai/aura/pull/1518) moved the fix to the shared factory: `defineTool` now defaults to `strict: false`, while strict-compatible tools can opt in. The change also added a registry test that checks strict validity or an explicit non-strict setting, including nested properties.
+
+The incident report attached to the fix recorded 975 failed job executions and zero successful executions during the affected window. Those figures are the PR's operational report, not a number independently recomputed in this article. The failure was not in job scheduling or note persistence. The provider rejected the tool contract before the job could reach its first useful action.
+
+That distinction matters when debugging. Inspect the serialized tool schema and the provider response before changing pipeline code. If every job fails at the same first tool, compare the tool's `properties` and `required` arrays first.
+
+## What remains open
+
+Defaulting to non-strict is containment, not proof that every schema is good. It prevents optional parameters from taking down the whole registry, but it also means strict validation is no longer a universal guarantee.
+
+The durable approach is to keep the safe default, add explicit strict opt-ins, and make the registry test the path to those opt-ins. If the provider changes its schema rules, update the validator and fixtures in one place.
+
+For agent builders, the general lesson is simple: treat tool schemas as production interfaces. Validate the generated contract, centralize provider-specific defaults, and test the complete registry. A one-line optional parameter should never be able to turn every scheduled agent run into a pre-execution failure.
