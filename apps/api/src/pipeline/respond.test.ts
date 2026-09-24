@@ -768,6 +768,221 @@ describe("generateResponse Slack stream handling", () => {
     });
   });
 
+  function taskUpdatesFor(stream: { append: ReturnType<typeof vi.fn> }, id: string) {
+    return stream.append.mock.calls
+      .flatMap(([payload]) => payload.chunks ?? [])
+      .filter((chunk: any) => chunk.type === "task_update" && chunk.id === id);
+  }
+
+  it("uses a per-call label as the tool card title during execution and on completion", async () => {
+    const stream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+
+    mockAgentStream((async function* () {
+      yield {
+        type: "tool-call",
+        toolCallId: "call-1",
+        toolName: "run_command",
+        input: { command: "git pull", label: "pulling latest git" },
+      };
+      yield {
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "run_command",
+        output: { ok: true, exit_code: 0, stdout: "Already up to date.", stderr: "" },
+      };
+      yield { type: "text-delta", text: "Pulled." };
+    })());
+
+    await generateResponse(baseOptions(slackClient));
+
+    const updates = taskUpdatesFor(stream, "call-1");
+    expect(updates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "task_update",
+        id: "call-1",
+        title: "pulling latest git",
+        status: "in_progress",
+      }),
+      expect.objectContaining({
+        type: "task_update",
+        id: "call-1",
+        title: "pulling latest git",
+        status: "complete",
+      }),
+    ]));
+    expect(updates.every((chunk: any) => chunk.title === "pulling latest git")).toBe(true);
+  });
+
+  it("keeps the per-call label on the error re-render instead of the static status", async () => {
+    const stream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+
+    mockAgentStream((async function* () {
+      yield {
+        type: "tool-call",
+        toolCallId: "call-1",
+        toolName: "run_command",
+        input: { command: "git pull", label: "pulling latest git" },
+      };
+      yield {
+        type: "tool-error",
+        toolCallId: "call-1",
+        toolName: "run_command",
+        error: new Error("sandbox died"),
+      };
+      yield { type: "text-delta", text: "Failed to pull." };
+    })());
+
+    await generateResponse(baseOptions(slackClient));
+
+    const updates = taskUpdatesFor(stream, "call-1");
+    expect(updates).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        title: "pulling latest git",
+        status: "in_progress",
+      }),
+      expect.objectContaining({
+        title: "pulling latest git",
+        status: "error",
+        output: "sandbox died",
+      }),
+    ]));
+    expect(updates.map((chunk: any) => chunk.title)).not.toContain(
+      "Running a command in the sandbox...",
+    );
+  });
+
+  it("trims and truncates a per-call label at the render layer", async () => {
+    const stream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+    const padded = `  ${"z".repeat(72)}  `;
+
+    mockAgentStream((async function* () {
+      yield {
+        type: "tool-call",
+        toolCallId: "call-1",
+        toolName: "run_command",
+        input: { command: "true", label: padded },
+      };
+      yield {
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "run_command",
+        output: { ok: true, exit_code: 0, stdout: "", stderr: "" },
+      };
+      yield { type: "text-delta", text: "Done." };
+    })());
+
+    await generateResponse(baseOptions(slackClient));
+
+    const updates = taskUpdatesFor(stream, "call-1");
+    expect(updates.length).toBeGreaterThanOrEqual(2);
+    expect(updates.every((chunk: any) => chunk.title === "z".repeat(60))).toBe(true);
+  });
+
+  it("derives the web_search card title from the query", async () => {
+    const stream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+    const streamFn = vi.fn().mockResolvedValue(createAgentStreamResult((async function* () {
+      yield {
+        type: "tool-call",
+        toolCallId: "call-1",
+        toolName: "web_search",
+        input: { query: "latest Next.js release notes" },
+      };
+      yield {
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "web_search",
+        output: { ok: true, count: 3 },
+      };
+      yield { type: "text-delta", text: "Found it." };
+    })()));
+    agentMocks.createInteractiveAgent.mockResolvedValue({
+      agent: { stream: streamFn },
+      tools: {
+        web_search: {
+          slack: {
+            status: (input: { query?: string }) => {
+              const query = typeof input?.query === "string" ? input.query.trim() : "";
+              if (!query) return "Searching the web...";
+              const display = query.length <= 40 ? query : `${query.slice(0, 39)}…`;
+              return `searching the web: "${display}"`;
+            },
+          },
+        },
+      },
+      modelId: "test-model",
+      getStepModelIds: () => ["test-model"],
+    });
+
+    await generateResponse(baseOptions(slackClient));
+
+    const updates = taskUpdatesFor(stream, "call-1");
+    expect(updates.every((chunk: any) =>
+      chunk.title === 'searching the web: "latest Next.js release notes"',
+    )).toBe(true);
+    expect(updates).toEqual(expect.arrayContaining([
+      expect.objectContaining({ status: "in_progress" }),
+      expect.objectContaining({ status: "complete" }),
+    ]));
+  });
+
+  it("inherits the cached label on the stream-failure tombstone", async () => {
+    const stream = {
+      append: vi.fn()
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(Object.assign(new Error("invalid_blocks"), {
+          data: { error: "invalid_blocks" },
+        })),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+
+    mockAgentStream((async function* () {
+      yield {
+        type: "tool-call",
+        toolCallId: "call-1",
+        toolName: "run_command",
+        input: { command: "true", label: "pulling latest git" },
+      };
+      yield {
+        type: "tool-result",
+        toolCallId: "call-1",
+        toolName: "run_command",
+        output: { ok: true, exit_code: 0, stdout: "", stderr: "" },
+      };
+      yield { type: "text-delta", text: "Fallback text." };
+    })());
+
+    await generateResponse(baseOptions(slackClient));
+
+    expect(stream.stop).toHaveBeenCalledWith({
+      chunks: expect.arrayContaining([
+        expect.objectContaining({
+          type: "task_update",
+          id: "call-1",
+          title: "pulling latest git",
+          status: "complete",
+          output: "continuing in a new message...",
+        }),
+      ]),
+    });
+  });
+
   it("terminates an optimistic tool card if the stream errors before tool-call", async () => {
     const stream = {
       append: vi.fn().mockResolvedValue(undefined),
