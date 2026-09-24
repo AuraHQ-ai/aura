@@ -8,8 +8,10 @@ const dbMock = vi.hoisted(() => {
   const state = {
     rows: [] as Array<Record<string, unknown>>,
     whereCalls: [] as unknown[],
+    insertedValues: [] as Array<Record<string, unknown>>,
     select: vi.fn(),
     update: vi.fn(),
+    insert: vi.fn(),
   };
 
   function createQuery() {
@@ -39,6 +41,17 @@ const dbMock = vi.hoisted(() => {
   }
 
   state.select.mockImplementation(() => createQuery());
+
+  state.insert.mockImplementation(() => {
+    const query: any = {
+      values: vi.fn((arg: Record<string, unknown>) => {
+        state.insertedValues.push(arg);
+        return query;
+      }),
+      onConflictDoUpdate: vi.fn(() => Promise.resolve()),
+    };
+    return query;
+  });
 
   state.update.mockImplementation(() => {
     let setArg: Record<string, unknown> = {};
@@ -84,6 +97,7 @@ const schemaMock = vi.hoisted(() => {
       enabled: column("enabled"),
       archivedAt: column("archivedAt"),
       createdAt: column("createdAt"),
+      promptMode: column("promptMode"),
     },
     jobExecutions: {
       jobId: column("jobId"),
@@ -139,6 +153,7 @@ vi.mock("../db/client.js", () => ({
   db: {
     select: dbMock.select,
     update: dbMock.update,
+    insert: dbMock.insert,
   },
 }));
 
@@ -200,6 +215,7 @@ function baseJob(overrides: Record<string, unknown> = {}) {
     enabled: 1,
     archivedAt: null,
     createdAt: new Date("2026-05-01T00:00:00.000Z"),
+    promptMode: "task",
     ...overrides,
   };
 }
@@ -218,6 +234,7 @@ describe("list_jobs", () => {
     vi.setSystemTime(new Date("2026-05-20T08:00:00.000Z"));
     dbMock.rows = [];
     dbMock.whereCalls = [];
+    dbMock.insertedValues = [];
     vi.clearAllMocks();
   });
 
@@ -435,6 +452,7 @@ describe("update_job requested_by transfer", () => {
     vi.setSystemTime(new Date("2026-05-20T08:00:00.000Z"));
     dbMock.rows = [];
     dbMock.whereCalls = [];
+    dbMock.insertedValues = [];
     vi.clearAllMocks();
   });
 
@@ -502,4 +520,74 @@ describe("update_job requested_by transfer", () => {
     expect(result.error).toContain("Nobody Real");
     expect(dbMock.rows[0].requestedBy).toBe("U_REQUESTER");
   });
+
+  it("accepts a partial update with no prompt_mode and leaves the existing value untouched", async () => {
+    dbMock.rows = [baseJob({ promptMode: "task" })];
+
+    const result = await updateJob({
+      name: "one-shot",
+      updates: { description: "updated description only" },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(dbMock.rows[0].promptMode).toBe("task");
+    expect(dbMock.rows[0].description).toBe("updated description only");
+  });
 });
+
+async function createJobTool() {
+  const { createJobTools } = await import("./jobs.js");
+  return createJobTools(undefined, { timezone: "UTC" } as any).create_job as any;
+}
+
+describe("create_job prompt_mode", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-20T08:00:00.000Z"));
+    dbMock.rows = [];
+    dbMock.whereCalls = [];
+    dbMock.insertedValues = [];
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("rejects a call with prompt_mode omitted at the schema layer", async () => {
+    const tool = await createJobTool();
+    const parsed = tool.inputSchema.safeParse({
+      description: "Remind Joan to review PR #1284",
+      execute_in: "2 hours",
+    });
+
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(parsed.error.issues.some((issue: { path: PropertyKey[] }) =>
+        issue.path.includes("prompt_mode"),
+      )).toBe(true);
+    }
+  });
+
+  it.each(["full", "task"] as const)(
+    "persists the exact prompt_mode passed (%s)",
+    async (promptMode) => {
+      const tool = await createJobTool();
+      const input = {
+        name: `job-${promptMode}`,
+        description: "do the thing",
+        execute_in: "2 hours",
+        prompt_mode: promptMode,
+      };
+      const parsed = tool.inputSchema.parse(input);
+      const result = await tool.execute(parsed);
+
+      expect(result.ok).toBe(true);
+      expect(dbMock.insertedValues).toHaveLength(1);
+      expect(dbMock.insertedValues[0].promptMode).toBe(promptMode);
+      expect(result.message).toContain(`prompt: ${promptMode}`);
+      expect(result.message).toContain("model: medium (default)");
+    },
+  );
+});
+

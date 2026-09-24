@@ -14,7 +14,7 @@ import { sendJobOpsNotice } from "./job-notifications.js";
 import { sweepStaleTurnMarkers } from "./turn-watchdog.js";
 import { sweepStuckJobs } from "./job-watchdog.js";
 import { sweepStaleDetachedCommands } from "./detached-command-watchdog.js";
-import { scanJobFailureHealth } from "./job-health.js";
+import { scanJobConfigHealth, scanJobFailureHealth } from "./job-health.js";
 
 /**
  * Max jobs dispatched per heartbeat sweep.
@@ -484,6 +484,8 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
   let staleDetachedJobExecutionsFailed = 0;
   let jobHealthScanned = 0;
   let jobHealthAlerted = 0;
+  let jobConfigHealthFound = 0;
+  let jobConfigHealthAlerted = 0;
 
   try {
     const now = new Date();
@@ -816,6 +818,14 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
     jobHealthScanned = jobHealthResult.scanned;
     jobHealthAlerted = jobHealthResult.alerted;
 
+    // ── 7b. NULL prompt_mode config scan ─────────────────────────────────
+    // (issue #1420 — see cron/job-health.ts; never throws). Separate from
+    // the failure sweep; throttled to one ops notice per 24h.
+
+    const jobConfigHealthResult = await scanJobConfigHealth(now);
+    jobConfigHealthFound = jobConfigHealthResult.found;
+    jobConfigHealthAlerted = jobConfigHealthResult.alerted;
+
     // ── 8. Fan-out job dispatch ──────────────────────────────────────────
     // Each due job is dispatched to its own /api/execute-now invocation so it
     // runs with a fresh Vercel maxDuration budget.  On dispatch failure the
@@ -908,6 +918,8 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       staleDetachedJobExecutionsFailed,
       jobHealthScanned,
       jobHealthAlerted,
+      jobConfigHealthFound,
+      jobConfigHealthAlerted,
     });
 
     return c.json({
@@ -933,6 +945,8 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       staleDetachedJobExecutionsFailed,
       jobHealthScanned,
       jobHealthAlerted,
+      jobConfigHealthFound,
+      jobConfigHealthAlerted,
       duration,
     });
   } catch (error: any) {
