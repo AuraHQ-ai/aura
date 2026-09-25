@@ -5,7 +5,7 @@ description: "Dispatch async Cursor Cloud agents for complex multi-file code tas
 
 # Cursor Agents
 
-Aura can dispatch [Cursor](https://cursor.sh) Cloud Agents for complex multi-file code changes that would take too long in the sandbox. Agents run asynchronously in the background (3-30 minutes), create a branch, make changes, and open a PR. Results arrive via webhook DM.
+Aura can dispatch [Cursor](https://cursor.sh) Cloud Agents for complex multi-file code changes that would take too long in the sandbox. Each dispatch requires a short `label` (maximum 60 characters), shown on the Slack tool card; use a verb-first intent such as `paginating Slack history over 1000 messages`. Agents run asynchronously in the background (3-30 minutes), create a branch, make changes, and open a PR. Results arrive via webhook DM.
 
 **Required env vars:** `CURSOR_API_KEY`
 

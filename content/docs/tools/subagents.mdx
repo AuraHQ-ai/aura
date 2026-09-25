@@ -5,7 +5,7 @@ description: "Parallel fan-out for concurrent task execution."
 
 # Subagents
 
-When work can be split into independent pieces, Aura uses subagents to run them concurrently. This is how she handles tasks like checking 5 channels at once or analyzing multiple datasets in parallel.
+When work can be split into independent pieces, Aura uses subagents to run them concurrently. Each `run_subagent` call requires a short `label` (maximum 60 characters), shown on the Slack tool card; make it a verb-first description such as `sweeping 4 market channels in parallel`. This is how she handles tasks like checking 5 channels at once or analyzing multiple datasets in parallel.
 
 ## How It Works
 
