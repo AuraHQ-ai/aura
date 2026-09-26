@@ -51,6 +51,7 @@ All configuration is via environment variables, managed in Vercel's dashboard or
 | `ELEVENLABS_WEBHOOK_SECRET` | Secret for verifying ElevenLabs webhook payloads. Read from the `elevenlabs_webhook_secret` workspace setting. |
 | `CURSOR_API_KEY` | Cursor API key for dispatching Cursor cloud agents |
 | `CURSOR_WEBHOOK_SECRET` | Secret for verifying Cursor agent webhook callbacks |
+| `CURSOR_DEFAULT_MODEL` | Optional default Cursor model for `dispatch_cursor_agent` when no model is supplied |
 | `COHERE_API_KEY` | Cohere API key for reranking search results |
 | `LANGFUSE_PUBLIC_KEY` | Langfuse public key -- enables LLM tracing when set together with the secret key |
 | `LANGFUSE_SECRET_KEY` | Langfuse secret key (tracing is disabled if either key is missing) |
