@@ -212,6 +212,10 @@ A nightly consolidation job (4 AM UTC) maintains memory quality:
 
 Time-bounded memories are not expired by the cron: `valid_until` is enforced at retrieval time, so an expired memory simply stops surfacing.
 
+## Rebuilding memories
+
+When memory extraction or schema behavior changes, operators can rebuild memories from the stored conversation history with `pnpm --filter aura-api rebuild:memories` (or the equivalent `scripts/rebuild-memories.ts` entry point). The rebuild pipeline replays eligible threads chronologically, writes provenance-aware memories, and regenerates entity summaries. Review the script help and deployment runbook before running it against production data; it is an administrative maintenance operation, not a normal chat tool.
+
 ## Privacy
 
 Memory respects channel boundaries:

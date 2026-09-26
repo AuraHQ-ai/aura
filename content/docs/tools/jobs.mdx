@@ -10,7 +10,7 @@ Aura can schedule work to run in the background. Jobs come in two types:
 - **One-shot** — fires once at a scheduled time. Great for reminders and follow-ups.
 - **Recurring** — runs on a cron schedule (e.g. every weekday at 9 AM). Great for digests, monitoring, and periodic reports.
 
-The **heartbeat** runs every 30 minutes and evaluates all pending jobs. Scheduling granularity is approximately 30 minutes. Failed jobs retry 3x with 30-minute backoff, then escalate via DM.
+The **heartbeat** runs every 30 minutes and evaluates all pending jobs. Scheduling granularity is approximately 30 minutes. Failed jobs retry 3x with 30-minute backoff, then escalate via DM. Jobs without an output channel are intentionally prevented from posting to Slack; their deliverable must be a non-channel side effect such as a note, database write, or internal dispatch.
 
 ## Stuck-job watchdog
 

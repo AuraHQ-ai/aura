@@ -43,6 +43,12 @@ Simple health check. Returns `200 OK` with a timestamp. `GET /` returns basic na
 
 **Auth:** None.
 
+### `GET /api/internal/smoke`
+
+Authenticated post-deploy liveness check for configured external integrations (Slack, GitHub, BigQuery, E2B, AI Gateway, Gmail, and Cursor). Probes run in parallel with short timeouts; unconfigured integrations are reported as `skipped`. Returns `200` when no probe fails and `503` when at least one probe fails.
+
+**Auth:** `Authorization: Bearer <CRON_SECRET>`.
+
 ## Cron & Job Endpoints
 
 All protected by `Authorization: Bearer <CRON_SECRET>`.
