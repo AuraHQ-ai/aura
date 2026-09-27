@@ -13,6 +13,9 @@ Aura has access to a sandboxed Linux VM powered by [E2B](https://e2b.dev). This 
 
 ## Command tools
 
+Each command call also requires a `label`: a concise, verb-first description of the intent shown on the Slack tool card (for example, `running the API tests`). Labels are trimmed and capped at 60 characters.
+
+
 Aura has three sandbox command tools:
 
 | Tool | Use when | Behavior |
@@ -30,6 +33,7 @@ Execute a shell command in the sandboxed Linux VM.
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
 | `command` | string | **yes** | Shell command to run, e.g. `git clone https://github.com/org/repo.git` |
+| `label` | string | **yes** | Human-readable, verb-first intent for the Slack tool card; no trailing period, max 60 characters |
 | `timeout_seconds` | number | no | Timeout in seconds (default 90, max 750). Explicitly opt in to values above 90s only for headless/batch work or long-running agent commands. |
 | `workdir` | string | no | Working directory, e.g. `/home/user/repo`. Defaults to the per-user persistent home (`/mnt/aura-files/users/<user_id>/` when the GCS mount is available, otherwise `/home/user`). |
 

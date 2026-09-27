@@ -5,7 +5,9 @@ description: "Query your data warehouse, inspect schemas, browse sheets, and sea
 
 # BigQuery & Data Tools
 
-Aura connects to Google BigQuery using a base64-encoded service account JSON stored as the encrypted credential `google_bq_credentials`. Access is **strictly read-only** — only `SELECT`/`WITH` statements are accepted; DML, DDL, CALL, EXPORT, and multi-statement queries are always rejected. BigQuery tools use **Standard SQL** (`useLegacySql: false`) and a step-by-step recovery ladder to avoid malformed queries and false permission diagnoses.
+Aura connects to Google BigQuery using a base64-encoded service account JSON stored as the encrypted credential `google_bq_credentials`. Access is **strictly read-only** — only `SELECT`/`WITH` statements are accepted; DML, DDL, CALL, EXPORT, and multi-statement queries are always rejected. BigQuery tools use **Standard SQL** (`useLegacySql: false`). Query calls also require a `label`: a concise, verb-first description of the question being answered, not the table name (for example, `ranking top churn reasons`).
+
+BigQuery uses a step-by-step recovery ladder to avoid malformed queries and false permission diagnoses.
 
 **BigQuery recovery ladder (follow in order):**
 1. `bq_list_datasets`
@@ -59,6 +61,7 @@ Run a read-only SQL query against BigQuery. `SELECT`/`WITH` only — DML/DDL is 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
 | `sql` | string | **yes** | Standard SQL query (SELECT/WITH only) |
+| `label` | string | **yes** | Human-readable, verb-first question for the Slack tool card; max 60 characters |
 | `max_rows` | number | no | Max rows to return (default 100, max 1000) |
 
 **Failure-recovery guidance:**

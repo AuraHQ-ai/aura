@@ -15,6 +15,8 @@ Aura can search the web, read URLs as clean text, and automate browser interacti
 
 ## `web_search`
 
+The search card title is derived from the query automatically.
+
 Search the web for current information. Powered by [Tavily](https://tavily.com).
 
 **Required credential:** `tavily_api_key` -- stored as an encrypted credential (Dashboard > Credentials), resolved via the credential store with no environment-variable fallback. The tool description and runtime error still mention `TAVILY_API_KEY` for historical reasons, but setting that env var has no effect on the API runtime.
@@ -38,6 +40,8 @@ Fetch a URL and extract its readable text content. Use when someone pastes a lin
 
 ## `browse`
 
+The `browse` card title is based on the action being performed; in code mode, provide a clear intent in the required `label` field.
+
 Browse a webpage or automate browser interactions using [Browserbase](https://browserbase.com) (remote Chromium). Two modes:
 
 - **Simple mode** — provide a URL to navigate, screenshot, and extract content.
@@ -47,6 +51,7 @@ Returns a screenshot (base64), extracted text/HTML/accessibility tree, and conso
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
+| `label` | string | **yes** | Human-readable, verb-first intent for the Slack tool card, max 60 characters |
 | `url` | string | conditional | URL to navigate to (simple mode, mutually exclusive with `code`) |
 | `code` | string | conditional | Playwright JS code to execute (code mode, mutually exclusive with `url`) |
 | `extract` | enum | no | `text`, `accessibility`, or `html` |

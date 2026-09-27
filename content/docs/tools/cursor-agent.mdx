@@ -20,6 +20,7 @@ Dispatch an async agent to work on a code task. Returns immediately with an agen
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
 | `issue_description` | string | **yes** | Detailed description of the task |
+| `label` | string | **yes** | Human-readable, verb-first intent shown on the Slack tool card; max 60 characters |
 | `branch_prefix` | string | no | Branch prefix (default `cursor`) — agent creates `cursor/{slug}` |
 | `ref` | string | no | Git ref to base work on (default `main`) |
 | `key_files` | string[] | no | Key files for the agent to focus on |
