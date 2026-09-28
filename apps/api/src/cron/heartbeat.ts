@@ -449,6 +449,15 @@ export async function sweepOrphanedOutcomes(now = new Date()): Promise<OrphanSwe
 
 // ── Heartbeat Cron App ───────────────────────────────────────────────────────
 
+export async function selfHealTerminalRecurringJobs(): Promise<number> {
+  const terminalRecurringJobs = await db.select().from(jobs).where(and(eq(jobs.enabled, 1), inArray(jobs.status, ["completed", "failed"]), sql`(${jobs.cronSchedule} IS NOT NULL AND ${jobs.cronSchedule} != '' OR ${jobs.frequencyConfig} IS NOT NULL)`));
+  for (const job of terminalRecurringJobs) {
+    await db.update(jobs).set({ status: "pending", executeAt: null, updatedAt: new Date() }).where(eq(jobs.id, job.id));
+    logger.warn("recurring_job_self_healed_terminal_status", { jobId: job.id, jobName: job.name, previousStatus: job.status });
+  }
+  return terminalRecurringJobs.length;
+}
+
 export const heartbeatApp = new Hono();
 
 heartbeatApp.get("/api/cron/heartbeat", async (c) => {
@@ -484,11 +493,15 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
   let staleDetachedJobExecutionsFailed = 0;
   let jobHealthScanned = 0;
   let jobHealthAlerted = 0;
+  let recurringJobsSelfHealed = 0;
 
   try {
     const now = new Date();
 
-    // ── 1. Query all pending enabled jobs ────────────────────────────────
+    // ── 1. Self-heal terminal recurring jobs before querying pending work.
+    recurringJobsSelfHealed = await selfHealTerminalRecurringJobs();
+
+    // ── 2. Query all pending enabled jobs ────────────────────────────────
 
     const pendingJobs = await db
       .select()
@@ -908,6 +921,7 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       staleDetachedJobExecutionsFailed,
       jobHealthScanned,
       jobHealthAlerted,
+      recurringJobsSelfHealed,
     });
 
     return c.json({
@@ -933,6 +947,7 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       staleDetachedJobExecutionsFailed,
       jobHealthScanned,
       jobHealthAlerted,
+      recurringJobsSelfHealed,
       duration,
     });
   } catch (error: any) {

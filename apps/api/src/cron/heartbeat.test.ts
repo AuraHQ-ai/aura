@@ -1409,3 +1409,12 @@ describe("heartbeat stale running recovery", () => {
   });
 
 });
+
+describe("recurring job self-heal", () => {
+  it("resets enabled terminal recurring jobs", async () => {
+    queueDbResults([baseJob({ id: "recurring-1", cronSchedule: "0 9 * * 1-5", status: "completed", executeAt: new Date() })]);
+    const { selfHealTerminalRecurringJobs } = await import("./heartbeat.js");
+    await expect(selfHealTerminalRecurringJobs()).resolves.toBe(1);
+    expect(updateSets()).toContainEqual({ status: "pending", executeAt: null, updatedAt: expect.any(Date) });
+  });
+});
