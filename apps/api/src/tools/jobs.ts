@@ -608,6 +608,7 @@ export function createJobTools(
             .describe(
               "'task' = minimal ~2k-token task prompt (no personality/notes index). Set to null or 'full' for the standard prompt.",
             ),
+          status: z.enum(["pending", "failed", "completed", "cancelled"]).optional().describe("Administrative status update. Recurring jobs cannot be marked completed."),
         }).describe("Fields to update. Only provided fields are changed."),
       }),
       execute: async ({ job_id, name, updates }) => {
@@ -643,6 +644,11 @@ export function createJobTools(
           });
 
           const set: Record<string, unknown> = { updatedAt: new Date() };
+
+          if (updates.status === "completed" && (job.cronSchedule || job.frequencyConfig)) {
+            return { ok: false as const, error: `Recurring job "${job.name}" cannot be marked completed; disable or archive it instead.` };
+          }
+          if (updates.status !== undefined) set.status = updates.status;
 
           // Ownership transfer: only the current owner, an admin, or anyone for
           // Aura/system-owned jobs. Every notice path reads jobs.requestedBy live
