@@ -194,10 +194,10 @@ async function fetchUrlAsMarkdown(url: string): Promise<{
   };
 }
 
-// Reasoning-tier fast models (e.g. tencent/hy3) spend the whole output budget
-// on hidden reasoning tokens and return text="" with finishReason "length".
-// Keep the cap generous and fall back to the medium model if the fast one
-// still yields nothing.
+// Reasoning-tier fast models (e.g. tencent/hy3) can burn the entire output
+// budget on hidden reasoning and return text="" with finishReason "length"
+// (verified: 2048/2048 reasoning tokens on a one-line prompt). Summaries are
+// low-volume and quality-sensitive, so try medium first and fall back to fast.
 const SUMMARY_MAX_OUTPUT_TOKENS = 2_048;
 
 async function summarizeResource(input: {
@@ -228,8 +228,8 @@ Resource content:
 ${boundedContent}`;
 
   const attempts: Array<{ tier: string; getModel: () => Promise<any> }> = [
-    { tier: "fast", getModel: () => getFastModel() },
     { tier: "medium", getModel: async () => (await getMediumModel()).model },
+    { tier: "fast", getModel: () => getFastModel() },
   ];
 
   let lastFinishReason: string | undefined;
