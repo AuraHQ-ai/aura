@@ -7,6 +7,8 @@ description: "Search the web, read URLs, and browse pages with a full headless b
 
 Aura can search the web, read URLs as clean text, and automate browser interactions using a remote Chromium instance.
 
+Each `web_search` and `browse` call also requires a short `label` (maximum 60 characters). It becomes the Slack tool-card title, so use a verb-first description of the actual intent, such as `checking pricing page behind login` or `pulling latest Next.js release notes`.
+
 **When to use web tools vs Slack tools:**
 - Use `web_search` / `read_url` for external information, documentation, news.
 - Use `search_messages` or `read_channel_history` for information _inside_ the Slack workspace.

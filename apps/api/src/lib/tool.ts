@@ -6,6 +6,7 @@ import { db } from "../db/client.js";
 import { actionLog } from "@aura/db/schema";
 import { logger } from "./logger.js";
 import { capToolResult, DEFAULT_MAX_RESULT_CHARS } from "./result-cap.js";
+import type { SlackCardStatus } from "./tool-card-title.js";
 
 // ── Execution Context (AsyncLocalStorage) ────────────────────────────────────
 
@@ -50,8 +51,13 @@ export function getDetachedCommandSuspendState(): { commandId: string } | undefi
 // with the tool itself instead of drifting in separate switch blocks.
 
 export interface SlackToolMetadata<TInput = any, TOutput = any> {
-  /** Spinner label shown while tool is running, e.g. "Searching the web..." */
-  status: string;
+  /**
+   * Spinner label shown while the tool is running. A string is the static
+   * fallback (e.g. "Searching the web..."); a function derives the title
+   * from this call's input (e.g. `searching the web: "<query>"`).
+   * Per-call `label` inputs, when present, still win at the render sites.
+   */
+  status: SlackCardStatus<TInput>;
   /** Extract a short detail from input args for the in-progress card */
   detail?: (input: TInput) => string | undefined;
   /** Extract a short summary from result for the completed card */

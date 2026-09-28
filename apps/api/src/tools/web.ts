@@ -99,7 +99,12 @@ export function createWebTools() {
         }
       },
       slack: {
-        status: "Searching the web...",
+        status: (input) => {
+          const query = typeof input?.query === "string" ? input.query.trim() : "";
+          if (!query) return "Searching the web...";
+          const display = query.length <= 40 ? query : `${query.slice(0, 39)}…`;
+          return `searching the web: "${display}"`;
+        },
         detail: (input) => input.query,
         output: (result) => "ok" in result && result.ok ? `${result.count ?? 0} results` : result.error,
         sources: (result) => {

@@ -766,6 +766,12 @@ export function createSandboxTools(context?: ScheduleContext) {
           .describe(
             "The shell command to run, e.g. 'git clone https://github.com/org/repo.git' or 'cat /home/user/output.txt'",
           ),
+        label: z
+          .string()
+          .max(60)
+          .describe(
+            'Human-readable intent for what THIS command does, shown on the Slack tool card. Verb-first, no trailing period, never generic. Examples: "pulling latest git", "counting churned ES subscribers", "reading respond.ts tool-card section", "restarting the dev server", "installing project dependencies", "running the typecheck"',
+          ),
         workdir: z
           .string()
           .optional()
@@ -782,12 +788,13 @@ export function createSandboxTools(context?: ScheduleContext) {
           ),
       }),
       inputExamples: [
-        { input: { command: "cat /home/user/output.txt", timeout_seconds: 90 } },
+        { input: { command: "cat /home/user/output.txt", timeout_seconds: 90, label: "reading output.txt" } },
         {
           input: {
             command: "git status && git log --oneline -5",
             workdir: "/home/user/repo",
             timeout_seconds: 90,
+            label: "checking git status",
           },
         },
         {
@@ -795,6 +802,7 @@ export function createSandboxTools(context?: ScheduleContext) {
             command: "python analyze.py --input data.csv > results.txt 2>&1",
             workdir: "/home/user/analysis",
             timeout_seconds: 300,
+            label: "analyzing csv with python",
           },
         },
       ],
@@ -915,6 +923,12 @@ export function createSandboxTools(context?: ScheduleContext) {
           .string()
           .describe(
             "The shell command to start in the background, e.g. 'pnpm test' or 'sleep 300'.",
+          ),
+        label: z
+          .string()
+          .max(60)
+          .describe(
+            'Human-readable intent for what THIS command does, shown on the Slack tool card. Verb-first, no trailing period, never generic. Examples: "pulling latest git", "counting churned ES subscribers", "reading respond.ts tool-card section", "restarting the dev server", "installing project dependencies", "running the typecheck"',
           ),
         workdir: z
           .string()
