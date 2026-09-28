@@ -15,6 +15,7 @@ import { sweepStaleTurnMarkers } from "./turn-watchdog.js";
 import { sweepStuckJobs } from "./job-watchdog.js";
 import { sweepStaleDetachedCommands } from "./detached-command-watchdog.js";
 import { scanJobFailureHealth } from "./job-health.js";
+import { selfHealTerminalRecurringJobs } from "./recurring-self-heal.js";
 
 /**
  * Max jobs dispatched per heartbeat sweep.
@@ -448,15 +449,6 @@ export async function sweepOrphanedOutcomes(now = new Date()): Promise<OrphanSwe
 }
 
 // ── Heartbeat Cron App ───────────────────────────────────────────────────────
-
-export async function selfHealTerminalRecurringJobs(): Promise<number> {
-  const terminalRecurringJobs = await db.select().from(jobs).where(and(eq(jobs.enabled, 1), inArray(jobs.status, ["completed", "failed"]), sql`(${jobs.cronSchedule} IS NOT NULL AND ${jobs.cronSchedule} != '' OR ${jobs.frequencyConfig} IS NOT NULL)`));
-  for (const job of terminalRecurringJobs) {
-    await db.update(jobs).set({ status: "pending", executeAt: null, updatedAt: new Date() }).where(eq(jobs.id, job.id));
-    logger.warn("recurring_job_self_healed_terminal_status", { jobId: job.id, jobName: job.name, previousStatus: job.status });
-  }
-  return terminalRecurringJobs.length;
-}
 
 export const heartbeatApp = new Hono();
 
