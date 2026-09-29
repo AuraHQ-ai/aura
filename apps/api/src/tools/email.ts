@@ -1178,9 +1178,16 @@ export function createGmailEATools(context?: ScheduleContext) {
           });
 
           if (save_to_disk) {
-            const { writeToSandbox } = await import("../lib/sandbox.js");
+            const { writeToSandbox, resolveSandboxUserId } = await import(
+              "../lib/sandbox.js"
+            );
             const buf = Buffer.from(result.data, "base64");
-            const savedPath = await writeToSandbox(resolvedName, buf);
+            // Caller's sandbox (where run_command executes), not the mailbox owner's.
+            const savedPath = await writeToSandbox(
+              resolvedName,
+              buf,
+              resolveSandboxUserId(context?.userId),
+            );
             return {
               ok: true,
               saved_to_disk: true,
