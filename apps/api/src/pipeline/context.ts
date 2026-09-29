@@ -352,6 +352,14 @@ async function llmShouldRespond(
     );
 
     const answer = result.text.trim().toUpperCase();
+    // An empty answer means the model produced no visible text (e.g. a
+    // reasoning model burned the 5-token cap on hidden reasoning). That is a
+    // gate failure, not a "SKIP" verdict: route it through the fallback tiers.
+    if (!answer) {
+      throw new Error(
+        `should-respond gate returned empty output (finishReason=${result.finishReason})`,
+      );
+    }
     const shouldReply = answer.startsWith("RESPOND");
 
     logger.debug("LLM shouldRespond gate", {
