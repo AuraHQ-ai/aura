@@ -398,7 +398,7 @@ export async function resolveUserByName(
 
   // Fuzzy match fallback via fast model (for voice/STT contexts)
   try {
-    const { generateText } = await import("ai");
+    const { generateText, Output } = await import("ai");
     const { getFastModel } = await import("../lib/ai.js");
 
     const model = await getFastModel();
@@ -406,17 +406,21 @@ export async function resolveUserByName(
       .map((u) => `${u.id}: ${u.displayName || u.realName} (@${u.username})`)
       .join("\n");
 
-    const { text } = await generateText({
+    const { output } = await generateText({
       model,
       instructions:
-        "Given a list of team members and a possibly misspelled or speech-transcribed name, return ONLY the user ID (e.g. U066V1AN6) of the best match. If no reasonable match exists, return 'NONE'. Do not explain.",
+        "Given a list of team members and a possibly misspelled or speech-transcribed name, return the user ID (e.g. U066V1AN6) of the best match as userId. If no reasonable match exists, return null. Do not explain.",
       prompt: `Team members:\n${userListStr}\n\nFind: "${cleaned}"`,
-      maxOutputTokens: 50,
+      output: Output.object({
+        schema: z.object({ userId: z.string().nullable() }),
+      }),
+      maxOutputTokens: 256,
+      temperature: 0,
       telemetry: aiTelemetry("resolve-user-name"),
     });
 
-    const matchedId = text.trim();
-    if (matchedId !== "NONE" && /^U[A-Z0-9]+$/.test(matchedId)) {
+    const matchedId = output.userId?.trim() ?? null;
+    if (matchedId && /^U[A-Z0-9]+$/.test(matchedId)) {
       const matchedUser = users.find((u) => u.id === matchedId);
       if (matchedUser) {
         logger.info("resolveUserByName: fuzzy match via fast model", {
