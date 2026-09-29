@@ -5,6 +5,8 @@ import { getFastModel, withCacheControl } from "../lib/ai.js";
 import type { AppContextEntity } from "../lib/app-context.js";
 import type { ConversationContext, SlackThreadMessage } from "./slack-context.js";
 import { logger } from "../lib/logger.js";
+import { getConfig } from "../lib/settings.js";
+import { jevShouldRespond, type GateTier } from "./should-respond-jev.js";
 import { aiTelemetry, withTrace } from "../lib/langfuse.js";
 import { resolveChannelById } from "../tools/slack.js";
 
@@ -334,6 +336,49 @@ async function llmShouldRespond(
         : SHOULD_RESPOND_PROMPT_RECENTLY_ACTIVE;
 
     const userMessage = `Recent conversation:\n${conversationText}\n\nLatest message from ${senderName}:\n${context.text}\n\nShould Aura respond?`;
+
+    const tier: GateTier = coldObservation ? "cold" : isParticipant ? "participant" : "recently_active";
+
+    // Engine switch (settings key `should_respond_engine`): "jev" (default) or
+    // "haiku". Flip to "haiku" in the settings table to roll back without a deploy.
+    const engine = (await getConfig("should_respond_engine", "jev")).trim().toLowerCase();
+    if (engine !== "haiku") {
+      try {
+        const jev = await withTrace(
+          {
+            sessionId: context.threadTs ?? context.messageTs ?? context.channelId,
+            userId: context.userId,
+            tags: [`channel:${context.channelType ?? "unknown"}`, "stage:should-respond", "engine:jev"],
+          },
+          () =>
+            jevShouldRespond(
+              {
+                tier,
+                now: new Date(),
+                recent: messages,
+                latest: { ts: context.messageTs, from: senderName, text: context.text },
+              },
+              { telemetry: aiTelemetry("should-respond-jev", { tier }) },
+            ),
+        );
+        logger.debug("Jev shouldRespond gate", {
+          shouldReply: jev.respond,
+          probability: jev.probability,
+          threshold: jev.threshold,
+          tier,
+          userId: context.userId,
+          channelId: context.channelId,
+        });
+        return jev.respond;
+      } catch (jevError: any) {
+        // Jev is a single external dependency in the hot path: fall through to
+        // the typed haiku gate below rather than straight to the tier fallback.
+        logger.warn("Jev gate failed, falling back to fast-model gate", {
+          error: jevError?.message,
+          tier,
+        });
+      }
+    }
 
     const model = await getFastModel();
     // Share the turn's sessionId (thread) so the gate decision groups with the
