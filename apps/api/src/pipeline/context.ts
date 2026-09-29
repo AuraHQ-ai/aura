@@ -1,5 +1,6 @@
 import type { WebClient } from "@slack/web-api";
-import { generateText } from "ai";
+import { generateText, Output } from "ai";
+import { z } from "zod";
 import { getFastModel, withCacheControl } from "../lib/ai.js";
 import type { AppContextEntity } from "../lib/app-context.js";
 import type { ConversationContext, SlackThreadMessage } from "./slack-context.js";
@@ -208,6 +209,10 @@ export function isChannelGatedOut(
  * 3. LLM gate: Aura posted recently in the channel (fail-closed)
  * 4. Cold observation: Aura monitors but hasn't been active (fail-closed, high bar)
  */
+const shouldRespondSchema = z.object({
+  respond: z.boolean().describe("true if Aura should reply to the latest message, false to stay silent"),
+});
+
 export async function shouldRespond(
   context: MessageContext,
   conversation: ConversationContext,
@@ -252,42 +257,42 @@ const SHOULD_RESPOND_PROMPT_PARTICIPANT = `You are deciding whether Aura (a Slac
 Aura is already a participant in this conversation (she has sent messages before).
 
 Rules:
-- Answer RESPOND if the message asks a question, requests an action, continues a conversation that needs Aura's input, shares information Aura should acknowledge, or is clearly directed at Aura.
-- Answer SKIP if the message is just an acknowledgment (thanks, ok, got it, thumbs up), is directed at someone else, or is something where responding would add nothing.
-- When in doubt, lean toward RESPOND — it's better to be helpful than to ignore someone.
+- respond=true if the message asks a question, requests an action, continues a conversation that needs Aura's input, shares information Aura should acknowledge, or is clearly directed at Aura.
+- respond=false if the message is just an acknowledgment (thanks, ok, got it, thumbs up), is directed at someone else, or is something where responding would add nothing.
+- When in doubt, lean toward respond=true — it's better to be helpful than to ignore someone.
 
-Answer with a single word: RESPOND or SKIP.`;
+Return respond=true for RESPOND, respond=false for SKIP.`;
 
 const SHOULD_RESPOND_PROMPT_RECENTLY_ACTIVE = `You are deciding whether Aura (a Slack bot and team assistant) should respond to the latest message.
 
 Aura has been active in this channel recently, but is NOT necessarily a participant in this specific conversation or thread.
 
 Rules:
-- Answer RESPOND if the message asks a question, requests an action, shares information Aura should acknowledge, or is clearly directed at Aura.
-- Answer SKIP if the message is just an acknowledgment (thanks, ok, got it, thumbs up), is directed at someone else, is part of an ongoing conversation between other people that Aura is not involved in, or is something where responding would add nothing.
-- When in doubt, lean toward SKIP — Aura should not intrude on conversations she's not part of.
+- respond=true if the message asks a question, requests an action, shares information Aura should acknowledge, or is clearly directed at Aura.
+- respond=false if the message is just an acknowledgment (thanks, ok, got it, thumbs up), is directed at someone else, is part of an ongoing conversation between other people that Aura is not involved in, or is something where responding would add nothing.
+- When in doubt, lean toward respond=false — Aura should not intrude on conversations she's not part of.
 
-Answer with a single word: RESPOND or SKIP.`;
+Return respond=true for RESPOND, respond=false for SKIP.`;
 
 const SHOULD_RESPOND_PROMPT_COLD_OBSERVATION = `You are deciding whether Aura (a Slack bot and team assistant) should respond to this message in a channel she monitors but hasn't recently participated in.
 
 This is COLD observation — Aura is passively watching. The bar to respond is HIGH.
 
-Answer RESPOND only if:
+Set respond=true only if:
 - Someone is reporting a bug, error, or something broken
 - There's an urgent issue that needs immediate attention
 - Someone is explicitly asking a question Aura could answer (data, metrics, status)
 - The message directly relates to Aura's active work (bug triage, OKRs, team ops)
 
-Answer SKIP for:
+Set respond=false for:
 - General conversation, banter, casual chat
 - Messages directed at specific people
 - Status updates that don't need a response
 - Anything where Aura jumping in uninvited would be annoying
 
-When in doubt, SKIP. Being quiet is better than being noisy.
+When in doubt, respond=false. Being quiet is better than being noisy.
 
-Answer with a single word: RESPOND or SKIP.`;
+Return respond=true for RESPOND, respond=false for SKIP.`;
 
 /**
  * Ask the fast model (Haiku) whether Aura should respond to a message.
@@ -346,24 +351,18 @@ async function llmShouldRespond(
           model,
           instructions: withCacheControl(systemPrompt),
           prompt: userMessage,
-          maxOutputTokens: 5,
+          output: Output.object({ schema: shouldRespondSchema }),
+          maxOutputTokens: 256,
+          temperature: 0,
           telemetry: aiTelemetry("should-respond"),
         }),
     );
 
-    const answer = result.text.trim().toUpperCase();
-    // An empty answer means the model produced no visible text (e.g. a
-    // reasoning model burned the 5-token cap on hidden reasoning). That is a
-    // gate failure, not a "SKIP" verdict: route it through the fallback tiers.
-    if (!answer) {
-      throw new Error(
-        `should-respond gate returned empty output (finishReason=${result.finishReason})`,
-      );
-    }
-    const shouldReply = answer.startsWith("RESPOND");
+    // Typed boolean verdict. Empty/invalid output throws (NoObjectGeneratedError)
+    // and routes through the fallback tiers below instead of reading as "SKIP".
+    const shouldReply = result.output.respond;
 
     logger.debug("LLM shouldRespond gate", {
-      answer: result.text.trim(),
       shouldReply,
       userId: context.userId,
       channelId: context.channelId,
