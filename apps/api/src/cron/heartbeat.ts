@@ -15,6 +15,7 @@ import { sweepStaleTurnMarkers } from "./turn-watchdog.js";
 import { sweepStuckJobs } from "./job-watchdog.js";
 import { sweepStaleDetachedCommands } from "./detached-command-watchdog.js";
 import { scanJobFailureHealth } from "./job-health.js";
+import { scanSchedulerZeroSuccess } from "./scheduler-health.js";
 import { selfHealTerminalRecurringJobs } from "./recurring-self-heal.js";
 
 /**
@@ -485,6 +486,8 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
   let staleDetachedJobExecutionsFailed = 0;
   let jobHealthScanned = 0;
   let jobHealthAlerted = 0;
+  let schedulerZeroSuccessAlerted = 0;
+  let schedulerZeroSuccessRecovered = 0;
   let recurringJobsSelfHealed = 0;
 
   try {
@@ -821,6 +824,21 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
     jobHealthScanned = jobHealthResult.scanned;
     jobHealthAlerted = jobHealthResult.alerted;
 
+    // ── 7b. Scheduler-wide zero-success monitor ──────────────────────────
+    // (issue #1521 — see cron/scheduler-health.ts). Catches broad outages
+    // the per-job scan cannot see. Never fails the heartbeat: the scan
+    // swallows its own errors, and this wrapper is defense in depth.
+
+    try {
+      const schedulerHealth = await scanSchedulerZeroSuccess(now);
+      schedulerZeroSuccessAlerted = schedulerHealth.alerted;
+      schedulerZeroSuccessRecovered = schedulerHealth.recovered;
+    } catch (error: unknown) {
+      logger.error("scheduler_zero_success_scan_uncaught", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
     // ── 8. Fan-out job dispatch ──────────────────────────────────────────
     // Each due job is dispatched to its own /api/execute-now invocation so it
     // runs with a fresh Vercel maxDuration budget.  On dispatch failure the
@@ -913,6 +931,8 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       staleDetachedJobExecutionsFailed,
       jobHealthScanned,
       jobHealthAlerted,
+      schedulerZeroSuccessAlerted,
+      schedulerZeroSuccessRecovered,
       recurringJobsSelfHealed,
     });
 
@@ -939,6 +959,8 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       staleDetachedJobExecutionsFailed,
       jobHealthScanned,
       jobHealthAlerted,
+      schedulerZeroSuccessAlerted,
+      schedulerZeroSuccessRecovered,
       recurringJobsSelfHealed,
       duration,
     });

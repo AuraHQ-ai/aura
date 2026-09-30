@@ -15,6 +15,9 @@ import { sendJobOpsNotice, truncateJobFailureText } from "./job-notifications.js
 // within the last heartbeat interval, so each new failure is evaluated by
 // exactly one sweep — an unhealthy job that simply stays dormant does not
 // re-alert every 30 minutes.
+//
+// Scheduler-wide "every recurring job produced zero completions" is a
+// different failure mode (issue #1521) and lives in scheduler-health.ts.
 
 // ── Configurable thresholds ──────────────────────────────────────────────────
 
