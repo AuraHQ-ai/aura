@@ -67,6 +67,9 @@ import {
   getSandboxEnvNames,
   filterEnvsByAllowlist,
   filterCredentialNamesByEnvAllowlist,
+  resolveSandboxUserId,
+  warnIfUnscopedSandboxUserId,
+  AURA_SANDBOX_USER_ID,
 } from "./sandbox.js";
 
 const getSettingMock = vi.mocked(getSetting);
@@ -834,5 +837,45 @@ describe("ensureAuraTools", () => {
       expect.objectContaining({ message: "sandbox connection lost" }),
       { toolsRepo: "acme/tools", checkoutPath },
     );
+  });
+});
+
+describe("resolveSandboxUserId", () => {
+  it("returns the caller id when present", () => {
+    expect(resolveSandboxUserId("UJOAN")).toBe("UJOAN");
+  });
+
+  it("falls back to aura for heartbeat/self jobs with no caller", () => {
+    expect(resolveSandboxUserId(undefined)).toBe(AURA_SANDBOX_USER_ID);
+    expect(resolveSandboxUserId(null)).toBe(AURA_SANDBOX_USER_ID);
+    expect(resolveSandboxUserId("")).toBe(AURA_SANDBOX_USER_ID);
+  });
+});
+
+describe("warnIfUnscopedSandboxUserId", () => {
+  beforeEach(() => {
+    loggerWarnMock.mockClear();
+  });
+
+  it("warns when userId is omitted (legacy shared sandbox)", () => {
+    warnIfUnscopedSandboxUserId(undefined, "getOrCreateSandbox");
+    expect(loggerWarnMock).toHaveBeenCalledTimes(1);
+    expect(loggerWarnMock.mock.calls[0][0]).toMatch(/without userId/);
+    expect(loggerWarnMock.mock.calls[0][0]).toMatch(/e2b_sandbox_id/);
+  });
+
+  it("does not warn for aura heartbeat/self jobs", () => {
+    warnIfUnscopedSandboxUserId("aura", "getOrCreateSandbox");
+    expect(loggerWarnMock).not.toHaveBeenCalled();
+  });
+
+  it("does not warn for a real caller", () => {
+    warnIfUnscopedSandboxUserId("UJOAN", "getOrCreateSandbox");
+    expect(loggerWarnMock).not.toHaveBeenCalled();
+  });
+
+  it("does not warn in explicitly-global (allowUnscoped) contexts", () => {
+    warnIfUnscopedSandboxUserId(undefined, "getOrCreateSandbox", true);
+    expect(loggerWarnMock).not.toHaveBeenCalled();
   });
 });

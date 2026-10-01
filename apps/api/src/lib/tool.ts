@@ -6,6 +6,7 @@ import { db } from "../db/client.js";
 import { actionLog } from "@aura/db/schema";
 import { logger } from "./logger.js";
 import { capToolResult, DEFAULT_MAX_RESULT_CHARS } from "./result-cap.js";
+import type { SlackCardStatus } from "./tool-card-title.js";
 
 // ── Execution Context (AsyncLocalStorage) ────────────────────────────────────
 
@@ -50,8 +51,13 @@ export function getDetachedCommandSuspendState(): { commandId: string } | undefi
 // with the tool itself instead of drifting in separate switch blocks.
 
 export interface SlackToolMetadata<TInput = any, TOutput = any> {
-  /** Spinner label shown while tool is running, e.g. "Searching the web..." */
-  status: string;
+  /**
+   * Spinner label shown while the tool is running. A string is the static
+   * fallback (e.g. "Searching the web..."); a function derives the title
+   * from this call's input (e.g. `searching the web: "<query>"`).
+   * Per-call `label` inputs, when present, still win at the render sites.
+   */
+  status: SlackCardStatus<TInput>;
   /** Extract a short detail from input args for the in-progress card */
   detail?: (input: TInput) => string | undefined;
   /** Extract a short summary from result for the completed card */
@@ -129,10 +135,11 @@ export function defineTool<TInput, TOutput>(config: {
   requiredCredentials?: string[];
   /**
    * Provider-side strict schema validation for tool-call inputs (AI SDK
-   * BaseFunctionTool.strict). Defaults to true so malformed inputs are
-   * rejected at the tool-call layer instead of failing deep in execute().
-   * Set to false only for tools whose inputSchema can't be represented as
-   * strict JSON schema (e.g. z.record() with free-form values).
+   * BaseFunctionTool.strict). Defaults to false: most tool schemas have
+   * optional fields, and strict JSON Schema requires `required` to list
+   * every key in `properties` (#1517). Set to true only for tools whose
+   * inputSchema is already strict-compatible (no optional properties,
+   * no z.record() free-form values).
    */
   strict?: boolean;
   /**
@@ -236,7 +243,7 @@ export function defineTool<TInput, TOutput>(config: {
     }
   };
 
-  const toolConfig = { ...rest, strict: strict ?? true, execute: auditedExecute };
+  const toolConfig = { ...rest, strict: strict ?? false, execute: auditedExecute };
   const t = tool<TInput, TOutput, any>(
     toolConfig as unknown as Tool<TInput, TOutput, any>,
   );

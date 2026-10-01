@@ -109,6 +109,7 @@ vi.mock("../lib/sandbox.js", () => ({
   getSandboxEnvs: sandboxMock.getSandboxEnvs,
   filterEnvsByAllowlist: sandboxMock.filterEnvsByAllowlist,
   truncateOutput: (value: string, maxChars: number) => value.slice(0, maxChars),
+  resolveSandboxUserId: (userId?: string | null) => userId || "aura",
 }));
 
 vi.mock("../personality/system-prompt.js", () => ({

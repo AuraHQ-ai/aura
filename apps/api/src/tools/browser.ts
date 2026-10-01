@@ -66,6 +66,12 @@ export function createBrowserTools(context?: ScheduleContext, client?: WebClient
       // consumed by toModelOutput as a native image part).
       maxResultChars: 32000,
       inputSchema: z.object({
+        label: z
+          .string()
+          .max(60)
+          .describe(
+            'Human-readable intent for what THIS browse does, shown on the Slack tool card. Verb-first, no trailing period, never generic. Code-mode input is free-form Playwright JS, so this label is the only good title. Examples: "checking pricing page behind login", "extracting checkout error text", "screenshotting the onboarding flow", "verifying login still works"',
+          ),
         url: z
           .string()
           .optional()

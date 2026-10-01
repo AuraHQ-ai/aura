@@ -3,6 +3,7 @@ import type { LanguageModel, ModelMessage } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import { compactMessages, summarizeEvictedToolResult } from "./compact-messages.js";
 import { sanitizeToolCallIds } from "./sanitize-tool-ids.js";
+import { sanitizeAssistantToolMarkup } from "./sanitize-tool-markup.js";
 import { getModelCapabilities } from "../lib/model-catalog.js";
 import { isInvocationCurrent } from "../lib/invocation-lock.js";
 import { logger } from "../lib/logger.js";
@@ -476,6 +477,37 @@ export function createPrepareStep(opts: {
         + "\n\n" + systemSuffixes.join("\n\n");
     }
 
+    // --- Leaked ChatML tool-call markup (issue #1515) ---
+    // GLM-style models emit `<tool_call>…` XML as assistant text (and
+    // sometimes as a tool-call *name*). Strip it from replayed history and
+    // drop XML-named tool_use blocks so they cannot be executed. The error
+    // row carries modelId so leak rate is measurable per model.
+    const markupSanitization = sanitizeAssistantToolMarkup(messages);
+    if (markupSanitization.changed) {
+      logger.warn("prepareStep: stripped leaked tool-call markup from assistant text", {
+        stepNumber,
+        modelId: effectiveModelId,
+        strippedTextCount: markupSanitization.strippedTextCount,
+        droppedLeakedToolCallIds: markupSanitization.droppedLeakedToolCallIds,
+      });
+      logError({
+        errorName: "ToolCallMarkupLeaked",
+        errorMessage:
+          "Model emitted raw ChatML tool-call markup in assistant content; stripped before provider call",
+        errorCode: "tool_call_markup_leaked",
+        channelId: opts.channelId,
+        userId: opts.userId,
+        context: {
+          stepNumber,
+          path: opts.turnPath,
+          modelId: effectiveModelId,
+          strippedTextCount: markupSanitization.strippedTextCount,
+          droppedLeakedToolCallIds: markupSanitization.droppedLeakedToolCallIds,
+          samples: markupSanitization.samples,
+        },
+      });
+    }
+
     // --- Tool call id sanitization (issue #1376) ---
     // Malformed or orphaned tool_use / tool_result ids replayed from stored
     // history kill the whole request at the provider ("String should match
@@ -484,7 +516,7 @@ export function createPrepareStep(opts: {
     // drop orphaned tool_results and unpaired tool_uses. The error row is the
     // counter — and it carries the RAW offending ids so we finally learn the
     // actual source instead of guessing.
-    const sanitization = sanitizeToolCallIds(messages);
+    const sanitization = sanitizeToolCallIds(markupSanitization.messages);
     if (sanitization.changed) {
       const summary =
         `${sanitization.normalizedIds.length} id(s) normalized, ` +

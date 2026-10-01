@@ -18,6 +18,7 @@ import {
   isMsgTooLong,
 } from "../lib/slack-messaging.js";
 import { getDetachedCommandSuspendState, getSlackMeta } from "../lib/tool.js";
+import { rememberLaunchLabelFromCall, resolveToolCardTitle } from "../lib/tool-card-title.js";
 import {
   startTurnMarker,
   finishTurnMarker,
@@ -45,6 +46,10 @@ import {
 } from "../lib/slack-chunks.js";
 import { getSupersedeReason, interruptionNote, isInvocationCurrent } from "../lib/invocation-lock.js";
 import { getSameDestinationPostText, isSubstantialDuplicate } from "./duplicate-reply.js";
+import {
+  createToolMarkupBuffer,
+  isLeakedMarkupToolName,
+} from "./sanitize-tool-markup.js";
 
 // ── Tool I/O Persistence ─────────────────────────────────────────────────────
 // Accumulated during streaming and attached as invisible Slack message metadata
@@ -757,6 +762,10 @@ export async function generateResponse(
   // Declared before the agent so the getAccumulatedText closure below is
   // always safe to invoke; appended to in handleTextDelta during streaming.
   let accumulatedText = "";
+  // Issue #1515: hold ChatML `<tool_call>` XML split across text-deltas so
+  // it never reaches Slack (or the persisted `raw` / continuation text).
+  const toolMarkupBuffer = createToolMarkupBuffer();
+  let toolMarkupLeakLogged = false;
 
   // ── Build agent ──────────────────────────────────────────────────────
   const { agent, tools, modelId, getStepModelIds, getCompactionTotals } = await createInteractiveAgent({
@@ -898,6 +907,7 @@ export async function generateResponse(
   const toolCallRecords: ToolCallRecord[] = [];
   const pendingToolInputs = new Map<string, { name: string; input: string }>();
   const optimisticToolCards = new Map<string, { title: string }>();
+  const launchLabels = new Map<string, string>();
   // ── Duplicate final message suppression (issue #1343) ───────────────
   // Full (untruncated) inputs of in-flight Slack posting tool calls, so a
   // successful post to THIS turn's own destination can be recorded.
@@ -1027,13 +1037,46 @@ export async function generateResponse(
     }
   }
 
+  function parsePendingToolInput(raw: string | undefined): unknown {
+    if (!raw) return {};
+    try {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  function resolveCardTitle(opts: {
+    toolName?: string;
+    input?: unknown;
+    toolCallId?: string;
+    fallback: string;
+  }): string {
+    const slackMeta = opts.toolName ? getSlackMeta(tools[opts.toolName]) : undefined;
+    const cached = opts.toolCallId
+      ? optimisticToolCards.get(opts.toolCallId)?.title
+      : undefined;
+    return resolveToolCardTitle({
+      input: opts.input,
+      status: slackMeta?.status,
+      fallback: cached ?? opts.fallback,
+      toolName: opts.toolName,
+      launchLabels,
+    });
+  }
+
   function buildStreamTombstoneChunks(): SlackStreamChunk[] {
     const chunks: SlackStreamChunk[] = [];
     for (const [toolCallId, pending] of pendingToolInputs.entries()) {
-      const slackMeta = getSlackMeta(tools[pending.name]);
+      const cached = optimisticToolCards.get(toolCallId)?.title;
       chunks.push(toTaskUpdateChunk({
         id: toolCallId,
-        title: slackMeta?.status ?? "Working on it...",
+        title: cached ?? resolveCardTitle({
+          toolName: pending.name,
+          input: parsePendingToolInput(pending.input),
+          fallback: "Working on it...",
+        }),
         status: "complete",
         output: TOOL_CONTINUATION_OUTPUT,
       }));
@@ -1180,7 +1223,27 @@ export async function generateResponse(
     }
   }
 
-  async function appendTextDelta(text: string): Promise<void> {
+  function logToolMarkupLeak(path: string): void {
+    if (toolMarkupLeakLogged || !toolMarkupBuffer.didLeak()) return;
+    toolMarkupLeakLogged = true;
+    const samples = toolMarkupBuffer.samples();
+    logger.warn("Stripped leaked tool-call markup from assistant text before Slack delivery", {
+      modelId,
+      path,
+      samples,
+    });
+    logError({
+      errorName: "ToolCallMarkupLeaked",
+      errorMessage:
+        "Model emitted raw ChatML tool-call markup in assistant text; stripped before Slack delivery",
+      errorCode: "tool_call_markup_leaked",
+      channelId,
+      userId: options.recipientUserId,
+      context: { modelId, path, samples },
+    });
+  }
+
+  async function deliverAssistantText(text: string): Promise<void> {
     if (!text) return;
     // Age-based split happens at the delta boundary, before any append.
     await splitForStreamAge();
@@ -1195,6 +1258,19 @@ export async function generateResponse(
       return;
     }
     await streamTextToSlack(text);
+  }
+
+  async function appendTextDelta(text: string): Promise<void> {
+    if (!text) return;
+    const emit = toolMarkupBuffer.push(text);
+    logToolMarkupLeak("delivery");
+    await deliverAssistantText(emit);
+  }
+
+  async function flushToolMarkupBuffer(): Promise<void> {
+    const emit = toolMarkupBuffer.flush();
+    logToolMarkupLeak("delivery");
+    await deliverAssistantText(emit);
   }
 
   async function streamTextToSlack(text: string): Promise<void> {
@@ -1442,12 +1518,18 @@ export async function generateResponse(
           if (typeof toolCallId !== "string" || typeof toolName !== "string") {
             break;
           }
+          // Issue #1515: the XML blob must never be treated as a tool name.
+          if (isLeakedMarkupToolName(toolName)) {
+            break;
+          }
           if (optimisticToolCards.has(toolCallId)) {
             break;
           }
 
-          const slackMeta = getSlackMeta(tools[toolName]);
-          const title = slackMeta?.status ?? "Working on it...";
+          const title = resolveCardTitle({
+            toolName,
+            fallback: "Working on it...",
+          });
           optimisticToolCards.set(toolCallId, { title });
           const toolInputStartPayload = asAppendPayload({
             chunks: [toTaskUpdateChunk({
@@ -1467,6 +1549,27 @@ export async function generateResponse(
         }
 
         case "tool-call": {
+          if (isLeakedMarkupToolName(chunk.toolName)) {
+            logger.warn("Ignoring leaked markup tool-call — refusing to execute XML as a tool name", {
+              modelId,
+              toolCallId: chunk.toolCallId,
+            });
+            logError({
+              errorName: "ToolCallMarkupLeaked",
+              errorMessage:
+                "Model emitted a native tool-call whose name was ChatML XML; not executing",
+              errorCode: "tool_call_markup_leaked",
+              channelId,
+              userId: options.recipientUserId,
+              context: {
+                modelId,
+                path: "tool_call_name",
+                toolCallId: chunk.toolCallId,
+                sample: String(chunk.toolName).slice(0, 240),
+              },
+            });
+            break;
+          }
           // Flush any pending table buffer before tool cards
           if ((tableBuffer.length > 0 || lineCarry) && !streamingFailed) {
             const preToolFlush = flushRemainingTableBuffer();
@@ -1482,8 +1585,14 @@ export async function generateResponse(
           }
 
           const slackMeta = getSlackMeta(tools[chunk.toolName]);
-          const title = slackMeta?.status ?? "Working on it...";
           const inputArgs = (chunk as any).input ?? {};
+          const title = resolveCardTitle({
+            toolName: chunk.toolName,
+            input: inputArgs,
+            toolCallId: chunk.toolCallId,
+            fallback: "Working on it...",
+          });
+          optimisticToolCards.set(chunk.toolCallId, { title });
           let details: string | undefined;
           try { details = slackMeta?.detail?.(inputArgs); } catch { /* partial input args — safe to ignore */ }
           const toolCallPayload = asAppendPayload({
@@ -1515,7 +1624,6 @@ export async function generateResponse(
               input: inputArgs,
             });
           }
-          optimisticToolCards.delete(chunk.toolCallId);
           startLongToolSplitTimer();
 
           // Keep resetting inactivity timer during long tool execution;
@@ -1546,8 +1654,20 @@ export async function generateResponse(
 
         case "tool-result": {
           const resultSlackMeta = getSlackMeta(tools[chunk.toolName]);
-          const title = resultSlackMeta?.status ?? "Done";
+          const pending = pendingToolInputs.get(chunk.toolCallId);
+          const title = resolveCardTitle({
+            toolName: chunk.toolName,
+            input: pending ? parsePendingToolInput(pending.input) : (chunk as any).input,
+            toolCallId: chunk.toolCallId,
+            fallback: "Done",
+          });
           const output = chunk.output;
+          rememberLaunchLabelFromCall({
+            cache: launchLabels,
+            toolName: chunk.toolName,
+            input: pending ? parsePendingToolInput(pending.input) : (chunk as any).input,
+            output,
+          });
           const isError = output && typeof output === "object" &&
             "ok" in output && output.ok === false;
 
@@ -1616,7 +1736,6 @@ export async function generateResponse(
             }
           }
 
-          const pending = pendingToolInputs.get(chunk.toolCallId);
           toolCallRecords.push({
             name: chunk.toolName,
             input: pending?.input ?? "{}",
@@ -1672,8 +1791,13 @@ export async function generateResponse(
         case "tool-error": {
           const errToolName = (chunk as any).toolName;
           const errToolCallId = (chunk as any).toolCallId;
-          const errSlackMeta = getSlackMeta(tools[errToolName]);
-          const title = errSlackMeta?.status ?? "Failed";
+          const pending = pendingToolInputs.get(errToolCallId);
+          const title = resolveCardTitle({
+            toolName: errToolName,
+            input: parsePendingToolInput(pending?.input),
+            toolCallId: errToolCallId,
+            fallback: "Failed",
+          });
           const err = (chunk as any).error;
           const errorMsg = err instanceof Error ? err.message : String(err);
           const toolErrorPayload = asAppendPayload({
@@ -1692,7 +1816,6 @@ export async function generateResponse(
             }
           }
 
-          const pending = pendingToolInputs.get(errToolCallId);
           toolCallRecords.push({
             name: errToolName || "unknown",
             input: pending?.input ?? "{}",
@@ -1718,6 +1841,8 @@ export async function generateResponse(
         }
         }
       }
+
+      await flushToolMarkupBuffer();
 
       // Flush any remaining table buffer content before deciding whether the
       // completed attempt produced user-visible text.
@@ -1750,6 +1875,7 @@ export async function generateResponse(
             finishReason,
           });
           await appendTextDelta(finalResultText);
+          await flushToolMarkupBuffer();
           const recoveredTableFlush = flushRemainingTableBuffer();
           if (recoveredTableFlush && !streamingFailed) {
             currentStreamLength += recoveredTableFlush.length;

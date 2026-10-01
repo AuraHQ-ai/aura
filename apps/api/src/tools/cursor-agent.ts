@@ -23,6 +23,12 @@ export function createCursorAgentTools(context?: ScheduleContext) {
         "The agent runs in the background (3-30 min), creates a branch, makes changes, opens a PR, and results arrive via webhook DM. " +
         "Returns immediately with the agent ID — don't wait for it or poll in a loop. Save the agent ID in your reply so you can reference it later. Admin-only.",
       inputSchema: z.object({
+        label: z
+          .string()
+          .max(60)
+          .describe(
+            'Human-readable intent for what THIS agent will do, shown on the Slack tool card. Verb-first, no trailing period, never generic. Examples: "fixing stream-age-split bug in respond.ts", "adding snooze to job reminder DMs", "paginating Slack history over 1000 messages", "wiring cursor webhook retries"',
+          ),
         issue_description: z
           .string()
           .describe(
@@ -74,6 +80,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
       inputExamples: [
         {
           input: {
+            label: "paginating Slack history over 1000 messages",
             issue_description:
               "Fix the crash in apps/api/src/respond.ts when a Slack thread has more than 1000 messages: paginate the history fetch and add a regression test.",
             branch_prefix: "cursor",
@@ -82,6 +89,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
         },
         {
           input: {
+            label: "adding snooze to job reminder DMs",
             issue_description:
               "Add a 'snooze' action to job reminder DMs: new tool, DB column on jobs, and dashboard toggle.",
             branch_prefix: "cursor",
@@ -209,6 +217,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
 
           return {
             ok: true,
+            id: result.id,
             agent_id: result.id,
             branch: branchName,
             dashboard_url:

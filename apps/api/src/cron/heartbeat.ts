@@ -15,6 +15,7 @@ import { sweepStaleTurnMarkers } from "./turn-watchdog.js";
 import { sweepStuckJobs } from "./job-watchdog.js";
 import { sweepStaleDetachedCommands } from "./detached-command-watchdog.js";
 import { scanJobConfigHealth, scanJobFailureHealth } from "./job-health.js";
+import { selfHealTerminalRecurringJobs } from "./recurring-self-heal.js";
 
 /**
  * Max jobs dispatched per heartbeat sweep.
@@ -486,11 +487,15 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
   let jobHealthAlerted = 0;
   let jobConfigHealthFound = 0;
   let jobConfigHealthAlerted = 0;
+  let recurringJobsSelfHealed = 0;
 
   try {
     const now = new Date();
 
-    // ── 1. Query all pending enabled jobs ────────────────────────────────
+    // ── 1. Self-heal terminal recurring jobs before querying pending work.
+    recurringJobsSelfHealed = await selfHealTerminalRecurringJobs();
+
+    // ── 2. Query all pending enabled jobs ────────────────────────────────
 
     const pendingJobs = await db
       .select()
@@ -920,6 +925,7 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       jobHealthAlerted,
       jobConfigHealthFound,
       jobConfigHealthAlerted,
+      recurringJobsSelfHealed,
     });
 
     return c.json({
@@ -947,6 +953,7 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       jobHealthAlerted,
       jobConfigHealthFound,
       jobConfigHealthAlerted,
+      recurringJobsSelfHealed,
       duration,
     });
   } catch (error: any) {

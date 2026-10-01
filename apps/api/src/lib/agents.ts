@@ -1,4 +1,5 @@
 import { ToolLoopAgent, isStepCount, type ToolSet, type LanguageModel } from "ai";
+import { repairLeakedToolCall } from "../pipeline/sanitize-tool-markup.js";
 import type { WebClient } from "@slack/web-api";
 import type { ScheduleContext } from "@aura/db/schema";
 import {
@@ -86,6 +87,8 @@ export async function createInteractiveAgent(
     model,
     tools,
     instructions: systemMessages,
+    // Issue #1515: never execute a ChatML XML blob as a tool name.
+    experimental_repairToolCall: repairLeakedToolCall,
     stopWhen: isStepCount(STEP_LIMIT),
     telemetry: aiTelemetry("slack-chat", {
       modelId,
@@ -167,6 +170,7 @@ export async function createHeadlessAgent(options: HeadlessAgentOptions) {
     model,
     tools,
     instructions: withCacheControl(systemPrompt),
+    experimental_repairToolCall: repairLeakedToolCall,
     stopWhen: isStepCount(HEADLESS_STEP_LIMIT),
     telemetry: aiTelemetry("headless-job", {
       modelId,
@@ -225,6 +229,7 @@ export function createSubAgent(options: SubagentAgentOptions) {
     model: options.model,
     tools: options.tools,
     instructions: systemPrompt,
+    experimental_repairToolCall: repairLeakedToolCall,
     stopWhen: isStepCount(options.maxSteps ?? 50),
     telemetry: aiTelemetry("subagent"),
   });

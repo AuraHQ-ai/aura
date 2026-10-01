@@ -94,6 +94,20 @@ describe("sanitizeChunk — markdown_text / plan_update / blocks", () => {
     expect(sanitizeChunk({ type: "markdown_text", text: "hi", foo: 1 })).toEqual({ chunk: { type: "markdown_text", text: "hi" } });
   });
 
+  it("strips ChatML tool-call markup from markdown_text (issue #1515)", () => {
+    const leak =
+      "I'll check.\n<tool_call>run_command<arg_key>command</arg_key><arg_value>cat /tmp/x</arg_value></tool_call>\nDone.";
+    const r = sanitizeChunk({ type: "markdown_text", text: leak });
+    expect("chunk" in r && r.chunk.type === "markdown_text").toBe(true);
+    if ("chunk" in r && r.chunk.type === "markdown_text") {
+      expect(r.chunk.text).toContain("I'll check.");
+      expect(r.chunk.text).toContain("Done.");
+      expect(r.chunk.text).not.toContain("<tool_call>");
+      expect(r.chunk.text).not.toContain("<arg_key>");
+    }
+    expect("toolMarkupStripped" in r && r.toolMarkupStripped).toBe(true);
+  });
+
   it("plan_update requires a title", () => {
     expect(sanitizeChunk({ type: "plan_update", title: "P" })).toEqual({ chunk: { type: "plan_update", title: "P" } });
     expect(sanitizeChunk({ type: "plan_update" })).toEqual({ reason: "plan_update.title missing" });
@@ -133,8 +147,8 @@ describe("sanitizeChunks — batches", () => {
   });
 
   it("tolerates undefined / null input", () => {
-    expect(sanitizeChunks(undefined)).toEqual({ chunks: [], dropped: [] });
-    expect(sanitizeChunks(null)).toEqual({ chunks: [], dropped: [] });
+    expect(sanitizeChunks(undefined)).toEqual({ chunks: [], dropped: [], toolMarkupStripped: 0 });
+    expect(sanitizeChunks(null)).toEqual({ chunks: [], dropped: [], toolMarkupStripped: 0 });
   });
 });
 

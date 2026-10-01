@@ -20,6 +20,10 @@ export function createDateTimeTools() {
             "IANA timezone, e.g. 'Europe/Amsterdam' or 'America/New_York'. Defaults to Europe/Amsterdam.",
           ),
       }),
+      // timezone is optional — a single optional property can't be represented
+      // as strict JSON schema (every property must be in required), so
+      // provider-side strict validation stays off.
+      strict: false,
       execute: async ({ timezone }) => {
         const tz = timezone || DEFAULT_TZ;
         const now = new Date();
