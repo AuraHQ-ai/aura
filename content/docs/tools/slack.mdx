@@ -18,7 +18,7 @@ Aura's response decision happens in `apps/api/src/pipeline/index.ts` before any 
 1. **DM** -- always responds.
 2. **Explicit `@Aura` mention** -- always responds.
 3. **Addressed by name** -- always responds.
-4. **LLM gate (thread participant, recent channel activity, or cold observation)** -- a fast model decides whether a response would add value. If the gate errors, thread-participant checks fail **open** (better to over-respond than drop a thread Aura is part of); recent-activity and cold-observation checks fail **closed**.
+4. **LLM gate (thread participant, recent channel activity, or cold observation)** -- a gate decides whether a response would add value. By default the gate is **Jev** (`typesafe-ai/jev`), an evaluation model that returns a calibrated probability that Aura should reply, given the last 5 messages (with timestamps and sender names), the current time, and the tier. Aura replies when the probability meets the tier threshold: **0.35** for thread participant, **0.5** for recent channel activity, **0.8** for cold observation. If Jev errors or returns no probability, the gate falls back to the typed fast-model (Haiku) gate, which returns a structured boolean; empty fast-model output is treated as a gate failure, not as SKIP. Set the `should_respond_engine` workspace setting to `haiku` to skip Jev and roll back without a deploy (default `jev`). If the gate errors, thread-participant checks fail **open** (better to over-respond than drop a thread Aura is part of); recent-activity and cold-observation checks fail **closed**.
 
 Two workspace settings (in the `settings` table, editable via SQL with no redeploy) override these tiers:
 
@@ -39,7 +39,7 @@ DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at;
 
 ### `always_process_channels`
 
-A JSON array of channel IDs that **replace the Tier-4 cold-observation gate with an unconditional respond**. For messages that would otherwise reach cold observation, Aura responds deterministically -- no fast-model gate runs at all. Note the override only applies at Tier 4: if Aura is a thread participant or recently active in the channel, the Tier 2/3 LLM gates still run and can decide not to reply.
+A JSON array of channel IDs that **replace the Tier-4 cold-observation gate with an unconditional respond**. For messages that would otherwise reach cold observation, Aura responds deterministically -- no gate runs at all. Note the override only applies at Tier 4: if Aura is a thread participant or recently active in the channel, the Tier 2/3 LLM gates still run and can decide not to reply.
 
 Typical use: small high-signal channels where every message is worth full processing.
 
@@ -323,7 +323,7 @@ Upload a file to Slack. Two modes: pass `content` for text files (CSV, JSON, cod
 ---
 
 ### `download_slack_file`
-Download a Slack file by its file ID. Returns base64-encoded content by default. Set `save_to_disk` to write to `/home/user/downloads/` for processing with shell tools. Files over 20 MB are rejected.
+Download a Slack file by its file ID. Returns base64-encoded content by default. Set `save_to_disk` to write to `/home/user/downloads/` for processing with shell tools. Files over 20 MB are rejected. With `save_to_disk`, the file is written into the calling user's own sandbox (the same one `run_command` uses for that user, or Aura's sandbox for heartbeat/self jobs), so it is immediately visible to shell commands.
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|

@@ -66,7 +66,7 @@ Read the full content of a specific email by its message ID.
 ---
 
 ### `download_email_attachment`
-Download an attachment from a Gmail message. Returns base64 content by default, or saves to disk.
+Download an attachment from a Gmail message. Returns base64 content by default, or saves to disk. Saved files land in the calling user's sandbox (the same one `run_command` uses), not in the mailbox owner's sandbox.
 
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
