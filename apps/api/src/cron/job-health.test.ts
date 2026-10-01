@@ -37,6 +37,20 @@ const sendJobOpsNoticeMock = vi.hoisted(() =>
   vi.fn(async () => ({ ok: true, target: "ops_channel" as const })),
 );
 
+const settingsStore = vi.hoisted(() => ({
+  values: {} as Record<string, string>,
+}));
+
+const getSettingMock = vi.hoisted(() =>
+  vi.fn(async (key: string) => settingsStore.values[key] ?? null),
+);
+
+const setSettingMock = vi.hoisted(() =>
+  vi.fn(async (key: string, value: string) => {
+    settingsStore.values[key] = value;
+  }),
+);
+
 vi.mock("../db/client.js", () => ({
   db: { select: dbMock.select },
 }));
@@ -48,6 +62,11 @@ vi.mock("../lib/logger.js", () => ({
     error: vi.fn(),
     debug: vi.fn(),
   },
+}));
+
+vi.mock("../lib/settings.js", () => ({
+  getSetting: getSettingMock,
+  setSetting: setSettingMock,
 }));
 
 vi.mock("./job-notifications.js", () => ({
@@ -178,3 +197,121 @@ describe("scanJobFailureHealth", () => {
     await expect(scanJobFailureHealth(NOW)).resolves.toEqual({ scanned: 0, alerted: 0 });
   });
 });
+
+function nullPromptJob(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "job-null",
+    name: "docs-refresh",
+    requestedBy: "aura",
+    enabled: 1,
+    cronSchedule: "0 9 * * 1-5",
+    archivedAt: null,
+    promptMode: null,
+    ...overrides,
+  };
+}
+
+describe("scanJobConfigHealth", () => {
+  beforeEach(() => {
+    dbMock.results = [];
+    settingsStore.values = {};
+    vi.clearAllMocks();
+    sendJobOpsNoticeMock.mockResolvedValue({ ok: true, target: "ops_channel" });
+  });
+
+  it("reports and alerts when an enabled recurring job has NULL promptMode", async () => {
+    queueDbResults([nullPromptJob()]);
+
+    const { scanJobConfigHealth } = await import("./job-health.js");
+    const result = await scanJobConfigHealth(NOW);
+
+    expect(result).toEqual({
+      found: 1,
+      alerted: 1,
+      jobNames: ["docs-refresh"],
+    });
+    expect(sendJobOpsNoticeMock).toHaveBeenCalledTimes(1);
+    expect(sendJobOpsNoticeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: expect.stringMatching(/NULL prompt_mode[\s\S]*full ~40k[\s\S]*update_job[\s\S]*`docs-refresh`/),
+        logContext: expect.objectContaining({
+          event: "job_config_health_null_prompt_mode",
+        }),
+      }),
+    );
+    expect(setSettingMock).toHaveBeenCalledWith(
+      "job_config_health_last_notice_at",
+      NOW.toISOString(),
+      "job-config-health",
+    );
+  });
+
+  it("returns nothing when every enabled recurring job already has promptMode set", async () => {
+    queueDbResults([
+      nullPromptJob({ name: "already-task", promptMode: "task" }),
+      nullPromptJob({ id: "job-full", name: "already-full", promptMode: "full" }),
+    ]);
+
+    const { scanJobConfigHealth } = await import("./job-health.js");
+    await expect(scanJobConfigHealth(NOW)).resolves.toEqual({
+      found: 0,
+      alerted: 0,
+      jobNames: [],
+    });
+    expect(sendJobOpsNoticeMock).not.toHaveBeenCalled();
+  });
+
+  it("ignores disabled, one-shot, and archived jobs even when promptMode is NULL", async () => {
+    queueDbResults([
+      nullPromptJob(),
+      nullPromptJob({ id: "job-off", name: "disabled-digest", enabled: 0 }),
+      nullPromptJob({ id: "job-once", name: "one-shot", cronSchedule: null }),
+      nullPromptJob({
+        id: "job-arch",
+        name: "archived-digest",
+        archivedAt: new Date("2026-08-01T00:00:00.000Z"),
+      }),
+    ]);
+
+    const { scanJobConfigHealth } = await import("./job-health.js");
+    const result = await scanJobConfigHealth(NOW);
+
+    expect(result.found).toBe(1);
+    expect(result.jobNames).toEqual(["docs-refresh"]);
+    expect(sendJobOpsNoticeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not send a second notice within the 24h throttle window", async () => {
+    const { scanJobConfigHealth } = await import("./job-health.js");
+
+    queueDbResults([nullPromptJob()]);
+    await expect(scanJobConfigHealth(NOW)).resolves.toMatchObject({
+      found: 1,
+      alerted: 1,
+    });
+    expect(sendJobOpsNoticeMock).toHaveBeenCalledTimes(1);
+
+    queueDbResults([nullPromptJob()]);
+    const laterSameDay = new Date(NOW.getTime() + 12 * 60 * 60 * 1000);
+    await expect(scanJobConfigHealth(laterSameDay)).resolves.toEqual({
+      found: 1,
+      alerted: 0,
+      jobNames: ["docs-refresh"],
+    });
+    expect(sendJobOpsNoticeMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("never throws when the DB query fails", async () => {
+    dbMock.select.mockImplementationOnce(() => {
+      throw new Error("db unavailable");
+    });
+
+    const { scanJobConfigHealth } = await import("./job-health.js");
+    await expect(scanJobConfigHealth(NOW)).resolves.toEqual({
+      found: 0,
+      alerted: 0,
+      jobNames: [],
+    });
+  });
+});
+

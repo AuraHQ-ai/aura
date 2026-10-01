@@ -1,7 +1,8 @@
-import { and, desc, eq, gte, inArray, isNotNull } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, isNotNull, isNull, ne } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { jobs, jobExecutions } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
+import { getSetting, setSetting } from "../lib/settings.js";
 import { sendJobOpsNotice, truncateJobFailureText } from "./job-notifications.js";
 
 // ── Job failure health scan (issue #762) ─────────────────────────────────────
@@ -188,6 +189,154 @@ export async function scanJobFailureHealth(now = new Date()): Promise<JobHealthS
     }
   } catch (error: unknown) {
     logger.error("job_health_scan_failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  return result;
+}
+
+// ── NULL prompt_mode config scan (issue #1420) ────────────────────────────────
+//
+// create_job used to leave prompt_mode optional; omitted values stayed NULL and
+// execute-job resolved them to the full ~40k system prompt. Mechanical jobs
+// then paid ~10× more and failed ~6× more often. This sweep flags any enabled
+// recurring job that still has NULL prompt_mode so the leak cannot stay silent.
+//
+// Throttle: at most one ops notice per 24h. Heartbeat runs every ~30 min; a
+// notice every sweep would be worse than the bug. Last-notified timestamp is
+// persisted in the settings table so it survives across serverless invocations.
+
+/** Settings key storing the ISO timestamp of the last NULL-prompt_mode ops notice. */
+export const JOB_CONFIG_HEALTH_NOTICE_SETTING_KEY =
+  "job_config_health_last_notice_at";
+
+/** At most one NULL-prompt_mode notice per this window, regardless of heartbeat cadence. */
+export const JOB_CONFIG_HEALTH_NOTICE_THROTTLE_MS = 24 * 60 * 60 * 1000;
+
+/** Max job names listed in the ops notice (total count is always included). */
+const CONFIG_HEALTH_NOTICE_NAME_LIMIT = 10;
+
+export interface JobConfigHealthScanResult {
+  /** Enabled recurring non-archived jobs whose promptMode is still NULL. */
+  found: number;
+  /** 1 when an ops notice was sent this sweep, else 0. */
+  alerted: number;
+  /** Names of the offending jobs (uncapped — the notice truncates the list). */
+  jobNames: string[];
+}
+
+function isNullPromptModeRecurringJob(job: {
+  enabled: number | null;
+  cronSchedule: string | null;
+  archivedAt: Date | null;
+  promptMode: string | null;
+}): boolean {
+  return (
+    job.enabled === 1 &&
+    job.cronSchedule != null &&
+    job.cronSchedule !== "" &&
+    job.archivedAt == null &&
+    job.promptMode == null
+  );
+}
+
+/**
+ * Scan enabled recurring jobs whose prompt_mode is still NULL (resolves to
+ * the full ~40k prompt) and send one ops notice listing up to 10 names.
+ *
+ * Never throws — the heartbeat must not fail because of this scan.
+ * Throttled to at most one notice per 24h via the settings table.
+ */
+export async function scanJobConfigHealth(
+  now = new Date(),
+): Promise<JobConfigHealthScanResult> {
+  const result: JobConfigHealthScanResult = { found: 0, alerted: 0, jobNames: [] };
+
+  try {
+    const rows = await db
+      .select({
+        id: jobs.id,
+        name: jobs.name,
+        requestedBy: jobs.requestedBy,
+        enabled: jobs.enabled,
+        cronSchedule: jobs.cronSchedule,
+        archivedAt: jobs.archivedAt,
+        promptMode: jobs.promptMode,
+      })
+      .from(jobs)
+      .where(
+        and(
+          eq(jobs.enabled, 1),
+          isNotNull(jobs.cronSchedule),
+          ne(jobs.cronSchedule, ""),
+          isNull(jobs.archivedAt),
+          isNull(jobs.promptMode),
+        ),
+      );
+
+    const offending = rows.filter(isNullPromptModeRecurringJob);
+    result.found = offending.length;
+    result.jobNames = offending.map((job) => job.name);
+
+    if (offending.length === 0) return result;
+
+    const lastNoticeRaw = await getSetting(JOB_CONFIG_HEALTH_NOTICE_SETTING_KEY);
+    const lastNoticeAt = lastNoticeRaw ? Date.parse(lastNoticeRaw) : Number.NaN;
+    if (
+      !Number.isNaN(lastNoticeAt) &&
+      now.getTime() - lastNoticeAt < JOB_CONFIG_HEALTH_NOTICE_THROTTLE_MS
+    ) {
+      logger.info("job_config_health_notice_throttled", {
+        found: offending.length,
+        lastNoticeAt: lastNoticeRaw,
+      });
+      return result;
+    }
+
+    const preview = result.jobNames.slice(0, CONFIG_HEALTH_NOTICE_NAME_LIMIT);
+    const extra = result.jobNames.length - preview.length;
+    const list = preview.map((name) => `\`${name}\``).join(", ");
+    const extraStr = extra > 0 ? ` (+${extra} more)` : "";
+
+    const noticeResult = await sendJobOpsNotice({
+      jobId: "job-config-health",
+      jobName: "prompt_mode health scan",
+      requestedBy: "aura",
+      text:
+        `${offending.length} enabled recurring job(s) have NULL prompt_mode, ` +
+        `which silently resolves to the full ~40k system prompt. ` +
+        `Set prompt_mode via update_job (mechanical/fixed-playbook → task; ` +
+        `Aura's voice/nuance → full).\nJobs: ${list}${extraStr}`,
+      logContext: {
+        event: "job_config_health_null_prompt_mode",
+        found: offending.length,
+      },
+    });
+
+    if (noticeResult.ok) {
+      result.alerted = 1;
+      try {
+        await setSetting(
+          JOB_CONFIG_HEALTH_NOTICE_SETTING_KEY,
+          now.toISOString(),
+          "job-config-health",
+        );
+      } catch (error: unknown) {
+        logger.error("job_config_health_throttle_persist_failed", {
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    logger.warn("job_config_health_alert", {
+      found: offending.length,
+      alerted: result.alerted,
+      noticeSent: noticeResult.ok,
+      noticeTarget: noticeResult.target,
+    });
+  } catch (error: unknown) {
+    logger.error("job_config_health_scan_failed", {
       error: error instanceof Error ? error.message : String(error),
     });
   }
