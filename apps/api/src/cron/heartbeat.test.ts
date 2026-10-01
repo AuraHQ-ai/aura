@@ -58,6 +58,10 @@ const dbMock = vi.hoisted(() => {
   return state;
 });
 
+vi.mock("./recurring-self-heal.js", () => ({
+  selfHealTerminalRecurringJobs: vi.fn(async () => 0),
+}));
+
 const executeJobMock = vi.hoisted(() => vi.fn());
 const sendJobFailureDmMock = vi.hoisted(() => vi.fn());
 const safePostMessageMock = vi.hoisted(() => vi.fn());
