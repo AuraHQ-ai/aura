@@ -75,6 +75,12 @@ Immediately executes a specific pending job by `jobId`, bypassing its schedule. 
 
 ## Webhook Endpoints
 
+### `POST /api/webhook/github`
+
+Receives GitHub webhook deliveries for `pull_request` and `issues` events. The endpoint validates `X-Hub-Signature-256` with `GITHUB_WEBHOOK_SECRET`. Opened and ready-for-review pull requests are recorded; merged pull requests can automatically close still-open issues referenced in the PR body with GitHub closing keywords such as `Fixes #123`. Issue-close events are handled for synchronization. Unsupported event types are acknowledged without processing.
+
+**Auth:** GitHub HMAC signature (`X-Hub-Signature-256`). Requests are rejected when `GITHUB_WEBHOOK_SECRET` is unset or the signature is invalid.
+
 ### `POST /api/webhook/cursor-agent`
 
 Receives Cursor Cloud Agent completion notifications and delivers results (PR link, summary) back to the dispatching conversation.
