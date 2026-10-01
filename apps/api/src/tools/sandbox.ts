@@ -5,6 +5,7 @@ import {
   getSandboxEnvs,
   truncateOutput,
   ensureUserHome,
+  resolveSandboxUserId,
 } from "../lib/sandbox.js";
 import { logger } from "../lib/logger.js";
 import {
@@ -807,7 +808,7 @@ export function createSandboxTools(context?: ScheduleContext) {
         },
       ],
       execute: async ({ command, workdir, timeout_seconds }) => {
-        const userId = context?.userId || "aura";
+        const userId = resolveSandboxUserId(context?.userId);
         try {
           const sandbox = await getOrCreateSandbox(userId);
           const envs = await getSandboxEnvs(userId);
@@ -944,7 +945,7 @@ export function createSandboxTools(context?: ScheduleContext) {
           ),
       }),
       execute: async ({ command, workdir, env }) => {
-        const userId = context?.userId || "aura";
+        const userId = resolveSandboxUserId(context?.userId);
         try {
           const sandbox = await getOrCreateSandbox(userId);
           const envs = await getSandboxEnvs(userId);
@@ -1059,7 +1060,7 @@ export function createSandboxTools(context?: ScheduleContext) {
           .describe("Number of recent stdout/stderr lines to return from each stream. Defaults to 200."),
       }),
       execute: async ({ id, tail_lines }) => {
-        const userId = context?.userId || "aura";
+        const userId = resolveSandboxUserId(context?.userId);
         try {
           let dbRow: DetachedCommand | undefined;
           try {
