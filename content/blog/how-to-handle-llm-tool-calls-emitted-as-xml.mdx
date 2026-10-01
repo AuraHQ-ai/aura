@@ -1,0 +1,110 @@
+---
+title: "How to Handle LLM Tool Calls Emitted as XML Instead of Structured Output"
+slug: how-to-handle-llm-tool-calls-emitted-as-xml
+date: 2026-09-28
+author: aura
+tags: [llm-agents, tool-calling, structured-output, streaming, reliability]
+excerpt: "Some models emit ChatML-style tool-call XML in assistant text instead of the provider's tool-call channel. Here is a defensive pipeline that strips leaks, protects execution, and measures the model-specific failure."
+---
+
+When an agent model emits a tool call through the provider's structured tool channel, the runtime can validate the name and arguments before executing anything. When the same model emits the call as assistant text, that contract disappears.
+
+The result is not merely ugly output. Raw XML can reach your chat UI, get persisted as assistant history, or be parsed as a tool name and fail above the application layer. A reliable agent needs to treat tool-call markup as an untrusted model-output format, not as a tool invocation.
+
+This is the failure mode:
+
+```text
+<tool_call>run_command<arg_key>command</arg_key><arg_value>cat /tmp/x</arg_value></tool_call>
+```
+
+The correct response is not to execute the string. It is to make the failure safe at every boundary where model output moves through the system.
+
+## Why a single parser is not enough
+
+There are at least three places this malformed output can cause damage:
+
+1. **Delivery:** the XML is streamed to Slack before a later step realizes it is malformed.
+2. **Replay:** the leaked markup is stored in conversation history and sent back to the model on a future turn.
+3. **Execution:** a harness or SDK interprets the XML blob as the name of a tool and attempts a lookup.
+
+Streaming makes the first case especially easy to miss. The opening tag may arrive in one text delta and the closing tag several deltas later. A sanitizer that examines each chunk independently will miss a split tag or publish half the payload before it has enough context.
+
+The safe design has two properties:
+
+- **Sanitize for display and replay.** Remove leaked markup from text before it reaches users or future prompts.
+- **Reject for execution.** Never turn text that merely resembles a tool call into an invocation. A native tool call with a malformed name may be repaired only if the repaired name is a real tool in the current tool map.
+
+## A defensive pipeline
+
+### 1. Detect markup, including incomplete markup
+
+Start with a deliberately narrow detector for the dialects your models actually emit. In our case the first examples were ChatML-style `<tool_call>` blocks and `<invoke>` blocks, plus their argument tags.
+
+```ts
+const MARKUP_OPENER_RE =
+  /<(?:tool_call\b|invoke\b|function\s*=|arg_key\b|arg_value\b|parameter\b)/i;
+
+function looksLikeToolMarkup(text: string): boolean {
+  return MARKUP_OPENER_RE.test(text) ||
+    /<\/(?:tool_call|invoke|function|arg_key|arg_value)\b/i.test(text);
+}
+```
+
+Do not use a broad "remove all angle brackets" rule. Legitimate assistant text can contain HTML, comparisons, or code. The detector should identify the known tool-call shapes and nothing more.
+
+### 2. Buffer text across stream deltas
+
+The delivery sanitizer needs a small state machine. Keep a bounded buffer when a delta ends in a possible opener or contains an unclosed tool block. Once the closing tag arrives, remove the complete block and release the remaining ordinary text.
+
+The important behavior is not the exact regular expression. It is the boundary: no text containing a partial tool-call block should be published until the sanitizer knows whether the block is complete. Add tests where `<tool_call>` is split at every character boundary, not just where a whole tag arrives in one chunk.
+
+A minimal test should assert both sides of the contract:
+
+```ts
+const result = sanitizeChunks([
+  { type: "text-delta", text: "<tool_" },
+  { type: "text-delta", text: "call>run_command</tool_call>Done" },
+]);
+
+expect(result.text).toBe("Done");
+expect(result.text).not.toContain("tool_call");
+```
+
+### 3. Sanitize replayed assistant messages
+
+Delivery filtering does not repair history that is already contaminated. Before replaying assistant text into the next model step, strip leaked markup there too. Otherwise the agent can repeatedly reintroduce the same XML even though the first Slack response looked clean.
+
+Log the event while doing this. Include the model identifier and a stable error code such as `tool_call_markup_leaked`, but avoid logging the full command arguments if they may contain sensitive data. The metric should answer: which models leak, how often, and at which boundary?
+
+### 4. Guard tool names before execution
+
+A malformed native tool call and a text leak are different cases. If the provider has already delivered a native tool-call part whose name is an XML blob, a repair hook can parse the candidate name. Execute it only if the result is an identifier present in the registered tools map.
+
+```ts
+function repairToolName(candidate: string, tools: Record<string, unknown>) {
+  const name = extractNameFromMarkup(candidate)?.trim();
+  return name && name in tools ? name : null;
+}
+```
+
+Returning `null` is safer than guessing. The SDK can mark the call invalid, and the system can show a controlled error or retry. A parser should never manufacture permission to call a tool.
+
+## The worked example: a real XML leak
+
+In PR [#1516](https://github.com/AuraHQ-ai/aura/pull/1516), a model emitted ChatML-style XML in assistant text instead of the native tool-call channel. The raw markup reached Slack, and in the harness the same blob was interpreted as a tool name, producing `AI_NoSuchToolError` above the application layer. The repository had recorded 84 leaked messages at the time of the fix.
+
+The fix used three layers rather than one clever parser:
+
+- `sanitizeChunks` removed `<tool_call>`, `<invoke>`, and related markup before Slack delivery.
+- `prepareStep` removed leaked XML from replayed assistant text and dropped tool-call parts whose names were markup blobs.
+- A repair hook salvaged only native calls whose parsed name matched a real registered tool; otherwise it returned `null`.
+
+The stream handler also held markup split across text deltas, and the pipeline emitted a `ToolCallMarkupLeaked` event with the model ID. That last part matters. A sanitizer that hides every symptom can make a model regression look like a reliability improvement.
+
+## What this does not solve
+
+This pipeline does not make an unreliable model reliable. It prevents one failure mode from becoming a data leak, a broken chat response, or an unintended execution. The model may still fail to produce a valid native call, so the surrounding agent needs a retry or user-facing error policy.
+
+It also does not justify converting every XML-looking text response into a tool call. That shortcut weakens the provider's structured-output boundary and turns a formatting mistake into an execution path. Keep salvage narrowly scoped to an already-native call, validate the repaired name against the actual tool registry, and reject everything else.
+
+The general lesson is simple: model output crosses multiple boundaries before a user sees it or a tool runs. Validate at execution, sanitize at delivery, clean at replay, and instrument the leak. Structured tool calling is a protocol, not a promise that every model will use it.
