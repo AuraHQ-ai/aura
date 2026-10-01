@@ -1,8 +1,15 @@
+import { and, eq, inArray, isNull, like } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { jobs } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
 import { logError } from "../lib/error-logger.js";
 import { safePostMessage } from "../lib/slack-messaging.js";
+
+/** Name prefix of auto-spawned hard-deadline continuation jobs. */
+const TURN_CONTINUATION_NAME_PREFIX = "continue-turn-deadline";
+
+/** Job statuses that still count as a live continuation (issue #1418). */
+const LIVE_CONTINUATION_STATUSES = ["pending", "running"] as const;
 
 // ── Turn wall-clock budget (issue #1318) ─────────────────────────────────────
 // Vercel kills the function at maxDuration (800s). The step budget never binds
@@ -147,13 +154,42 @@ export async function spawnTurnContinuationJob(params: {
       `treat it as a checklist and deliver ALL of it, not just what you infer from the thread.`;
   }
 
+  // Dedupe at insert (issue #1418): a hard-deadlined turn is also marked
+  // failed, so the supervisor retries the original job; each retry would
+  // otherwise mint another sibling continuation. Skip if a live one already
+  // exists for this (channelId, threadTs). Lookup errors fall through to
+  // insert — losing a continuation is worse than an occasional duplicate.
+  const channelId = params.channelId || "";
+  const threadTs = params.threadTs || null;
+  try {
+    const existing = await findLiveTurnContinuation(channelId, threadTs);
+    if (existing) {
+      logger.info("turn-deadline: continuation already live, skipping spawn", {
+        topic,
+        existingJobId: existing.id,
+        existingJobName: existing.name,
+        channelId: params.channelId,
+        threadTs: params.threadTs,
+        depth,
+      });
+      return false;
+    }
+  } catch (err: any) {
+    logger.warn("turn-deadline: live-continuation lookup failed; falling through to insert", {
+      topic,
+      channelId: params.channelId,
+      threadTs: params.threadTs,
+      error: err?.message || String(err),
+    });
+  }
+
   try {
     await db.insert(jobs).values({
       name: `continue-${topic}-${Date.now().toString(36)}`,
       description,
       executeAt: new Date(Date.now() + TURN_CONTINUATION_DELAY_MS),
-      channelId: params.channelId || "",
-      threadTs: params.threadTs || null,
+      channelId,
+      threadTs,
       requestedBy: params.userId || "aura",
       priority: "high",
       // Internal plumbing, never user-requested: the job supervisor resolves
@@ -179,6 +215,37 @@ export async function spawnTurnContinuationJob(params: {
     });
     return false;
   }
+}
+
+/**
+ * Look up an already-live hard-deadline continuation for the same Slack
+ * thread. `threadTs` may be null (and SQL `NULL != NULL`), so null routing
+ * uses `IS NULL` rather than `=`. `channelId` is stored as `""` when unset.
+ *
+ * Throws on DB errors — the caller falls through to insert rather than
+ * dropping a legitimate continuation.
+ */
+async function findLiveTurnContinuation(
+  channelId: string,
+  threadTs: string | null,
+): Promise<{ id: string; name: string } | undefined> {
+  const threadMatch =
+    threadTs === null ? isNull(jobs.threadTs) : eq(jobs.threadTs, threadTs);
+
+  const [existing] = await db
+    .select({ id: jobs.id, name: jobs.name })
+    .from(jobs)
+    .where(
+      and(
+        like(jobs.name, `${TURN_CONTINUATION_NAME_PREFIX}%`),
+        inArray(jobs.status, [...LIVE_CONTINUATION_STATUSES]),
+        eq(jobs.channelId, channelId),
+        threadMatch,
+      ),
+    )
+    .limit(1);
+
+  return existing;
 }
 
 /**
