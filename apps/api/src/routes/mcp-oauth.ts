@@ -120,7 +120,7 @@ export function createMcpOAuthApp(slackClient?: WebClient) {
       return c.html(
         htmlPage(
           "Connected",
-          `Aura is now connected to ${server.name}. You can close this tab and return to Slack.`,
+          `Aura is now connected to ${server.name}. You can close this tab and return to Slack or the dashboard.`,
           true,
         ),
       );

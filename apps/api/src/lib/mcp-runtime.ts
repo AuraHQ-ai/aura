@@ -96,6 +96,21 @@ export async function persistCachedTools(
     .where(eq(mcpServers.id, serverId));
 }
 
+export async function refreshMcpToolCache(
+  server: McpServer,
+  connection?: McpConnection | null,
+): Promise<McpCachedTool[]> {
+  const client = await createMcpClientForServer(server, connection);
+  try {
+    const remote = await client.tools();
+    const cached = cachedToolsFromRemote(remote);
+    await persistCachedTools(server.id, cached);
+    return cached;
+  } finally {
+    await client.close().catch(() => {});
+  }
+}
+
 function headerForServer(server: McpServer): Record<string, string> | undefined {
   if (server.authType !== "header" || !server.headerName || !server.encryptedHeaderValue) {
     return undefined;
@@ -181,7 +196,9 @@ export function buildMcpToolStubs(
   getClient: () => Promise<McpClientHandle>,
 ): Record<string, any> {
   const tools: Record<string, any> = {};
+  const denied = new Set(server.deniedTools ?? []);
   for (const cachedTool of cached) {
+    if (denied.has(cachedTool.name)) continue;
     const namespaced = namespaceMcpTool(server.slug, cachedTool.name);
     const needsApproval =
       !server.trusted && isWriteLikeMcpTool(cachedTool.name, cachedTool.annotations);
