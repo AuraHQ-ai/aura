@@ -108,4 +108,29 @@ describe("deferred tool thread cache", () => {
     ]);
     expect(dbMocks.onConflictDoUpdate).toHaveBeenCalled();
   });
+
+  it("defers namespaced MCP tools and caches their resolutions", async () => {
+    const tools: Record<string, any> = {
+      mcp__stripe__list_customers: { description: "List Stripe customers." },
+    };
+
+    await applyAnthropicToolDiscovery(
+      tools,
+      "anthropic/claude-sonnet-4-5",
+      { channelId: "C123", threadTs: "171234.000100" },
+    );
+
+    expect(tools.mcp__stripe__list_customers.providerOptions.anthropic.deferLoading).toBe(true);
+    expect(getDeferredToolManifest(tools).map((entry) => entry.name)).toEqual([
+      "mcp__stripe__list_customers",
+    ]);
+
+    await cacheDeferredToolResolutions(
+      { workspaceId: "W1", channelId: "C123", threadTs: "171234.000100" },
+      ["mcp__stripe__list_customers", "not_a_deferred_tool"],
+    );
+    expect(dbMocks.insertValues).toHaveBeenCalledWith([
+      expect.objectContaining({ toolName: "mcp__stripe__list_customers" }),
+    ]);
+  });
 });
