@@ -1692,6 +1692,7 @@ export const mcpServers = pgTable(
     ownerId: text("owner_id"),
     enabled: boolean("enabled").notNull().default(true),
     trusted: boolean("trusted").notNull().default(false),
+    deniedTools: jsonb("denied_tools").$type<string[]>().notNull().default([]),
     cachedTools: jsonb("cached_tools").$type<McpCachedTool[] | null>(),
     toolsCachedAt: timestamptz("tools_cached_at"),
     createdBy: text("created_by"),

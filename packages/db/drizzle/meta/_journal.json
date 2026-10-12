@@ -638,6 +638,13 @@
       "when": 1791817200000,
       "tag": "0090_mcp_client",
       "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "7",
+      "when": 1791823764576,
+      "tag": "0091_mcp_denied_tools",
+      "breakpoints": true
     }
   ]
 }

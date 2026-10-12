@@ -3,7 +3,6 @@ import { z } from "zod";
 import {
   mcpConnections,
   mcpServers,
-  type McpCachedTool,
   type McpConnection,
   type McpServer,
   type ScheduleContext,
@@ -12,10 +11,7 @@ import { db } from "../db/client.js";
 import { defineTool, executionContext } from "../lib/tool.js";
 import { hasRole } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
-import {
-  isMcpServerAllowlisted,
-  slugifyMcpName,
-} from "../lib/mcp-names.js";
+import { isMcpServerAllowlisted } from "../lib/mcp-names.js";
 import { loadIsolated } from "../lib/mcp-isolation.js";
 import {
   assertPublicHttpsUrl,
@@ -30,12 +26,18 @@ import {
 import {
   attachMcpCloser,
   buildMcpToolStubs,
-  cachedToolsFromRemote,
   createMcpClientForServer,
   hasLiveConnection,
-  persistCachedTools,
+  refreshMcpToolCache,
   type McpClientHandle,
 } from "../lib/mcp-runtime.js";
+import {
+  allowedCachedTools,
+  displayNameFromUrlOrName,
+  isMcpUnauthorized,
+  slugFromUrlOrName,
+  uniqueMcpSlug,
+} from "../lib/mcp-servers.js";
 
 export { closeMcpClients, MCP_CLOSE } from "../lib/mcp-runtime.js";
 
@@ -96,45 +98,6 @@ async function connectionsForUser(
   return new Map(rows.map((row) => [row.serverId, row]));
 }
 
-function isUnauthorized(error: unknown): boolean {
-  const err = error as { name?: string; statusCode?: number; message?: string };
-  if (err?.name === "UnauthorizedError") return true;
-  if (err?.statusCode === 401 || err?.statusCode === 403) return true;
-  const message = (err?.message || "").toLowerCase();
-  return message.includes("unauthorized") || message.includes("401");
-}
-
-async function uniqueSlug(
-  workspaceId: string,
-  desired: string,
-): Promise<string> {
-  const existing = await db
-    .select({ slug: mcpServers.slug })
-    .from(mcpServers)
-    .where(eq(mcpServers.workspaceId, workspaceId));
-  const taken = new Set(existing.map((row) => row.slug));
-  if (!taken.has(desired)) return desired;
-  for (let i = 2; i < 50; i++) {
-    const candidate = `${desired}_${i}`.slice(0, 48);
-    if (!taken.has(candidate)) return candidate;
-  }
-  return `${desired}_${crypto.randomUUID().slice(0, 8)}`;
-}
-
-async function refreshToolCache(
-  server: McpServer,
-  connection?: McpConnection | null,
-): Promise<McpCachedTool[]> {
-  const client = await createMcpClientForServer(server, connection);
-  try {
-    const remote = await client.tools();
-    const cached = cachedToolsFromRemote(remote);
-    await persistCachedTools(server.id, cached);
-    return cached;
-  } finally {
-    await client.close().catch(() => {});
-  }
-}
 
 /**
  * MCP server tools + chat management tools.
@@ -174,10 +137,11 @@ export async function createMcpTools(context?: ScheduleContext) {
       live,
       async (server) => {
         const connection = connections.get(server.id);
-        const cached =
+        const cachedSource =
           server.cachedTools && server.cachedTools.length > 0
             ? server.cachedTools
-            : await refreshToolCache(server, connection);
+            : await refreshMcpToolCache(server, connection);
+        const cached = allowedCachedTools({ ...server, cachedTools: cachedSource });
 
         const getClient = async () => {
           const existing = clients.get(server.id);
@@ -245,12 +209,8 @@ function createMcpManagementTools(context?: ScheduleContext) {
         }
 
         const workspaceId = workspaceIdOf(context);
-        let hostname = url;
-        try {
-          hostname = new URL(url).hostname;
-        } catch { /* keep url */ }
-        const displayName = name?.trim() || hostname;
-        const slug = await uniqueSlug(workspaceId, slugifyMcpName(name || hostname));
+        const displayName = displayNameFromUrlOrName(url, name);
+        const slug = await uniqueMcpSlug(workspaceId, slugFromUrlOrName(url, name));
 
         const [server] = await db
           .insert(mcpServers)
@@ -270,7 +230,7 @@ function createMcpManagementTools(context?: ScheduleContext) {
           .returning();
 
         try {
-          const cached = await refreshToolCache(server);
+          const cached = await refreshMcpToolCache(server);
           return {
             ok: true,
             status: "connected" as const,
@@ -280,7 +240,7 @@ function createMcpManagementTools(context?: ScheduleContext) {
             tools: cached.map((t) => t.name),
           };
         } catch (error: unknown) {
-          if (!isUnauthorized(error)) {
+          if (!isMcpUnauthorized(error)) {
             const message = error instanceof Error ? error.message : String(error);
             logger.warn("mcp_add_server probe failed", { slug, error: message });
             return {
