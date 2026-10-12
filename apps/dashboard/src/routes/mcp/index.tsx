@@ -1,5 +1,5 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiDelete, apiGet, apiPatch, apiPost } from "@/lib/api";
 import {
   Table,
@@ -20,10 +20,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { TableRowsSkeleton } from "@/components/page-skeleton";
 import { cn } from "@/lib/utils";
-import { useState } from "react";
-import { ChevronDown, ChevronRight, Plus, RefreshCw, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ChevronDown, ChevronRight, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 
 type McpStatus = "connected" | "needs_auth" | "error";
 
@@ -61,6 +62,31 @@ interface McpListResponse {
   viewer: { userId: string | null; isAdmin: boolean };
 }
 
+interface McpCatalogEntry {
+  name: string;
+  title: string;
+  description: string;
+  url: string;
+  transport: "http" | "sse";
+  featured: boolean;
+  installed: boolean;
+  installedServerId: string | null;
+}
+
+interface McpMarketplaceResponse {
+  featured: McpCatalogEntry[];
+  items: McpCatalogEntry[];
+  nextCursor: string | null;
+  stale: boolean;
+  error: string | null;
+}
+
+function normalizeMcpUrl(url: string): string {
+  return url.trim().replace(/\/+$/, "").toLowerCase();
+}
+
+const MARKETPLACE_SEARCH_HINT = "Search Stripe, Linear, Notion…";
+
 const STATUS_VARIANT: Record<McpStatus, "success" | "warning" | "destructive"> = {
   connected: "success",
   needs_auth: "warning",
@@ -72,6 +98,218 @@ const STATUS_LABEL: Record<McpStatus, string> = {
   needs_auth: "Needs auth",
   error: "Error",
 };
+
+function MarketplaceCard({
+  entry,
+  installed,
+  adding,
+  disabled,
+  onAdd,
+}: {
+  entry: McpCatalogEntry;
+  installed: boolean;
+  adding: boolean;
+  disabled: boolean;
+  onAdd: (entry: McpCatalogEntry) => void;
+}) {
+  return (
+    <div className="rounded-lg border p-3 space-y-2">
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="font-medium text-sm">{entry.title}</div>
+          <div className="text-xs text-muted-foreground font-mono truncate">{entry.url}</div>
+        </div>
+        {installed ? (
+          <Badge variant="success">Installed</Badge>
+        ) : (
+          <Button size="sm" onClick={() => onAdd(entry)} disabled={disabled || adding}>
+            {adding ? "Adding…" : "Add"}
+          </Button>
+        )}
+      </div>
+      {entry.description ? (
+        <p className="text-xs text-muted-foreground line-clamp-2">{entry.description}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function MarketplacePanel({
+  isAdmin,
+  visibility,
+  onVisibilityChange,
+  servers,
+  searchInput,
+  onSearchInput,
+  marketSearch,
+  addingUrl,
+  addError,
+  authUrl,
+  adding,
+  onAdd,
+}: {
+  isAdmin: boolean;
+  visibility: "personal" | "workspace";
+  onVisibilityChange: (value: "personal" | "workspace") => void;
+  servers: McpServer[];
+  searchInput: string;
+  onSearchInput: (value: string) => void;
+  marketSearch: string;
+  addingUrl: string | null;
+  addError: string | null;
+  authUrl: string | null;
+  adding: boolean;
+  onAdd: (entry: McpCatalogEntry) => void;
+}) {
+  const {
+    data,
+    isLoading,
+    isFetchingNextPage,
+    fetchNextPage,
+    hasNextPage,
+    error,
+  } = useInfiniteQuery({
+    queryKey: ["mcp-marketplace", marketSearch],
+    queryFn: ({ pageParam }) =>
+      apiGet<McpMarketplaceResponse>("/mcp/marketplace", {
+        search: marketSearch || undefined,
+        cursor: pageParam,
+        limit: "30",
+      }),
+    initialPageParam: undefined as string | undefined,
+    getNextPageParam: (last) => last.nextCursor ?? undefined,
+  });
+
+  const featured = data?.pages[0]?.featured ?? [];
+  const items = data?.pages.flatMap((page) => page.items) ?? [];
+  const stale = data?.pages.some((page) => page.stale) ?? false;
+  const registryError = data?.pages[0]?.error ?? (error ? error.message : null);
+
+  const installedUrls = useMemo(() => {
+    const urls = new Set(servers.map((server) => normalizeMcpUrl(server.url)));
+    for (const page of data?.pages ?? []) {
+      for (const entry of [...page.featured, ...page.items]) {
+        if (entry.installed) urls.add(normalizeMcpUrl(entry.url));
+      }
+    }
+    return urls;
+  }, [servers, data]);
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-1.5">
+        <label className="text-sm font-medium" htmlFor="mcp-marketplace-search">
+          Search
+        </label>
+        <div className="relative">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <Input
+            id="mcp-marketplace-search"
+            type="search"
+            value={searchInput}
+            onChange={(e) => onSearchInput(e.target.value)}
+            className="pl-8"
+            aria-label={MARKETPLACE_SEARCH_HINT}
+            autoComplete="off"
+            {...{ placeholder: MARKETPLACE_SEARCH_HINT }}
+          />
+        </div>
+      </div>
+      <div className="space-y-1.5">
+        <label className="text-sm font-medium">Visibility</label>
+        <select
+          value={visibility}
+          onChange={(e) =>
+            onVisibilityChange(e.target.value as "personal" | "workspace")
+          }
+          className="h-9 w-full rounded-md border border-input bg-transparent px-2.5 text-sm"
+        >
+          <option value="personal">Personal</option>
+          {isAdmin && <option value="workspace">Workspace</option>}
+        </select>
+      </div>
+      {registryError && (
+        <Alert variant="destructive">
+          <AlertDescription>
+            {stale
+              ? "Registry is unavailable; showing a cached catalog. You can still add a featured server or a manual URL."
+              : "Registry is unavailable. Featured servers below still work, or add a server by URL."}
+          </AlertDescription>
+        </Alert>
+      )}
+      {stale && !registryError && (
+        <p className="text-xs text-muted-foreground">Catalog may be slightly out of date.</p>
+      )}
+      {isLoading ? (
+        <p className="text-sm text-muted-foreground py-6 text-center">Loading catalog…</p>
+      ) : (
+        <div className="max-h-[50vh] overflow-y-auto space-y-4 pr-1">
+          {featured.length > 0 && (
+            <div className="space-y-2">
+              <div className="text-sm font-medium">Featured</div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {featured.map((entry) => (
+                  <MarketplaceCard
+                    key={entry.name}
+                    entry={entry}
+                    installed={installedUrls.has(normalizeMcpUrl(entry.url))}
+                    adding={addingUrl === entry.url}
+                    disabled={adding}
+                    onAdd={onAdd}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="space-y-2">
+            <div className="text-sm font-medium">Catalog</div>
+            {items.length === 0 ? (
+              <p className="text-sm text-muted-foreground py-4 text-center">
+                {marketSearch
+                  ? "No registry servers match that search."
+                  : "No remote MCP servers in this page of the registry."}
+              </p>
+            ) : (
+              <div className="grid gap-2">
+                {items.map((entry) => (
+                  <MarketplaceCard
+                    key={entry.name}
+                    entry={entry}
+                    installed={installedUrls.has(normalizeMcpUrl(entry.url))}
+                    adding={addingUrl === entry.url}
+                    disabled={adding}
+                    onAdd={onAdd}
+                  />
+                ))}
+              </div>
+            )}
+          </div>
+          {hasNextPage && (
+            <div className="flex justify-center pt-1">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => fetchNextPage()}
+                disabled={isFetchingNextPage}
+              >
+                {isFetchingNextPage ? "Loading…" : "Load more"}
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+      {addError && <p className="text-sm text-destructive">{addError}</p>}
+      {authUrl && (
+        <p className="text-sm">
+          Authorization required.{" "}
+          <a href={authUrl} target="_blank" rel="noreferrer" className="underline">
+            Open auth URL
+          </a>
+        </p>
+      )}
+    </div>
+  );
+}
 
 function McpPage() {
   const queryClient = useQueryClient();
@@ -87,6 +325,14 @@ function McpPage() {
   const [newTransport, setNewTransport] = useState<"http" | "sse">("http");
   const [newHeaderName, setNewHeaderName] = useState("");
   const [newHeaderValue, setNewHeaderValue] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [marketSearch, setMarketSearch] = useState("");
+  const [addingUrl, setAddingUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setMarketSearch(searchInput.trim()), 300);
+    return () => clearTimeout(timer);
+  }, [searchInput]);
 
   const { data, isLoading, isFetching, error } = useQuery({
     queryKey: ["mcp-servers"],
@@ -117,7 +363,9 @@ function McpPage() {
     }) => apiPost<McpServer>("/mcp", payload),
     onSuccess: (created) => {
       invalidate();
+      queryClient.invalidateQueries({ queryKey: ["mcp-marketplace"] });
       setAddError(null);
+      setAddingUrl(null);
       if (created.authUrl) {
         setAuthUrl(created.authUrl);
         return;
@@ -126,6 +374,7 @@ function McpPage() {
       setShowAdd(false);
     },
     onError: (err: Error) => {
+      setAddingUrl(null);
       setAddError(err.message);
     },
   });
@@ -179,6 +428,20 @@ function McpPage() {
     setNewHeaderValue("");
     setAddError(null);
     setAuthUrl(null);
+    setSearchInput("");
+    setMarketSearch("");
+    setAddingUrl(null);
+  }
+
+  function addFromCatalog(entry: McpCatalogEntry) {
+    setAddError(null);
+    setAddingUrl(entry.url);
+    addMutation.mutate({
+      url: entry.url,
+      name: entry.title,
+      visibility: newVisibility,
+      transport: entry.transport,
+    });
   }
 
   if (error && !data) {
@@ -401,7 +664,7 @@ function McpPage() {
           if (!open) resetAdd();
         }}
       >
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Add MCP server</DialogTitle>
           </DialogHeader>
@@ -502,10 +765,21 @@ function McpPage() {
                 </Button>
               </div>
             </TabsContent>
-            <TabsContent value="marketplace" className="pt-6">
-              <div className="rounded-lg border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
-                Marketplace catalog is coming soon.
-              </div>
+            <TabsContent value="marketplace" className="space-y-4 pt-3">
+              <MarketplacePanel
+                isAdmin={isAdmin}
+                visibility={newVisibility}
+                onVisibilityChange={setNewVisibility}
+                servers={servers}
+                searchInput={searchInput}
+                onSearchInput={setSearchInput}
+                marketSearch={marketSearch}
+                addingUrl={addingUrl}
+                addError={addError}
+                authUrl={authUrl}
+                adding={addMutation.isPending}
+                onAdd={addFromCatalog}
+              />
             </TabsContent>
           </Tabs>
         </DialogContent>

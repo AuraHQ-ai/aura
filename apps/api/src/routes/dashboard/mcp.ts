@@ -14,6 +14,12 @@ import {
   refreshMcpToolCache,
 } from "../../lib/mcp-runtime.js";
 import {
+  featuredMcpServers,
+  getMarketplaceCatalog,
+  normalizeMcpUrl,
+  type McpCatalogEntry,
+} from "../../lib/mcp-registry.js";
+import {
   canManageMcpServer,
   canViewMcpServer,
   displayNameFromUrlOrName,
@@ -138,6 +144,31 @@ const createMcpServerBody = z.object({
   headerValue: z.string().min(1).optional(),
 });
 
+const mcpCatalogEntrySchema = z.object({
+  name: z.string(),
+  title: z.string(),
+  description: z.string(),
+  url: z.string(),
+  transport: z.enum(["http", "sse"]),
+  featured: z.boolean(),
+  installed: z.boolean(),
+  installedServerId: z.string().nullable(),
+});
+
+function withInstalledState(
+  entries: McpCatalogEntry[],
+  installedByUrl: Map<string, string>,
+) {
+  return entries.map((entry) => {
+    const installedServerId = installedByUrl.get(normalizeMcpUrl(entry.url)) ?? null;
+    return {
+      ...entry,
+      installed: Boolean(installedServerId),
+      installedServerId,
+    };
+  });
+}
+
 const listMcpRoute = createRoute({
   method: "get",
   path: "/",
@@ -210,6 +241,96 @@ dashboardMcpApp.openapi(listMcpRoute, async (c) => {
   } catch (error) {
     logger.error("Failed to list MCP servers", { error: String(error) });
     return c.json({ error: "Internal server error" }, 500);
+  }
+});
+
+const marketplaceQuery = z.object({
+  search: z.string().optional(),
+  cursor: z.string().optional(),
+  limit: z.coerce.number().optional(),
+});
+
+const marketplaceRoute = createRoute({
+  method: "get",
+  path: "/marketplace",
+  tags: ["MCP"],
+  summary: "List featured and registry MCP servers",
+  request: { query: marketplaceQuery },
+  responses: {
+    200: {
+      content: {
+        "application/json": {
+          schema: z.object({
+            featured: z.array(mcpCatalogEntrySchema),
+            items: z.array(mcpCatalogEntrySchema),
+            nextCursor: z.string().nullable(),
+            stale: z.boolean(),
+            error: z.string().nullable(),
+          }),
+        },
+      },
+      description: "Success",
+    },
+  },
+});
+
+dashboardMcpApp.openapi(marketplaceRoute, async (c) => {
+  const query = c.req.valid("query");
+  try {
+    const { userId, isAdmin } = await viewer(c);
+    let installedByUrl = new Map<string, string>();
+    try {
+      const workspaceId = mcpWorkspaceId();
+      const visibility = isAdmin
+        ? undefined
+        : userId
+          ? or(eq(mcpServers.visibility, "workspace"), eq(mcpServers.ownerId, userId))
+          : eq(mcpServers.visibility, "workspace");
+      const servers = await db
+        .select({ id: mcpServers.id, url: mcpServers.url })
+        .from(mcpServers)
+        .where(
+          visibility
+            ? and(eq(mcpServers.workspaceId, workspaceId), visibility)
+            : eq(mcpServers.workspaceId, workspaceId),
+        );
+      installedByUrl = new Map(
+        servers.map((server) => [normalizeMcpUrl(server.url), server.id]),
+      );
+    } catch (error) {
+      logger.warn("Failed to load installed MCP servers for marketplace", {
+        error: String(error),
+      });
+    }
+
+    const catalog = await getMarketplaceCatalog({
+      search: query.search,
+      cursor: query.cursor,
+      limit: query.limit,
+    });
+
+    return c.json(
+      jsonSafe({
+        featured: withInstalledState(catalog.featured, installedByUrl),
+        items: withInstalledState(catalog.items, installedByUrl),
+        nextCursor: catalog.nextCursor,
+        stale: catalog.stale,
+        error: catalog.error,
+      }) as any,
+      200,
+    );
+  } catch (error) {
+    logger.error("Failed to load MCP marketplace", { error: String(error) });
+    return c.json(
+      {
+        featured: withInstalledState(featuredMcpServers(query.search), new Map()),
+        items: [],
+        nextCursor: null,
+        stale: false,
+        error: error instanceof Error ? error.message : String(error),
+      } as any,
+      200,
+    );
   }
 });
 

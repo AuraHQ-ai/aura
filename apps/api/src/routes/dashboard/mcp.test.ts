@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import crypto from "node:crypto";
 import { mcpConnections, mcpServers, type McpServer } from "@aura/db/schema";
+import { parseRegistryServers } from "../../lib/mcp-registry.js";
 import { createDashboardApp } from "./schemas.js";
 
 const refreshMock = vi.hoisted(() => vi.fn());
@@ -8,6 +9,7 @@ const createClientMock = vi.hoisted(() => vi.fn());
 const startOAuthMock = vi.hoisted(() => vi.fn());
 const upsertConnectionMock = vi.hoisted(() => vi.fn());
 const hasRoleMock = vi.hoisted(() => vi.fn());
+const getCatalogMock = vi.hoisted(() => vi.fn());
 
 const dbState = vi.hoisted(() => ({
   servers: [] as any[],
@@ -107,6 +109,14 @@ vi.mock("../../lib/mcp-oauth.js", async (importOriginal) => {
   };
 });
 
+vi.mock("../../lib/mcp-registry.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../lib/mcp-registry.js")>();
+  return {
+    ...actual,
+    getMarketplaceCatalog: (...args: unknown[]) => getCatalogMock(...args),
+  };
+});
+
 const { dashboardMcpApp } = await import("./mcp.js");
 
 function appFor(userId?: string) {
@@ -158,6 +168,32 @@ beforeEach(() => {
   createClientMock.mockReset();
   startOAuthMock.mockReset();
   upsertConnectionMock.mockReset();
+  getCatalogMock.mockReset();
+  getCatalogMock.mockResolvedValue({
+    featured: [
+      {
+        name: "com.stripe/mcp",
+        title: "Stripe",
+        description: "Official Stripe MCP server",
+        url: "https://mcp.stripe.com",
+        transport: "http",
+        featured: true,
+      },
+    ],
+    items: [
+      {
+        name: "com.example/mcp",
+        title: "Example",
+        description: "An example server",
+        url: "https://mcp.example.com/mcp",
+        transport: "http",
+        featured: false,
+      },
+    ],
+    nextCursor: null,
+    stale: false,
+    error: null,
+  });
 });
 
 describe("POST /api/dashboard/mcp SSRF", () => {
@@ -296,3 +332,80 @@ describe("MCP dashboard token redaction", () => {
     expect(payload).toContain("list_customers");
   });
 });
+
+describe("GET /api/dashboard/mcp/marketplace", () => {
+  it("returns featured + registry items and marks installed URLs", async () => {
+    dbState.servers = [fixtureServer({ url: "https://mcp.stripe.com" })];
+    const res = await appFor("UADMIN").request("/marketplace");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.featured[0].title).toBe("Stripe");
+    expect(body.featured[0].installed).toBe(true);
+    expect(body.items[0].title).toBe("Example");
+    expect(body.items[0].installed).toBe(false);
+    expect(body.error).toBeNull();
+  });
+
+  it("still returns 200 with featured servers when the registry reports an error", async () => {
+    getCatalogMock.mockResolvedValue({
+      featured: [
+        {
+          name: "com.stripe/mcp",
+          title: "Stripe",
+          description: "Official Stripe MCP server",
+          url: "https://mcp.stripe.com",
+          transport: "http",
+          featured: true,
+        },
+      ],
+      items: [],
+      nextCursor: null,
+      stale: false,
+      error: "MCP registry returned HTTP 503",
+    });
+    const res = await appFor("UMEMBER").request("/marketplace?search=stripe");
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.error).toMatch(/503/);
+    expect(body.featured).toHaveLength(1);
+    expect(body.items).toEqual([]);
+  });
+});
+
+describe("marketplace-originated add still applies SSRF", () => {
+  it("rejects a registry remote that points at a private address", async () => {
+    const parsed = parseRegistryServers({
+      servers: [
+        {
+          server: {
+            name: "evil.local/mcp",
+            title: "Evil",
+            description: "do not add",
+            remotes: [{ type: "streamable-http", url: "https://127.0.0.1/mcp" }],
+          },
+          _meta: {
+            "io.modelcontextprotocol.registry/official": {
+              isLatest: true,
+              status: "active",
+            },
+          },
+        },
+      ],
+    });
+    expect(parsed.entries).toHaveLength(1);
+    const res = await appFor("UADMIN").request("/", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        url: parsed.entries[0].url,
+        name: parsed.entries[0].title,
+        visibility: "personal",
+        transport: parsed.entries[0].transport,
+      }),
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json()).error).toMatch(/private|loopback|https/i);
+    expect(dbState.inserts).toHaveLength(0);
+  });
+});
+
