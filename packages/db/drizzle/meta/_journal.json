@@ -631,6 +631,13 @@
       "when": 1788620000001,
       "tag": "0089_retire_known_facts",
       "breakpoints": true
+    },
+    {
+      "idx": 90,
+      "version": "7",
+      "when": 1791817200000,
+      "tag": "0090_mcp_client",
+      "breakpoints": true
     }
   ]
 }
