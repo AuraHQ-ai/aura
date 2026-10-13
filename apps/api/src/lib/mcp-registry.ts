@@ -101,13 +101,16 @@ export function registryCacheKey(search: string, cursor: string, limit: number):
 /** Strip tags/control chars. Registry text is untrusted; never treated as HTML. */
 export function untrustedPlainText(value: unknown, max = 500): string {
   if (typeof value !== "string") return "";
-  return value
-    .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, "")
-    .replace(/<[^>]*>/g, "")
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, max);
+  return (
+    value
+      .replace(/<(script|style)[^>]*>[\s\S]*?<\/\1>/gi, "")
+      .replace(/<[^>]*>/g, "")
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control chars is the point.
+      .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, max)
+  );
 }
 
 export function normalizeMcpUrl(url: string): string {

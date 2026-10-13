@@ -53,7 +53,7 @@ import { errorEvents, notes, feedback, stopEvents } from "@aura/db/schema";
 
 const signingSecret = process.env.SLACK_SIGNING_SECRET || "";
 const botToken = process.env.SLACK_BOT_TOKEN || "";
-let botUserId = ""; // resolved lazily from settings
+const botUserId = ""; // resolved lazily from settings
 
 if (!signingSecret || !botToken) {
   logger.warn("SLACK_SIGNING_SECRET or SLACK_BOT_TOKEN not set — Slack handlers will not work");
@@ -187,8 +187,7 @@ function verifySlackSignature(body: string, timestamp: string, signature: string
   if (parseInt(timestamp) < fiveMinutesAgo) return false;
 
   const sigBasestring = `v0:${timestamp}:${body}`;
-  const mySignature =
-    "v0=" + crypto.createHmac("sha256", signingSecret).update(sigBasestring, "utf8").digest("hex");
+  const mySignature = `v0=${crypto.createHmac("sha256", signingSecret).update(sigBasestring, "utf8").digest("hex")}`;
 
   try {
     return crypto.timingSafeEqual(Buffer.from(mySignature, "utf8"), Buffer.from(signature, "utf8"));
@@ -1072,8 +1071,7 @@ function verifyCursorWebhookSignature(rawBody: string, signature: string): boole
   const secret = process.env.CURSOR_WEBHOOK_SECRET;
   if (!secret || !signature) return false;
 
-  const expected =
-    "sha256=" + crypto.createHmac("sha256", secret).update(rawBody, "utf8").digest("hex");
+  const expected = `sha256=${crypto.createHmac("sha256", secret).update(rawBody, "utf8").digest("hex")}`;
 
   try {
     return crypto.timingSafeEqual(Buffer.from(expected, "utf8"), Buffer.from(signature, "utf8"));

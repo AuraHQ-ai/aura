@@ -10,7 +10,7 @@ import type { WebClient } from "@slack/web-api";
 /** Truncate text to a max length */
 function truncate(text: string, max: number): string {
   if (text.length <= max) return text;
-  return text.slice(0, max) + `\n...(truncated, ${text.length} chars total)`;
+  return `${text.slice(0, max)}\n...(truncated, ${text.length} chars total)`;
 }
 
 /** Extract text content from a page */
@@ -229,7 +229,7 @@ export function createBrowserTools(
               });
 
               // Create a sandboxed function with page, context, browser available
-              const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+              const AsyncFunction = Object.getPrototypeOf(async () => {}).constructor;
               const fn = new AsyncFunction("page", "context", "browser", code);
 
               codeResult = await Promise.race([

@@ -25,9 +25,9 @@
  * summary by original verdict bucket.
  */
 import { config } from "dotenv";
-import { resolve } from "path";
-import { fileURLToPath } from "url";
-import { writeFileSync } from "fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { writeFileSync } from "node:fs";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = resolve(__dirname, "../../../..");

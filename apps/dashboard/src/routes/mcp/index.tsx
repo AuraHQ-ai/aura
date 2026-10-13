@@ -205,8 +205,11 @@ function MarketplacePanel({
         </div>
       </div>
       <div className="space-y-1.5">
-        <label className="text-sm font-medium">Visibility</label>
+        <label htmlFor="mcp-visibility" className="text-sm font-medium">
+          Visibility
+        </label>
         <select
+          id="mcp-visibility"
           value={visibility}
           onChange={(e) => onVisibilityChange(e.target.value as "personal" | "workspace")}
           className="h-9 w-full rounded-md border border-input bg-transparent px-2.5 text-sm"
@@ -660,16 +663,22 @@ function McpPage() {
             </TabsList>
             <TabsContent value="url" className="space-y-4 pt-3">
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">Server URL</label>
+                <label htmlFor="mcp-server-url" className="text-sm font-medium">
+                  Server URL
+                </label>
                 <Input
+                  id="mcp-server-url"
                   placeholder="https://mcp.stripe.com/mcp"
                   value={newUrl}
                   onChange={(e) => setNewUrl(e.target.value)}
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">Name</label>
+                <label htmlFor="mcp-name" className="text-sm font-medium">
+                  Name
+                </label>
                 <Input
+                  id="mcp-name"
                   placeholder="Stripe (optional)"
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
@@ -677,8 +686,11 @@ function McpPage() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <label className="text-sm font-medium">Visibility</label>
+                  <label htmlFor="mcp-new-visibility" className="text-sm font-medium">
+                    Visibility
+                  </label>
                   <select
+                    id="mcp-new-visibility"
                     value={newVisibility}
                     onChange={(e) => setNewVisibility(e.target.value as "personal" | "workspace")}
                     className="h-9 w-full rounded-md border border-input bg-transparent px-2.5 text-sm"
@@ -688,8 +700,11 @@ function McpPage() {
                   </select>
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-sm font-medium">Transport</label>
+                  <label htmlFor="mcp-transport" className="text-sm font-medium">
+                    Transport
+                  </label>
                   <select
+                    id="mcp-transport"
                     value={newTransport}
                     onChange={(e) => setNewTransport(e.target.value as "http" | "sse")}
                     className="h-9 w-full rounded-md border border-input bg-transparent px-2.5 text-sm"
@@ -700,8 +715,11 @@ function McpPage() {
                 </div>
               </div>
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">Header auth (optional)</label>
+                <label htmlFor="mcp-header-auth-optional" className="text-sm font-medium">
+                  Header auth (optional)
+                </label>
                 <Input
+                  id="mcp-header-auth-optional"
                   placeholder="Header name, e.g. Authorization"
                   value={newHeaderName}
                   onChange={(e) => setNewHeaderName(e.target.value)}

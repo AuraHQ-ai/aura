@@ -65,7 +65,7 @@ function formatMessage(level: LogLevel, message: string, meta?: Record<string, u
  */
 function emit(level: LogLevel, consoleFn: (msg: string) => void, line: string): void {
   consoleFn(line);
-  if (logStream) logStream.write(line + "\n");
+  if (logStream) logStream.write(`${line}\n`);
 }
 
 export const logger = {

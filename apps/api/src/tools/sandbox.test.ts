@@ -665,8 +665,7 @@ cat /tmp/aura-bg/feedbabe.out
 
     expect(received).toHaveLength(1);
     const [request] = received;
-    const expectedSignature =
-      "sha256=" + crypto.createHmac("sha256", secret).update(request.body, "utf8").digest("hex");
+    const expectedSignature = `sha256=${crypto.createHmac("sha256", secret).update(request.body, "utf8").digest("hex")}`;
     expect(request.signature).toBe(expectedSignature);
     expect(JSON.parse(request.body)).toEqual({
       id: "deadbeef",

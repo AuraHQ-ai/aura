@@ -18,7 +18,8 @@
  * so it MUST only ever be loaded via dynamic `import()` from the TTY bench
  * path — never on the Vercel runtime.
  */
-import React, { useEffect, useState, useSyncExternalStore } from "react";
+import type React from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { render, Box, Text } from "ink";
 import Spinner from "ink-spinner";
 

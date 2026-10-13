@@ -134,7 +134,7 @@ export function createSheetsTools(context?: ScheduleContext) {
             } else {
               sheetName = meta.sheets[0]?.properties.title ?? "Sheet1";
             }
-            effectiveRange = "'" + sheetName.replace(/'/g, "''") + "'";
+            effectiveRange = `'${sheetName.replace(/'/g, "''")}'`;
           }
 
           const data = await fetchJson<{

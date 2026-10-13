@@ -239,9 +239,9 @@ if (cfg.dryRun) console.log("DRY RUN — no DB writes, no LLM calls");
 if (!wantWizard) {
   const staged = Boolean(fromStage || toStage || reset || persist || benchId);
   console.log(
-    `Running bench: datasets=${(cfg.datasets as string[]).join(",")} ${limit ? "limit=" + limit : "subset=" + cfg.subset}${cases ? " cases=" + cases : ""}${category ? " category=" + category : ""}` +
+    `Running bench: datasets=${(cfg.datasets as string[]).join(",")} ${limit ? `limit=${limit}` : `subset=${cfg.subset}`}${cases ? ` cases=${cases}` : ""}${category ? ` category=${category}` : ""}` +
       `  [replay=${replay ?? "exchange"}${asOf === false ? ", no-as-of" : ""}]` +
-      (resume != null ? `  [resume${resume ? "=" + resume : "=latest"}]` : "") +
+      (resume != null ? `  [resume${resume ? `=${resume}` : "=latest"}]` : "") +
       (staged
         ? `  [stages ${fromStage ?? "messages"}→${toStage ?? "score"}${reset ? ", reset" : ""}${skipMessageEmbeddings ? ", raw messages" : ""}]`
         : ""),
@@ -250,7 +250,7 @@ if (!wantWizard) {
 
 try {
   const output = await runBench(cfg);
-  console.log("\n" + output.textSummary);
+  console.log(`\n${output.textSummary}`);
 
   if (jsonOut) {
     // Create the parent dir so a missing path doesn't fail the run after all

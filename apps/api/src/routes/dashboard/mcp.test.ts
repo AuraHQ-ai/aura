@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import crypto from "node:crypto";
-import { mcpConnections, mcpServers, type McpServer } from "@aura/db/schema";
+import { mcpConnections, type McpServer } from "@aura/db/schema";
 import { parseRegistryServers } from "../../lib/mcp-registry.js";
 import { createDashboardApp } from "./schemas.js";
 

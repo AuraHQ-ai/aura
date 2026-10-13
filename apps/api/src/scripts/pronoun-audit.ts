@@ -1,7 +1,7 @@
 import { config } from "dotenv";
-import { writeFile } from "fs/promises";
-import { resolve } from "path";
-import { fileURLToPath } from "url";
+import { writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { entities, users } from "@aura/db/schema";
 import type { Database } from "../db/client.js";
@@ -417,7 +417,7 @@ export async function main(args: string[]): Promise<void> {
       `-- ${rollbackStatements.length} UPDATE statement(s). Run inside a transaction.\n`;
     await writeFile(
       rollbackSqlPath,
-      header + "BEGIN;\n" + rollbackStatements.join("\n") + "\nCOMMIT;\n",
+      `${header}BEGIN;\n${rollbackStatements.join("\n")}\nCOMMIT;\n`,
       "utf8",
     );
   }

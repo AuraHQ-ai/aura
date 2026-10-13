@@ -59,11 +59,11 @@ async function main() {
     const flips = cc.filter((x) => qa(x.old) !== qa(x.neu)).length;
     console.log(
       cat.padEnd(26),
-      (o * 100).toFixed(1).padStart(5) + "%",
+      `${(o * 100).toFixed(1).padStart(5)}%`,
       "->",
-      (n * 100).toFixed(1).padStart(5) + "%",
+      `${(n * 100).toFixed(1).padStart(5)}%`,
       ((n - o >= 0 ? "+" : "") + ((n - o) * 100).toFixed(1)).padStart(6),
-      ("   " + flips).padStart(6),
+      `   ${flips}`.padStart(6),
     );
     oS += o * cc.length;
     nS += n * cc.length;
@@ -71,9 +71,9 @@ async function main() {
   }
   console.log(
     "OVERALL".padEnd(26),
-    ((oS / N) * 100).toFixed(1).padStart(5) + "%",
+    `${((oS / N) * 100).toFixed(1).padStart(5)}%`,
     "->",
-    ((nS / N) * 100).toFixed(1).padStart(5) + "%",
+    `${((nS / N) * 100).toFixed(1).padStart(5)}%`,
     ((nS - oS >= 0 ? "+" : "") + (((nS - oS) / N) * 100).toFixed(1)).padStart(6),
   );
   process.exit(0);

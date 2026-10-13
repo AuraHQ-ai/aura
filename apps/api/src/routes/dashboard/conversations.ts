@@ -63,7 +63,7 @@ dashboardConversationsApp.openapi(listConversationsRoute, async (c) => {
     }
     if (search) {
       conditions.push(
-        sql`(${conversationTraces.channelId} ILIKE ${"%" + search + "%"} OR ${conversationTraces.userId} ILIKE ${"%" + search + "%"})`,
+        sql`(${conversationTraces.channelId} ILIKE ${`%${search}%`} OR ${conversationTraces.userId} ILIKE ${`%${search}%`})`,
       );
     }
     const where = conditions.length > 0 ? and(...conditions) : undefined;
@@ -87,7 +87,7 @@ dashboardConversationsApp.openapi(listConversationsRoute, async (c) => {
       string,
       { inputTokens: number; outputTokens: number; totalTokens: number }
     > = {};
-    let firstUserMessages: Record<string, string> = {};
+    const firstUserMessages: Record<string, string> = {};
 
     if (traceIds.length > 0) {
       const rows = await db
@@ -238,7 +238,7 @@ dashboardConversationsApp.openapi(listThreadsRoute, async (c) => {
     }
     if (search) {
       conditions.push(
-        sql`(${conversationTraces.channelId} ILIKE ${"%" + search + "%"} OR ${conversationTraces.userId} ILIKE ${"%" + search + "%"})`,
+        sql`(${conversationTraces.channelId} ILIKE ${`%${search}%`} OR ${conversationTraces.userId} ILIKE ${`%${search}%`})`,
       );
     }
     const where = and(...conditions);
@@ -271,7 +271,7 @@ dashboardConversationsApp.openapi(listThreadsRoute, async (c) => {
       .offset(offset);
 
     const firstTraceIds = threadRows.map((t) => t.firstTraceId).filter(Boolean);
-    let firstUserMessages: Record<string, string> = {};
+    const firstUserMessages: Record<string, string> = {};
     if (firstTraceIds.length > 0) {
       const previewRows = await db
         .select({
@@ -291,7 +291,7 @@ dashboardConversationsApp.openapi(listThreadsRoute, async (c) => {
     }
 
     const allChannelThreadKeys = threadRows.map((t) => `${t.channelId}::${t.threadTs}`);
-    let threadTokens: Record<
+    const threadTokens: Record<
       string,
       { inputTokens: number; outputTokens: number; totalTokens: number }
     > = {};
@@ -563,9 +563,15 @@ dashboardConversationsApp.openapi(getThreadDetailRoute, async (c) => {
         : [];
 
     const messagesByConv: Record<string, typeof allMessages> = {};
-    for (const msg of allMessages) (messagesByConv[msg.conversationId] ??= []).push(msg);
+    for (const msg of allMessages) {
+      messagesByConv[msg.conversationId] ??= [];
+      messagesByConv[msg.conversationId].push(msg);
+    }
     const partsByMsg: Record<string, typeof allParts> = {};
-    for (const part of allParts) (partsByMsg[part.messageId] ??= []).push(part);
+    for (const part of allParts) {
+      partsByMsg[part.messageId] ??= [];
+      partsByMsg[part.messageId].push(part);
+    }
     const evalScoreByMsg: Record<string, (typeof allEvalScores)[0]> = {};
     for (const score of allEvalScores) evalScoreByMsg[score.messageId] = score;
 
@@ -586,7 +592,7 @@ dashboardConversationsApp.openapi(getThreadDetailRoute, async (c) => {
       }));
     }
 
-    let cumulativeTokensByTrace: Record<
+    const cumulativeTokensByTrace: Record<
       string,
       { inputTokens: number; outputTokens: number; totalTokens: number }
     > = {};
@@ -612,7 +618,7 @@ dashboardConversationsApp.openapi(getThreadDetailRoute, async (c) => {
     }
 
     const jobExecIds = traces.map((t) => t.jobExecutionId).filter((id): id is string => id != null);
-    let jobInfoByExecId: Record<string, { jobId: string; jobName: string | null }> = {};
+    const jobInfoByExecId: Record<string, { jobId: string; jobName: string | null }> = {};
     if (jobExecIds.length > 0) {
       const jobRows = await db
         .select({ execId: jobExecutions.id, jobId: jobs.id, jobName: jobs.name })

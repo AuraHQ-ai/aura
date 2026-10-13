@@ -30,7 +30,7 @@ import {
 const SECRET = "github-webhook-secret";
 
 function sign(rawBody: string, secret = SECRET): string {
-  return "sha256=" + crypto.createHmac("sha256", secret).update(rawBody, "utf8").digest("hex");
+  return `sha256=${crypto.createHmac("sha256", secret).update(rawBody, "utf8").digest("hex")}`;
 }
 
 function createDatabaseMock(selectRows: any[] = []) {
@@ -95,7 +95,7 @@ describe("verifyGitHubWebhookSignature", () => {
 
   it("rejects an invalid signature", () => {
     const body = JSON.stringify({ hello: "world" });
-    expect(verifyGitHubWebhookSignature(body, "sha256=" + "0".repeat(64), SECRET)).toBe(false);
+    expect(verifyGitHubWebhookSignature(body, `sha256=${"0".repeat(64)}`, SECRET)).toBe(false);
   });
 
   it("rejects a signature computed with the wrong secret", () => {
@@ -157,7 +157,7 @@ describe("GitHub webhook endpoint", () => {
     const app = createGitHubWebhookApp(database);
 
     const response = await request(app, "pull_request", prPayload(), {
-      signature: "sha256=" + "0".repeat(64),
+      signature: `sha256=${"0".repeat(64)}`,
     });
 
     expect(response.status).toBe(401);

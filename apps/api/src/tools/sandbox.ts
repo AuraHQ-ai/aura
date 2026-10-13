@@ -896,7 +896,7 @@ export function createSandboxTools(context?: ScheduleContext) {
             ? undefined
             : input.command.length <= 120
               ? input.command
-              : input.command.slice(0, 119) + "…",
+              : `${input.command.slice(0, 119)}…`,
         output: (result) => {
           if ("ok" in result && !result.ok) return result.error;
           if (!("exit_code" in result)) return undefined;
@@ -906,7 +906,7 @@ export function createSandboxTools(context?: ScheduleContext) {
           const stdout = typeof r.stdout === "string" ? r.stdout.trim() : "";
           const detail = stderr || stdout;
           if (detail) {
-            const truncated = detail.length <= 180 ? detail : detail.slice(0, 179) + "…";
+            const truncated = detail.length <= 180 ? detail : `${detail.slice(0, 179)}…`;
             return `Exit code ${r.exit_code}: ${truncated}`;
           }
           return `Exit code ${r.exit_code}`;
@@ -1033,7 +1033,7 @@ export function createSandboxTools(context?: ScheduleContext) {
             ? undefined
             : input.command.length <= 120
               ? input.command
-              : input.command.slice(0, 119) + "…",
+              : `${input.command.slice(0, 119)}…`,
         output: (result) => {
           if ("ok" in result && !result.ok) return result.error;
           if (!("id" in result) || !("pid" in result)) return undefined;

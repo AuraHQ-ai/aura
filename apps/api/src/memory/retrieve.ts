@@ -1156,7 +1156,7 @@ export async function retrieveConversations(
       const key = (m.slack_thread_ts || m.slack_ts) as string;
       if (!key) continue;
       const rawContent = m.content as string;
-      const content = rawContent.length > 100 ? rawContent.substring(0, 100) + "…" : rawContent;
+      const content = rawContent.length > 100 ? `${rawContent.substring(0, 100)}…` : rawContent;
       const date = new Date(m.created_at).toISOString().split("T")[0];
       threadSummaryMap.set(key, { content, date });
     }

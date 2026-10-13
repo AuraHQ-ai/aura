@@ -1384,9 +1384,9 @@ function buildToolContextForExtraction(toolCalls: ToolCallRecord[]): string {
   if (informativeTools.length === 0) return "";
 
   const summaries = informativeTools.slice(0, 10).map((tc) => {
-    const outputPreview = tc.output.length > 300 ? tc.output.slice(0, 300) + "…" : tc.output;
+    const outputPreview = tc.output.length > 300 ? `${tc.output.slice(0, 300)}…` : tc.output;
     return `[Tool: ${tc.name}] ${outputPreview}`;
   });
 
-  return "\n\n---\nTool outputs from this conversation:\n" + summaries.join("\n");
+  return `\n\n---\nTool outputs from this conversation:\n${summaries.join("\n")}`;
 }

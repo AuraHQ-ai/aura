@@ -1,6 +1,5 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { db } from "../src/db/client.js";
-import { conversationMessages, conversationTraces } from "@aura/db/schema";
 import { computeConversationCost } from "../src/lib/cost-calculator.js";
 
 async function main() {

@@ -574,7 +574,7 @@ async function runSlackAgentStep(
 
   function truncate(s: string | undefined, max: number): string | undefined {
     if (!s) return undefined;
-    return s.length <= max ? s : s.slice(0, max - 1) + "…";
+    return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
   }
 
   // ── Run one model call ───────────────────────────────────────────────

@@ -226,8 +226,11 @@ function CredentialsPage() {
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Type</label>
+              <label htmlFor="cred-type" className="text-sm font-medium">
+                Type
+              </label>
               <select
+                id="cred-type"
                 value={newType}
                 onChange={(e) => setNewType(e.target.value)}
                 className="h-9 w-full rounded-md border border-input bg-transparent px-2.5 text-sm"
@@ -237,10 +240,13 @@ function CredentialsPage() {
               </select>
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Owner</label>
+              <label htmlFor="cred-owner" className="text-sm font-medium">
+                Owner
+              </label>
               <Popover open={ownerPickerOpen} onOpenChange={setOwnerPickerOpen}>
                 <PopoverTrigger asChild>
                   <Button
+                    id="cred-owner"
                     variant="outline"
                     role="combobox"
                     aria-expanded={ownerPickerOpen}
@@ -284,8 +290,11 @@ function CredentialsPage() {
               </Popover>
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Name</label>
+              <label htmlFor="cred-name" className="text-sm font-medium">
+                Name
+              </label>
               <Input
+                id="cred-name"
                 placeholder="e.g. github_token"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
@@ -295,8 +304,11 @@ function CredentialsPage() {
               </p>
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Scope</label>
+              <label htmlFor="cred-scope" className="text-sm font-medium">
+                Scope
+              </label>
               <select
+                id="cred-scope"
                 value={newScope}
                 onChange={(e) => setNewScope(e.target.value)}
                 className="h-9 w-full rounded-md border border-input bg-transparent px-2.5 text-sm"
@@ -312,8 +324,11 @@ function CredentialsPage() {
               </p>
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Value</label>
+              <label htmlFor="cred-value" className="text-sm font-medium">
+                Value
+              </label>
               <Input
+                id="cred-value"
                 type="password"
                 placeholder="Secret value"
                 value={newValue}

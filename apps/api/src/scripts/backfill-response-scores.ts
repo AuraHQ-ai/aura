@@ -16,8 +16,8 @@
  *   pnpm backfill:response-scores --until=2026-04-01    # stop once the walk passes a date
  */
 import { config } from "dotenv";
-import { resolve } from "path";
-import { fileURLToPath } from "url";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = resolve(__dirname, "../../../..");

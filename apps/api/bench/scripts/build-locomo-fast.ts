@@ -271,7 +271,7 @@ function doSelect(): void {
     selection,
   };
   fs.mkdirSync(FAST_DIR, { recursive: true });
-  fs.writeFileSync(MANIFEST, JSON.stringify(manifest, null, 2) + "\n");
+  fs.writeFileSync(MANIFEST, `${JSON.stringify(manifest, null, 2)}\n`);
 
   // ── Report: tracking + coverage ──────────────────────────────────────────
   console.log(

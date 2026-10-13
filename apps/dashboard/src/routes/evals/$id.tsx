@@ -34,6 +34,7 @@ function AdjudicationPanel({ score }: { score: EvalScoreDetail }) {
   const [mustDo, setMustDo] = useState((score.rubric?.must_do ?? []).join("\n"));
   const [mustNotDo, setMustNotDo] = useState((score.rubric?.must_not_do ?? []).join("\n"));
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset the form only when switching to a different score, not on every refetch (would clobber in-progress edits).
   useEffect(() => {
     setNote(score.note ?? "");
     setGoldAnswer(score.goldAnswer ?? "");
@@ -75,8 +76,11 @@ function AdjudicationPanel({ score }: { score: EvalScoreDetail }) {
       </CardHeader>
       <CardContent className="space-y-3">
         <div>
-          <label className="text-xs font-medium text-muted-foreground">Note</label>
+          <label htmlFor="eval-note" className="text-xs font-medium text-muted-foreground">
+            Note
+          </label>
           <Textarea
+            id="eval-note"
             value={note}
             onChange={(e) => setNote(e.target.value)}
             rows={3}
@@ -84,10 +88,11 @@ function AdjudicationPanel({ score }: { score: EvalScoreDetail }) {
           />
         </div>
         <div>
-          <label className="text-xs font-medium text-muted-foreground">
+          <label htmlFor="eval-gold-answer" className="text-xs font-medium text-muted-foreground">
             Gold answer (human-authored)
           </label>
           <Textarea
+            id="eval-gold-answer"
             value={goldAnswer}
             onChange={(e) => setGoldAnswer(e.target.value)}
             rows={4}
@@ -96,10 +101,11 @@ function AdjudicationPanel({ score }: { score: EvalScoreDetail }) {
         </div>
         <div className="grid gap-3 sm:grid-cols-2">
           <div>
-            <label className="text-xs font-medium text-muted-foreground">
+            <label htmlFor="eval-must-do" className="text-xs font-medium text-muted-foreground">
               Rubric: must do (one per line)
             </label>
             <Textarea
+              id="eval-must-do"
               value={mustDo}
               onChange={(e) => setMustDo(e.target.value)}
               rows={4}
@@ -108,10 +114,11 @@ function AdjudicationPanel({ score }: { score: EvalScoreDetail }) {
             />
           </div>
           <div>
-            <label className="text-xs font-medium text-muted-foreground">
+            <label htmlFor="eval-must-not-do" className="text-xs font-medium text-muted-foreground">
               Rubric: must not do (one per line)
             </label>
             <Textarea
+              id="eval-must-not-do"
               value={mustNotDo}
               onChange={(e) => setMustNotDo(e.target.value)}
               rows={4}

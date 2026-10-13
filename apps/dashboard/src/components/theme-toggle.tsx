@@ -14,13 +14,13 @@ const themeOptions = [
   { value: "system", label: "System default" },
 ] as const;
 
-export function ThemeSelect({ className }: { className?: string }) {
+export function ThemeSelect({ className, id }: { className?: string; id?: string }) {
   const { theme, setTheme } = useTheme();
   const value = theme ?? "system";
 
   return (
     <Select value={value} onValueChange={(nextTheme) => setTheme(nextTheme)}>
-      <SelectTrigger className={cn("w-full", className)} aria-label="Theme preference">
+      <SelectTrigger id={id} className={cn("w-full", className)} aria-label="Theme preference">
         <SelectValue placeholder="Select theme" />
       </SelectTrigger>
       <SelectContent align="end">

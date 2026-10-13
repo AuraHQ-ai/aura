@@ -1,6 +1,6 @@
 import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
-import { eq, and, or, not, desc, isNotNull, isNull, ne, sql } from "drizzle-orm";
+import { eq, and, not, desc, isNotNull, isNull, ne, sql } from "drizzle-orm";
 import type { WebClient } from "@slack/web-api";
 import { CronExpressionParser } from "cron-parser";
 import { db } from "../db/client.js";

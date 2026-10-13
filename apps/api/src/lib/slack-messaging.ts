@@ -146,7 +146,7 @@ export async function safePostMessage(
           : "channel_type_not_supported";
 
       logger.warn(
-        "safePostMessage: retrying without blocks" + (stripMetadata ? " and metadata" : ""),
+        `safePostMessage: retrying without blocks${stripMetadata ? " and metadata" : ""}`,
         {
           channel,
           originalError: err?.data?.error || err?.message,

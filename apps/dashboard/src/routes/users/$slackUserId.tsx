@@ -194,9 +194,11 @@ function UserDetailPage() {
             <CardContent className="pt-4 space-y-3">
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
-                  <label className="text-sm font-medium">Role</label>
+                  <label htmlFor="user-role" className="text-sm font-medium">
+                    Role
+                  </label>
                   <Select value={role} onValueChange={setRole}>
-                    <SelectTrigger className="w-full">
+                    <SelectTrigger id="user-role" className="w-full">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -224,24 +226,42 @@ function UserDetailPage() {
               <CardContent className="pt-4 space-y-3">
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div>
-                    <label className="text-sm font-medium">Job Title</label>
-                    <Input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
+                    <label htmlFor="user-job-title" className="text-sm font-medium">
+                      Job Title
+                    </label>
+                    <Input
+                      id="user-job-title"
+                      value={jobTitle}
+                      onChange={(e) => setJobTitle(e.target.value)}
+                    />
                   </div>
                   <div>
-                    <label className="text-sm font-medium">Preferred Language</label>
+                    <label htmlFor="user-preferred-language" className="text-sm font-medium">
+                      Preferred Language
+                    </label>
                     <Input
+                      id="user-preferred-language"
                       value={preferredLanguage}
                       onChange={(e) => setPreferredLanguage(e.target.value)}
                     />
                   </div>
                   <div>
-                    <label className="text-sm font-medium">Gender</label>
-                    <Input value={gender} onChange={(e) => setGender(e.target.value)} />
+                    <label htmlFor="user-gender" className="text-sm font-medium">
+                      Gender
+                    </label>
+                    <Input
+                      id="user-gender"
+                      value={gender}
+                      onChange={(e) => setGender(e.target.value)}
+                    />
                   </div>
                 </div>
                 <div>
-                  <label className="text-sm font-medium">Notes</label>
+                  <label htmlFor="user-notes" className="text-sm font-medium">
+                    Notes
+                  </label>
                   <textarea
+                    id="user-notes"
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
                     className="flex min-h-[100px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"

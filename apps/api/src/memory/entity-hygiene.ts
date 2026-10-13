@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { withTransaction } from "../db/tx.js";
-import { entities, entityAliases, memoryEntities, users } from "@aura/db/schema";
+import { entityAliases } from "@aura/db/schema";
 import type { EntityType } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
 

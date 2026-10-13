@@ -298,7 +298,9 @@ describe("heartbeat stale running recovery", () => {
       status: "pending",
       retries: 0,
     });
-    expect((recoveredUpdate?.executeAt as Date).toISOString()).toBe("2026-05-20T10:00:00.000Z");
+    expect((recoveredUpdate?.executeAt as Date | undefined)?.toISOString()).toBe(
+      "2026-05-20T10:00:00.000Z",
+    );
     expect(sendJobFailureDmMock).not.toHaveBeenCalled();
   });
 

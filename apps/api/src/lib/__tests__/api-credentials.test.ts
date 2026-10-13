@@ -70,7 +70,7 @@ describe("credential name validation", () => {
     expect(NAME_RE.test("has spaces")).toBe(false);
     expect(NAME_RE.test("UPPERCASE")).toBe(false);
     expect(NAME_RE.test("a")).toBe(false);
-    expect(NAME_RE.test("a" + "b".repeat(63))).toBe(false);
+    expect(NAME_RE.test(`a${"b".repeat(63)}`)).toBe(false);
   });
 });
 

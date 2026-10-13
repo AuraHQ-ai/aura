@@ -2524,6 +2524,7 @@ describe("generateResponse turn markers (stream-death watchdog, issue #1109)", (
       agent: {
         stream: vi.fn().mockResolvedValue(
           createAgentStreamResult(
+            // biome-ignore lint/correctness/useYield: a stream that fails before emitting anything.
             (async function* () {
               throw new InvocationSupersededError("inv-superseded-1");
             })(),

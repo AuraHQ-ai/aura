@@ -107,10 +107,7 @@ export function isLeakedMarkupToolName(toolName: string): boolean {
 
 function isKnownTool(tools: Record<string, unknown> | null | undefined, name: string): boolean {
   return Boolean(
-    tools &&
-      TOOL_NAME_RE.test(name) &&
-      !isLeakedMarkupToolName(name) &&
-      Object.prototype.hasOwnProperty.call(tools, name),
+    tools && TOOL_NAME_RE.test(name) && !isLeakedMarkupToolName(name) && Object.hasOwn(tools, name),
   );
 }
 

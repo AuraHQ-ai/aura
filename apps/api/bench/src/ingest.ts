@@ -197,7 +197,9 @@ export async function storeMessagesForCases(
       for (const group of chunk(withContent, EMBED_CHUNK)) {
         try {
           const vecs = await embedTexts(group.map((r) => r.content as string));
-          group.forEach((r, gi) => embeddings.set(r.externalId, vecs[gi]));
+          group.forEach((r, gi) => {
+            embeddings.set(r.externalId, vecs[gi]);
+          });
         } catch (error) {
           logger.warn("bench: message embedding chunk failed (storing without)", {
             error: String(error).slice(0, 200),

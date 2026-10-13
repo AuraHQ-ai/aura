@@ -413,7 +413,7 @@ function formatCapabilities(envVars: SandboxEnvVarInfo[], availableToolNames?: s
   for (const domain of CAPABILITY_DOMAINS) {
     const presentEnvNames = domain.envNames.filter((name) => names.includes(name));
     if (presentEnvNames.length === 0) continue;
-    presentEnvNames.forEach((name) => covered.add(name));
+    for (const name of presentEnvNames) covered.add(name);
 
     const presentWrappers =
       domain.wrappers?.filter((name) => (availableTools ? availableTools.has(name) : true)) ?? [];

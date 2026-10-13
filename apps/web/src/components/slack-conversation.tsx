@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noArrayIndexKey: renders a static parsed transcript; nodes never reorder.
 "use client";
 
 import * as React from "react";
@@ -261,9 +262,7 @@ function parseInline(text: string, baseKey: number, dark: boolean): React.ReactN
   const parts: React.ReactNode[] = [];
   let last = 0;
   let key = baseKey * 100;
-  let match: RegExpExecArray | null;
-
-  while ((match = pattern.exec(text)) !== null) {
+  for (const match of text.matchAll(pattern)) {
     if (match.index > last) {
       parts.push(<React.Fragment key={key++}>{text.slice(last, match.index)}</React.Fragment>);
     }
@@ -429,6 +428,7 @@ function ToolCallBlock({ node, dark }: { node: ToolCallNode; dark: boolean }) {
       >
         <Collapsible.Trigger asChild>
           <button
+            type="button"
             style={{
               display: "flex",
               alignItems: "center",
@@ -466,6 +466,7 @@ function ToolCallBlock({ node, dark }: { node: ToolCallNode; dark: boolean }) {
             {/* Caret on RIGHT, always present if expandable */}
             {node.detail && (
               <svg
+                aria-hidden="true"
                 width="16"
                 height="16"
                 viewBox="0 0 16 16"
@@ -539,6 +540,7 @@ function SlackMessageRow({
   const avatarBorderRadius = avatarShape === "round" ? "12px" : "6px";
 
   return (
+    // biome-ignore lint/a11y/noStaticElementInteractions: hover-only highlight, no action.
     <div
       style={{
         display: "flex",

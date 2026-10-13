@@ -1,6 +1,6 @@
-import { eq, sql, and, like, or, arrayContains } from "drizzle-orm";
+import { eq, sql, and } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { memories, users, entities, type Memory } from "@aura/db/schema";
+import { memories, users, entities } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
 import { embedText } from "../lib/embeddings.js";
 

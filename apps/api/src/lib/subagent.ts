@@ -1,4 +1,4 @@
-import { type ToolSet, type LanguageModel } from "ai";
+import type { ToolSet, LanguageModel } from "ai";
 import { logger } from "./logger.js";
 import { createSubAgent } from "./agents.js";
 

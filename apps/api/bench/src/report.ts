@@ -172,7 +172,7 @@ function buildBlocks(input: ReportInput): any[] {
     },
     {
       type: "section",
-      text: { type: "mrkdwn", text: "```\n" + summary + "\n```" },
+      text: { type: "mrkdwn", text: `\`\`\`\n${summary}\n\`\`\`` },
     },
   ];
 }

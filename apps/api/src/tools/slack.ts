@@ -615,7 +615,7 @@ export async function createSlackTools(
     items: Array<{ id: string; date_created?: number | string }>,
   ): Promise<Map<string, { channelId: string; threadTs: string }>> {
     const result = new Map<string, { channelId: string; threadTs: string }>();
-    const listChannelId = listId.startsWith("F") ? "C" + listId.slice(1) : null;
+    const listChannelId = listId.startsWith("F") ? `C${listId.slice(1)}` : null;
     if (!listChannelId || items.length === 0) return result;
 
     try {

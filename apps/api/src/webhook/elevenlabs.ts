@@ -338,7 +338,7 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
           : `*${directionLabel} call*`;
 
       const truncatedTranscript =
-        transcriptText.length > 500 ? transcriptText.slice(0, 500) + "..." : transcriptText;
+        transcriptText.length > 500 ? `${transcriptText.slice(0, 500)}...` : transcriptText;
 
       const slackMessage =
         `${directionEmoji} *Voice call ended*\n` +

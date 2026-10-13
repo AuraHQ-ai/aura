@@ -167,6 +167,7 @@ export const TerminalContent = ({ className, children, ...props }: TerminalConte
   const { output, isStreaming, autoScroll } = useContext(TerminalContext);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `output` is the trigger — re-scroll whenever new output arrives.
   useEffect(() => {
     if (autoScroll && containerRef.current) {
       containerRef.current.scrollTop = containerRef.current.scrollHeight;

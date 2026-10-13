@@ -88,7 +88,7 @@ function truncateToBytes(s: string, maxBytes: number): string {
   const buf = Buffer.from(s, "utf8");
   let end = maxBytes - 3;
   while (end > 0 && (buf[end] & 0xc0) === 0x80) end--;
-  return buf.subarray(0, end).toString("utf8") + "…";
+  return `${buf.subarray(0, end).toString("utf8")}…`;
 }
 
 /** Serialize tool output with per-tool truncation. */
@@ -163,7 +163,7 @@ function buildToolMetadata(
 
 function truncate(s: string | undefined, max: number): string | undefined {
   if (!s) return undefined;
-  return s.length <= max ? s : s.slice(0, max - 1) + "…";
+  return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
 }
 
 // ── Types ────────────────────────────────────────────────────────────────────
@@ -1179,8 +1179,7 @@ export async function generateResponse(options: RespondOptions): Promise<LLMResp
     lineCarry += chunkText;
     let output = "";
 
-    let nlIdx: number;
-    while ((nlIdx = lineCarry.indexOf("\n")) !== -1) {
+    for (let nlIdx = lineCarry.indexOf("\n"); nlIdx !== -1; nlIdx = lineCarry.indexOf("\n")) {
       const line = lineCarry.slice(0, nlIdx + 1);
       lineCarry = lineCarry.slice(nlIdx + 1);
 
@@ -2651,7 +2650,7 @@ export async function generateResponse(options: RespondOptions): Promise<LLMResp
 
       turnMarkerStatus = "completed";
       return {
-        raw: accumulatedText + `\n\n${interruptedNote}`,
+        raw: `${accumulatedText}\n\n${interruptedNote}`,
         alreadyPosted: true,
         usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
         toolCalls: toolCallRecords,
@@ -2707,7 +2706,7 @@ export async function generateResponse(options: RespondOptions): Promise<LLMResp
       await persistDeferredToolCache();
       turnMarkerStatus = "completed";
       return {
-        raw: accumulatedText + `\n\n${thrashNote}`,
+        raw: `${accumulatedText}\n\n${thrashNote}`,
         alreadyPosted: true,
         usage: { inputTokens: 0, outputTokens: 0, totalTokens: 0 },
         toolCalls: toolCallRecords,

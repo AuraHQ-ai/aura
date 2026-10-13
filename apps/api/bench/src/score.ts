@@ -8,7 +8,7 @@ import { db } from "../../src/db/client.js";
 import { benchRuns, type NewBenchRun } from "@aura/db/schema";
 import { logger } from "../../src/lib/logger.js";
 import { BENCH_META_WORKSPACE } from "./workspace.js";
-import type { BenchRunConfig, BenchScore, DatasetId, PerCaseResult, ScoreType } from "./types.js";
+import type { BenchRunConfig, BenchScore, DatasetId, PerCaseResult } from "./types.js";
 
 /**
  * Aggregate per-case results into (dataset, category, scoreType) cells.

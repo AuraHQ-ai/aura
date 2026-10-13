@@ -26,6 +26,7 @@ export function ThemeToggle() {
     <DropdownMenuPrimitive.Root>
       <DropdownMenuPrimitive.Trigger asChild>
         <button
+          type="button"
           aria-label="Toggle theme"
           style={{
             display: "flex",

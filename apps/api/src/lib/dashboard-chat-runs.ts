@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import { dashboardChatRuns } from "@aura/db/schema";
 import { db } from "../db/client.js";
 import { logger } from "./logger.js";

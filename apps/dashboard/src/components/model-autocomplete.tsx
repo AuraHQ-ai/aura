@@ -92,6 +92,7 @@ function getSelectedLabel(
 }
 
 export interface ModelAutocompleteProps {
+  id?: string;
   value: string;
   onValueChange: (value: string) => void;
   options: ModelAutocompleteOption[];
@@ -109,6 +110,7 @@ export interface ModelAutocompleteProps {
 }
 
 export function ModelAutocomplete({
+  id,
   value,
   onValueChange,
   options,
@@ -136,6 +138,7 @@ export function ModelAutocomplete({
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
         <Button
+          id={id}
           type="button"
           variant={triggerVariant}
           role="combobox"

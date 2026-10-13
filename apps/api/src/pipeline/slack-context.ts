@@ -275,7 +275,7 @@ export async function fetchConversationContext(
 
 /** Format rich tool I/O records into a structured block for context. */
 function formatToolIO(records: ToolIORecord[], isOld = false): string {
-  const trunc = (s: string, max: number) => (s.length > max ? s.slice(0, max) + "..." : s);
+  const trunc = (s: string, max: number) => (s.length > max ? `${s.slice(0, max)}...` : s);
 
   const parts = records.map((r) => {
     const error = r.is_error ? " [ERROR]" : "";

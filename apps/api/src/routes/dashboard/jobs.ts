@@ -202,7 +202,7 @@ dashboardJobsApp.openapi(getJobRoute, async (c) => {
 
     const executionIds = executions.map((e) => e.id);
     type TraceInfo = { costUsd: string | null; traceId: string; resolvedModelId: string | null };
-    let traceMap: Record<string, TraceInfo> = {};
+    const traceMap: Record<string, TraceInfo> = {};
 
     if (executionIds.length > 0) {
       const traces = await db

@@ -44,7 +44,7 @@ import {
 } from "./sandbox-command.js";
 
 function sign(rawBody: string, secret: string): string {
-  return "sha256=" + crypto.createHmac("sha256", secret).update(rawBody, "utf8").digest("hex");
+  return `sha256=${crypto.createHmac("sha256", secret).update(rawBody, "utf8").digest("hex")}`;
 }
 
 function createDatabaseMock(row: any) {

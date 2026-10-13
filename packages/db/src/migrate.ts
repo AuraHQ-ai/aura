@@ -36,10 +36,10 @@
  * migration missing from the ledger EXECUTES, whatever its timestamp.
  */
 
-import { createHash } from "crypto";
-import { readFileSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { neon } from "@neondatabase/serverless";
 import { planMigrations, LEGACY_BACKFILL_HASHES } from "./migrator.js";
 

@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { TableRowsSkeleton } from "@/components/page-skeleton";
 import { Pagination } from "@/components/pagination";
 import { cn, formatDate } from "@/lib/utils";
-import { type JobModelCategory } from "@/lib/model-categories";
+import type { JobModelCategory } from "@/lib/model-categories";
 import { useState } from "react";
 import { Search } from "lucide-react";
 
@@ -160,6 +160,7 @@ function JobsPage() {
                     </TableCell>
                     <TableCell>
                       <button
+                        type="button"
                         onClick={() =>
                           toggleMutation.mutate({
                             id: job.id,

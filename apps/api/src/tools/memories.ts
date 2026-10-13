@@ -1,6 +1,6 @@
 import { defineTool } from "../lib/tool.js";
 import { z } from "zod";
-import { eq, and, sql, gte, lte, isNotNull } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { memories } from "@aura/db/schema";
 import type { ScheduleContext } from "@aura/db/schema";
@@ -295,7 +295,7 @@ export function createMemoryTools(context?: ScheduleContext) {
                 SELECT m.id, m.content, m.type, m.status, m.created_at, m.source_thread_ts, m.source_channel_id, 0 AS rank
                 FROM memories m
                 ${entityJoin}
-                WHERE m.content ILIKE ${"%" + query + "%"}
+                WHERE m.content ILIKE ${`%${query}%`}
                 ${whereClause}
                 ORDER BY m.created_at DESC
                 LIMIT ${limit}

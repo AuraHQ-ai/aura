@@ -1,5 +1,5 @@
 import TurndownService from "turndown";
-import { and, eq, isNull, sql, inArray, asc } from "drizzle-orm";
+import { and, eq, isNull, inArray, asc } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { emailsRaw, type NewEmailRaw } from "@aura/db/schema";
 import { getGmailClientForUser, getHeader, extractBodyParts, hasAttachmentParts } from "./gmail.js";

@@ -407,11 +407,11 @@ export function createNoteTools(context?: ScheduleContext) {
 
           switch (operation) {
             case "append":
-              newContent = note.content + "\n" + content;
+              newContent = `${note.content}\n${content}`;
               break;
 
             case "prepend":
-              newContent = content + "\n" + note.content;
+              newContent = `${content}\n${note.content}`;
               break;
 
             case "replace_lines": {

@@ -230,8 +230,10 @@ function SettingsPage() {
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="max-w-xs space-y-1.5">
-            <label className="text-sm font-medium">Theme</label>
-            <ThemeSelect />
+            <label htmlFor="settings-theme" className="text-sm font-medium">
+              Theme
+            </label>
+            <ThemeSelect id="settings-theme" />
             <p className="text-sm text-muted-foreground">
               Choose light, dark, or follow your system setting.
             </p>
@@ -263,8 +265,14 @@ function SettingsPage() {
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             {MODEL_CATEGORIES.map((category) => (
               <div key={category.value}>
-                <label className="text-sm font-medium mb-1 block">{category.title} Model</label>
+                <label
+                  htmlFor={`settings-model-${category.value}`}
+                  className="text-sm font-medium mb-1 block"
+                >
+                  {category.title} Model
+                </label>
                 <ModelAutocomplete
+                  id={`settings-model-${category.value}`}
                   value={actualModel(category.value) || "__default"}
                   onValueChange={(v) =>
                     setModelDrafts((drafts) => ({
@@ -448,8 +456,11 @@ function SettingsPage() {
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Key</label>
+              <label htmlFor="settings-key" className="text-sm font-medium">
+                Key
+              </label>
               <Input
+                id="settings-key"
                 placeholder="e.g. my_setting"
                 value={formKey}
                 onChange={(e) => setFormKey(e.target.value)}
@@ -462,8 +473,11 @@ function SettingsPage() {
               )}
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Value</label>
+              <label htmlFor="settings-value" className="text-sm font-medium">
+                Value
+              </label>
               <Input
+                id="settings-value"
                 placeholder={
                   editingRedacted
                     ? "Enter new value to overwrite (leave blank to keep current)"

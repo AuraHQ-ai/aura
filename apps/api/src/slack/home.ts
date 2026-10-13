@@ -554,7 +554,7 @@ export async function openCredentialAccessModal(
       type: "section",
       text: {
         type: "mrkdwn",
-        text: "👑 <@" + cred.ownerId + "> — *Owner*",
+        text: `👑 <@${cred.ownerId}> — *Owner*`,
       },
     },
   ];
@@ -565,7 +565,7 @@ export async function openCredentialAccessModal(
         type: "section",
         text: {
           type: "mrkdwn",
-          text: "👤 <@" + grant.granteeId + "> — *" + grant.permission + "*",
+          text: `👤 <@${grant.granteeId}> — *${grant.permission}*`,
         },
       });
     }

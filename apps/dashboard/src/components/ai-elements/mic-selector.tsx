@@ -177,7 +177,7 @@ export const MicSelector = ({
       value,
       width,
     }),
-    [devices, onOpenChange, onValueChange, open, setWidth, value, width],
+    [devices, onOpenChange, onValueChange, open, value, width],
   );
 
   return (

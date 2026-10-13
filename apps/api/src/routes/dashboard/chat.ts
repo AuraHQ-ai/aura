@@ -94,7 +94,7 @@ dashboardChatApp.openapi(listChatThreadsRoute, async (c) => {
       .limit(50);
 
     const firstTraceIds = threadRows.map((t) => t.firstTraceId).filter(Boolean);
-    let previews: Record<string, string> = {};
+    const previews: Record<string, string> = {};
     if (firstTraceIds.length > 0) {
       const previewRows = await db
         .select({
@@ -288,7 +288,8 @@ dashboardChatApp.openapi(getThreadMessagesRoute, async (c) => {
 
     const partsByMsg: Record<string, typeof allParts> = {};
     for (const part of allParts) {
-      (partsByMsg[part.messageId] ??= []).push(part);
+      partsByMsg[part.messageId] ??= [];
+      partsByMsg[part.messageId].push(part);
     }
 
     const uiMessages: UIMessage[] = [];

@@ -158,7 +158,7 @@ function resolveRunId(): string | null {
 
 // ── Formatting helpers ───────────────────────────────────────────────────────
 
-const truncate = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
+const truncate = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
 const goldStr = (g: string | string[]) => (Array.isArray(g) ? g.join(" | ") : g);
 const pct = (x: number) => `${(x * 100).toFixed(0)}%`;
 

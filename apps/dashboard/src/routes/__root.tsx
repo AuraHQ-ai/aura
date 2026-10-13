@@ -20,6 +20,7 @@ function Header({ chatOpen, toggleChat }: { chatOpen: boolean; toggleChat: () =>
       </div>
       <div className="flex items-center gap-2">
         <button
+          type="button"
           onClick={toggleChat}
           className={cn(
             "flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[13px] transition-colors cursor-pointer",

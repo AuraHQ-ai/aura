@@ -684,7 +684,7 @@ export async function storeMemories(newMemories: NewMemory[]): Promise<string[]>
 const MAX_TOOL_CONTENT_LENGTH = 2000;
 
 function truncateStr(s: string, max: number): string {
-  return s.length <= max ? s : s.slice(0, max - 1) + "…";
+  return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
 }
 
 /**

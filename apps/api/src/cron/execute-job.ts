@@ -440,8 +440,7 @@ export async function executeJob(
         ? `Plan note "${continuationTag.topic}":\n\n${planContent}\n\nNext steps to execute:\n${nextSteps}${credentialNote}`
         : `Plan note "${continuationTag.topic}" not found. Original instructions:\n${nextSteps}${credentialNote}`;
 
-      systemPrompt =
-        stablePrefix + "\n\n" + timeContext + "\n\n" + CONTINUATION_SPECIFIC_INSTRUCTIONS;
+      systemPrompt = `${stablePrefix}\n\n${timeContext}\n\n${CONTINUATION_SPECIFIC_INSTRUCTIONS}`;
 
       logger.info("Heartbeat: executing continuation", {
         jobId,
@@ -460,7 +459,7 @@ export async function executeJob(
         prompt += `\n\nPrevious result for context:\n${job.lastResult}`;
       }
 
-      systemPrompt = stablePrefix + "\n\n" + timeContext + "\n\n" + JOB_SPECIFIC_INSTRUCTIONS;
+      systemPrompt = `${stablePrefix}\n\n${timeContext}\n\n${JOB_SPECIFIC_INSTRUCTIONS}`;
 
       logger.info("Heartbeat: executing job", {
         jobId,

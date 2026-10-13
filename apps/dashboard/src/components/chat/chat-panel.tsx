@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noArrayIndexKey: message parts are append-only, so the part index is a stable identity.
 import { useMemo, useCallback, useState, useEffect, useRef } from "react";
 import { useChat } from "@ai-sdk/react";
 import { WorkflowChatTransport } from "@workflow/ai";
@@ -235,6 +236,7 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
         <span className="text-[13px] font-medium">Chat with Aura</span>
         <div className="flex items-center gap-1">
           <button
+            type="button"
             onClick={handleNewChat}
             className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
             title="New chat"
@@ -242,6 +244,7 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
             <Plus className="h-3.5 w-3.5" />
           </button>
           <button
+            type="button"
             onClick={() => setShowHistory((v) => !v)}
             className={cn(
               "rounded-md p-1 transition-colors cursor-pointer",
@@ -254,6 +257,7 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
             <Clock className="h-3.5 w-3.5" />
           </button>
           <button
+            type="button"
             onClick={() => exportRef.current()}
             className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
             title={copied ? "Copied!" : "Copy chat as JSON"}
@@ -265,6 +269,7 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
             )}
           </button>
           <button
+            type="button"
             onClick={onClose}
             className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
           >
@@ -393,9 +398,9 @@ function ActiveChat({
     transport,
   });
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only — mark the thread as generating if we attached to an in-flight run.
   useEffect(() => {
     if (initialActiveRunId) onRunStateChange(threadId, "generating");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // T5: the stop button is the ONLY path that cancels generation. Detaches
@@ -646,6 +651,7 @@ function SubmitButton({
 
 function AttachmentStrip() {
   try {
+    // biome-ignore lint/correctness/useHookAtTopLevel: always the first call in render (stable order); try/catch only guards rendering outside the PromptInput provider.
     const { files, remove } = usePromptInputAttachments();
     if (files.length === 0) return null;
 
@@ -680,6 +686,7 @@ function ThreadList({
   return (
     <div className="flex flex-1 flex-col overflow-y-auto">
       <button
+        type="button"
         onClick={onNewChat}
         className="flex items-center gap-2 border-b px-3 py-2.5 text-[13px] text-muted-foreground hover:bg-muted transition-colors cursor-pointer"
       >
@@ -693,6 +700,7 @@ function ThreadList({
       )}
       {threads.map((thread) => (
         <button
+          type="button"
           key={thread.threadId}
           onClick={() => onSelect(thread.threadId)}
           className={cn(

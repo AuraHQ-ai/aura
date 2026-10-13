@@ -107,8 +107,17 @@ function NoteDetailPage() {
       {editing && (
         <div className="grid gap-4 md:grid-cols-2">
           <div>
-            <label className="text-sm font-medium text-muted-foreground mb-2 block">Category</label>
-            <Input value={category} onChange={(e) => setCategory(e.target.value)} />
+            <label
+              htmlFor="note-category"
+              className="text-sm font-medium text-muted-foreground mb-2 block"
+            >
+              Category
+            </label>
+            <Input
+              id="note-category"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+            />
           </div>
         </div>
       )}
@@ -123,8 +132,14 @@ function NoteDetailPage() {
       <div>
         {editing ? (
           <>
-            <label className="text-sm font-medium text-muted-foreground mb-2 block">Content</label>
+            <label
+              htmlFor="note-content"
+              className="text-sm font-medium text-muted-foreground mb-2 block"
+            >
+              Content
+            </label>
             <textarea
+              id="note-content"
               value={content}
               onChange={(e) => setContent(e.target.value)}
               className="flex min-h-[calc(100vh-280px)] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm font-mono"

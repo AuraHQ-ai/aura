@@ -262,7 +262,7 @@ dashboardEvalApp.openapi(listScoresRoute, async (c) => {
     if (threadTs) conditions.push(eq(evalResponseScores.threadTs, threadTs));
     if (search) {
       conditions.push(
-        sql`(${evalResponseScores.servingIntent} ILIKE ${"%" + search + "%"} OR ${evalResponseScores.note} ILIKE ${"%" + search + "%"})`,
+        sql`(${evalResponseScores.servingIntent} ILIKE ${`%${search}%`} OR ${evalResponseScores.note} ILIKE ${`%${search}%`})`,
       );
     }
     const where = conditions.length > 0 ? and(...conditions) : undefined;

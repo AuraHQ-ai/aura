@@ -1,7 +1,6 @@
 import { defineTool, filterToolsByCredentials } from "../lib/tool.js";
 import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
-import { logger } from "../lib/logger.js";
 import { runSubagent } from "../lib/subagent.js";
 import { getFastModel, getMainModel } from "../lib/ai.js";
 import { resolveUserCredentials } from "../lib/permissions.js";

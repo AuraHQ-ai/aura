@@ -14,10 +14,10 @@
  *   4. orphaned-sql    — a .sql file in drizzle/ has no journal entry
  */
 
-import { execSync } from "child_process";
-import { readFileSync, readdirSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
+import { execSync } from "node:child_process";
+import { readFileSync, readdirSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 
 // ── Types ────────────────────────────────────────────────────────────────────
 

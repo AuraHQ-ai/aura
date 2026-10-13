@@ -60,6 +60,7 @@ function ThreadDetailPage() {
   const highlightIdx =
     data && highlight ? findClosestTraceIndex(data.conversations, highlight) : -1;
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: data/highlight are triggers — scroll once the highlighted trace has rendered.
   useEffect(() => {
     if (highlightRef.current) {
       highlightRef.current.scrollIntoView({ behavior: "smooth", block: "center" });

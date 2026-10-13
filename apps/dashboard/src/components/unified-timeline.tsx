@@ -60,6 +60,7 @@ function Collapsible({
   return (
     <div className="border rounded-md">
       <button
+        type="button"
         className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium hover:bg-muted/50 cursor-pointer"
         onClick={() => setOpen(!open)}
       >
@@ -116,6 +117,7 @@ function ToolInvocationBlock({ part }: { part: ConversationPart }) {
       {inputStr && (
         <div className="border-t">
           <button
+            type="button"
             className="flex w-full items-center gap-1.5 px-3 py-1 text-xs text-muted-foreground hover:text-foreground cursor-pointer"
             onClick={() => setShowInput(!showInput)}
           >
@@ -134,6 +136,7 @@ function ToolInvocationBlock({ part }: { part: ConversationPart }) {
       {outputStr && (
         <div className="border-t">
           <button
+            type="button"
             className="flex w-full items-center gap-1.5 px-3 py-1 text-xs text-muted-foreground hover:text-foreground cursor-pointer"
             onClick={() => setShowOutput(!showOutput)}
           >
@@ -169,7 +172,7 @@ function SystemMessageBlock({ text }: { text: string }) {
   const displayText = expanded
     ? text
     : isLong
-      ? text.slice(0, SYSTEM_PREVIEW_LENGTH) + "..."
+      ? `${text.slice(0, SYSTEM_PREVIEW_LENGTH)}...`
       : text;
 
   const modes: { key: SystemViewMode; label: string }[] = [
@@ -188,6 +191,7 @@ function SystemMessageBlock({ text }: { text: string }) {
         <div className="flex items-center gap-1 ml-auto">
           {modes.map((m) => (
             <button
+              type="button"
               key={m.key}
               className={`text-xs px-2 py-0.5 rounded cursor-pointer ${viewMode === m.key ? "bg-muted font-medium" : "text-muted-foreground hover:text-foreground"}`}
               onClick={() => setViewMode(m.key)}
@@ -214,6 +218,7 @@ function SystemMessageBlock({ text }: { text: string }) {
         )}
         {isLong && (
           <button
+            type="button"
             className={`text-xs text-blue-600 dark:text-blue-400 hover:underline cursor-pointer ${viewMode === "xml" ? "px-3 pb-2" : "mt-1"}`}
             onClick={() => setExpanded(!expanded)}
           >
@@ -244,11 +249,12 @@ function UserMessageBlock({ text }: { text: string }) {
           </pre>
         ) : (
           <pre className="whitespace-pre-wrap text-xs font-mono overflow-auto">
-            {text.slice(0, SYSTEM_PREVIEW_LENGTH) + "..."}
+            {`${text.slice(0, SYSTEM_PREVIEW_LENGTH)}...`}
           </pre>
         )}
         {isLong && (
           <button
+            type="button"
             className="mt-1 text-xs text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
             onClick={() => setExpanded(!expanded)}
           >

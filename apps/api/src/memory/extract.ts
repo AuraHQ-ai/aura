@@ -90,7 +90,7 @@ const MAX_TURN_CHARS = 6000;
 const TOOL_STATUS_RE = /^\[([^\]]+)\]\s*\((OK|ERROR)\)/;
 
 function capTurn(text: string): string {
-  return text.length > MAX_TURN_CHARS ? text.slice(0, MAX_TURN_CHARS) + "..." : text;
+  return text.length > MAX_TURN_CHARS ? `${text.slice(0, MAX_TURN_CHARS)}...` : text;
 }
 
 /**

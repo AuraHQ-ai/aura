@@ -279,6 +279,7 @@ function JobDetailPage() {
                     <Badge key={name} variant="secondary" className="font-mono text-xs gap-1">
                       {name}
                       <button
+                        type="button"
                         onClick={() =>
                           updateMutation.mutate({
                             envAllowlist: job.envAllowlist!.filter((n) => n !== name),

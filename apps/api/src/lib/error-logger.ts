@@ -70,7 +70,7 @@ export function sanitizeErrorText(input: string | undefined | null, maxLen = 200
   });
 
   if (out.length > maxLen) {
-    out = out.slice(0, maxLen) + `…(truncated, original ${input.length} chars)`;
+    out = `${out.slice(0, maxLen)}…(truncated, original ${input.length} chars)`;
   }
 
   return out;

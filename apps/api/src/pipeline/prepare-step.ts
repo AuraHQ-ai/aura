@@ -605,9 +605,9 @@ export function createPrepareStep(opts: {
     if (systemSuffixes.length > 0) {
       systemOverride =
         opts.stablePrefix +
-        (opts.environmentContext ? "\n\n" + opts.environmentContext : "") +
-        (opts.conversationContext ? "\n\n" + opts.conversationContext : "") +
-        (opts.dynamicContext ? "\n\n" + opts.dynamicContext : "") +
+        (opts.environmentContext ? `\n\n${opts.environmentContext}` : "") +
+        (opts.conversationContext ? `\n\n${opts.conversationContext}` : "") +
+        (opts.dynamicContext ? `\n\n${opts.dynamicContext}` : "") +
         "\n\n" +
         systemSuffixes.join("\n\n");
     }

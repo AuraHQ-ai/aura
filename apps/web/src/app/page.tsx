@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noArrayIndexKey: static marketing content that never reorders.
 import { stackLogos } from "@/components/stack-logos";
 import { SlackConversation } from "@/components/slack-conversation";
 import type { SlackMessage } from "@/components/slack-conversation";
@@ -177,6 +178,7 @@ export default function Home() {
               }}
             >
               <svg
+                aria-hidden="true"
                 xmlns="http://www.w3.org/2000/svg"
                 viewBox="0 0 24 24"
                 fill="currentColor"
@@ -444,6 +446,7 @@ export default function Home() {
               }}
             >
               <svg
+                aria-hidden="true"
                 xmlns="http://www.w3.org/2000/svg"
                 viewBox="0 0 24 24"
                 fill="currentColor"

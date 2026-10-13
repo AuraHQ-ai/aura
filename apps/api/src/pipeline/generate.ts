@@ -1,10 +1,8 @@
 import {
   streamText,
-  convertToModelMessages,
   isStepCount,
   type LanguageModel,
   type ModelMessage,
-  type UIMessage,
   type StepResult,
   type LanguageModelUsage,
 } from "ai";

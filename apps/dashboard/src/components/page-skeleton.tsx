@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noArrayIndexKey: static placeholder rows that never reorder.
 import { TableRow, TableCell } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 

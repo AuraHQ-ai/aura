@@ -38,9 +38,9 @@
  */
 
 import { config } from "dotenv";
-import { resolve, join } from "path";
-import { fileURLToPath } from "url";
-import { mkdirSync, writeFileSync } from "fs";
+import { resolve, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { mkdirSync, writeFileSync } from "node:fs";
 import {
   parseRebuildArgs,
   describeScope,
@@ -321,7 +321,7 @@ async function replayThreads(threads: ThreadInfo[], targetWorkspaceId: string): 
 // ── Artifacts ────────────────────────────────────────────────────────────────
 
 function writeArtifact(dir: string, name: string, data: unknown): void {
-  writeFileSync(join(dir, name), JSON.stringify(data, null, 2) + "\n");
+  writeFileSync(join(dir, name), `${JSON.stringify(data, null, 2)}\n`);
 }
 
 function printUsage(): void {

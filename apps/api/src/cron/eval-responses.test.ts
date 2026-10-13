@@ -359,7 +359,7 @@ describe("scoreGroupsWithBudget", () => {
 
       expect(score).toHaveBeenCalledTimes(8);
       vi.setSystemTime(101);
-      resolveCalls.forEach((resolve) => resolve());
+      for (const resolve of resolveCalls) resolve();
       const result = await run;
 
       expect(score).toHaveBeenCalledTimes(8);
