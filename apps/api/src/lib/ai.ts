@@ -654,7 +654,7 @@ export function withCacheControl(systemPrompt: string) {
  * the three stable layers and the volatile runtime tail left uncached:
  *   1. stablePrefix (cached globally): personality + self-directive + notes index
  *      — byte-identical across every user and thread.
- *   2. environmentContext (cached per-user): capabilities + storage + deferred tools
+ *   2. environmentContext (cached per-user): capabilities + storage + mcp servers + deferred tools
  *      — "what you can do"; stable across a user's threads. Sits AHEAD of the
  *      conversation so it caches and is never stranded in the uncached tail.
  *   3. conversationContext (cached per-turn): channel + user + memories + threads

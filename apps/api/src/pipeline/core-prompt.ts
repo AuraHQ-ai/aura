@@ -20,6 +20,7 @@ import { db } from "../db/client.js";
 import { inArray, eq, and, sql, isNotNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { logger } from "../lib/logger.js";
+import { listLiveMcpServersForCaller, toMcpServerHintEntry } from "../lib/mcp-servers.js";
 
 // Re-export for consumers that previously imported from prompt.ts
 export type { PersonProfile };
@@ -285,6 +286,7 @@ export async function buildCorePrompt(session: ChannelSession): Promise<CoreProm
     usageStats,
     interlocutorEntity,
     sandboxEnvNames,
+    liveMcpServers,
   ] = await Promise.all([
     queryEmbedding
       ? retrieveMemories({
@@ -313,6 +315,16 @@ export async function buildCorePrompt(session: ChannelSession): Promise<CoreProm
     getUsageStats(),
     fetchInterlocutorEntity(session.userId),
     getSandboxEnvNames(session.userId),
+    listLiveMcpServersForCaller({
+      userId: session.userId,
+      workspaceId: process.env.DEFAULT_WORKSPACE_ID || "default",
+    }).catch((error) => {
+      logger.warn("Failed to load live MCP servers for environment context", {
+        error: String(error),
+        userId: session.userId,
+      });
+      return [];
+    }),
   ]);
 
   // Build entity summaries (related-entities lookup depends on retrieved memories)
@@ -350,6 +362,7 @@ export async function buildCorePrompt(session: ChannelSession): Promise<CoreProm
 
   const environmentContext = buildEnvironmentContext({
     sandboxEnvNames,
+    mcpServers: liveMcpServers.map(toMcpServerHintEntry),
   });
 
   let dynamicContext = buildDynamicContext({

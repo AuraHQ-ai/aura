@@ -116,6 +116,10 @@ const mcpServerDtoSchema = z.object({
   ownerId: z.string().nullable(),
   enabled: z.boolean(),
   trusted: z.boolean(),
+  hint: z.string().nullable(),
+  hintSource: z.enum(["hint", "instructions", "registry"]).nullable(),
+  effectiveHint: z.string().nullable(),
+  promptLine: z.string().nullable(),
   deniedTools: z.array(z.string()),
   toolCount: z.number(),
   toolsCachedAt: z.any(),
@@ -525,6 +529,7 @@ dashboardMcpApp.openapi(getMcpRoute, async (c) => {
 const updateMcpBody = z.object({
   name: z.string().min(1).max(80).optional(),
   enabled: z.boolean().optional(),
+  hint: z.string().max(300).nullable().optional(),
   deniedTools: z.array(z.string().min(1)).optional(),
   headerName: z.string().min(1).max(80).optional(),
   headerValue: z.string().min(1).optional(),
@@ -546,6 +551,10 @@ const updateMcpRoute = createRoute({
     200: {
       content: { "application/json": { schema: z.any() } },
       description: "Success",
+    },
+    400: {
+      content: { "application/json": { schema: errorSchema } },
+      description: "Invalid request",
     },
     403: {
       content: { "application/json": { schema: errorSchema } },
@@ -570,6 +579,11 @@ dashboardMcpApp.openapi(updateMcpRoute, async (c) => {
     const patch: Record<string, unknown> = { updatedAt: new Date() };
     if (body.name !== undefined) patch.name = body.name;
     if (body.enabled !== undefined) patch.enabled = body.enabled;
+    if (body.hint !== undefined) {
+      const trimmed = body.hint?.trim() ?? "";
+      if (trimmed.length > 300) return errorJson(c, 400, "hint must be at most 300 characters");
+      patch.hint = trimmed || null;
+    }
     if (body.deniedTools !== undefined) patch.deniedTools = body.deniedTools;
     if (body.headerName !== undefined || body.headerValue !== undefined) {
       patch.authType = "header";

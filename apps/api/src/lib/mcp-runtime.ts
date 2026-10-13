@@ -11,6 +11,7 @@ import { decryptCredential } from "./credentials.js";
 import { logger } from "./logger.js";
 import { actionLog } from "@aura/db/schema";
 import { executionContext } from "./tool.js";
+import { sanitizeMcpInstructions } from "./mcp-hints.js";
 import { isWriteLikeMcpTool, namespaceMcpTool } from "./mcp-names.js";
 import { DbOAuthClientProvider } from "./mcp-oauth.js";
 import { assertPublicHttpsUrl } from "./mcp-ssrf.js";
@@ -20,6 +21,8 @@ export const MCP_CLOSE = Symbol.for("aura.mcp.close");
 export interface McpClientHandle {
   tools: () => Promise<Record<string, any>>;
   close: () => Promise<void>;
+  /** Server `instructions` from the MCP initialize handshake, if the SDK exposed them. */
+  instructions?: string;
 }
 
 export function wrapUntrustedMcpResult(
@@ -100,10 +103,20 @@ export function cachedToolsFromRemote(remote: Record<string, any>): McpCachedToo
   }));
 }
 
-export async function persistCachedTools(serverId: string, cached: McpCachedTool[]): Promise<void> {
+export async function persistCachedTools(
+  serverId: string,
+  cached: McpCachedTool[],
+  instructions?: string | null,
+): Promise<void> {
   await db
     .update(mcpServers)
-    .set({ cachedTools: cached, toolsCachedAt: new Date(), updatedAt: new Date() })
+    .set({
+      cachedTools: cached,
+      toolsCachedAt: new Date(),
+      cachedInstructions: sanitizeMcpInstructions(instructions),
+      instructionsCachedAt: new Date(),
+      updatedAt: new Date(),
+    })
     .where(eq(mcpServers.id, serverId));
 }
 
@@ -115,7 +128,7 @@ export async function refreshMcpToolCache(
   try {
     const remote = await client.tools();
     const cached = cachedToolsFromRemote(remote);
-    await persistCachedTools(server.id, cached);
+    await persistCachedTools(server.id, cached, client.instructions);
     return cached;
   } finally {
     await client.close().catch(() => {});
@@ -154,9 +167,17 @@ export async function createMcpClientForServer(
     },
   });
 
+  const instructions =
+    client && typeof client === "object" && "instructions" in client
+      ? (client as { instructions?: unknown }).instructions
+      : undefined;
+
   return {
     tools: () => client.tools(),
     close: () => client.close(),
+    ...(typeof instructions === "string" && instructions.trim()
+      ? { instructions: instructions.trim() }
+      : {}),
   };
 }
 

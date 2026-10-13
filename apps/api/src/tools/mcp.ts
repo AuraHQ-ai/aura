@@ -1,17 +1,10 @@
-import { and, eq, or } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { z } from "zod";
-import {
-  mcpConnections,
-  mcpServers,
-  type McpConnection,
-  type McpServer,
-  type ScheduleContext,
-} from "@aura/db/schema";
+import { mcpServers, type ScheduleContext } from "@aura/db/schema";
 import { db } from "../db/client.js";
 import { defineTool, executionContext } from "../lib/tool.js";
 import { hasRole } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
-import { isMcpServerAllowlisted } from "../lib/mcp-names.js";
 import { loadIsolated } from "../lib/mcp-isolation.js";
 import {
   assertPublicHttpsUrl,
@@ -30,8 +23,11 @@ import {
 import { getMarketplaceCatalog, normalizeMcpUrl } from "../lib/mcp-registry.js";
 import {
   allowedCachedTools,
+  connectionsForUser,
   displayNameFromUrlOrName,
   isMcpUnauthorized,
+  listLiveMcpServersForCaller,
+  listVisibleMcpServers,
   slugFromUrlOrName,
   uniqueMcpSlug,
 } from "../lib/mcp-servers.js";
@@ -49,36 +45,6 @@ function isJobTurn(): boolean {
 
 function includeManagementTools(): boolean {
   return !isJobTurn();
-}
-
-function includeServerTools(slug: string): boolean {
-  if (!isJobTurn()) return true;
-  return isMcpServerAllowlisted(slug, executionContext.getStore()?.envAllowlist);
-}
-
-async function listVisibleServers(context?: ScheduleContext): Promise<McpServer[]> {
-  const workspaceId = workspaceIdOf(context);
-  const userId = context?.userId;
-  const visibility = userId
-    ? or(eq(mcpServers.visibility, "workspace"), eq(mcpServers.ownerId, userId))
-    : eq(mcpServers.visibility, "workspace");
-
-  return db
-    .select()
-    .from(mcpServers)
-    .where(and(eq(mcpServers.workspaceId, workspaceId), eq(mcpServers.enabled, true), visibility));
-}
-
-async function connectionsForUser(
-  workspaceId: string,
-  userId: string | undefined,
-): Promise<Map<string, McpConnection>> {
-  if (!userId) return new Map();
-  const rows = await db
-    .select()
-    .from(mcpConnections)
-    .where(and(eq(mcpConnections.workspaceId, workspaceId), eq(mcpConnections.userId, userId)));
-  return new Map(rows.map((row) => [row.serverId, row]));
 }
 
 /**
@@ -101,12 +67,8 @@ export async function createMcpTools(context?: ScheduleContext) {
   }
 
   try {
-    const servers = (await listVisibleServers(context)).filter((server) =>
-      includeServerTools(server.slug),
-    );
+    const live = await listLiveMcpServersForCaller(context);
     const connections = await connectionsForUser(workspaceIdOf(context), context?.userId);
-
-    const live = servers.filter((server) => hasLiveConnection(server, connections.get(server.id)));
 
     const { results, failures } = await loadIsolated(
       live,
@@ -178,7 +140,7 @@ function createMcpManagementTools(context?: ScheduleContext) {
           return true;
         });
         const installedUrls = new Set(
-          (await listVisibleServers(context)).map((server) => normalizeMcpUrl(server.url)),
+          (await listVisibleMcpServers(context)).map((server) => normalizeMcpUrl(server.url)),
         );
         return {
           ok: true,
@@ -327,7 +289,7 @@ function createMcpManagementTools(context?: ScheduleContext) {
       slack: { status: "Listing MCP servers..." },
       execute: async () => {
         const workspaceId = workspaceIdOf(context);
-        const servers = await listVisibleServers(context);
+        const servers = await listVisibleMcpServers(context);
         const connections = await connectionsForUser(workspaceId, context?.userId);
         return {
           ok: true,

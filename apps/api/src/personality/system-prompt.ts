@@ -7,6 +7,11 @@ import { logger } from "../lib/logger.js";
 import type { ConversationThread } from "../memory/retrieve.js";
 import type { ChannelType } from "../pipeline/context.js";
 import type { SandboxEnvVarInfo } from "../lib/sandbox.js";
+import { formatMcpServers, type McpServerHintEntry } from "../lib/mcp-hints.js";
+import { isMcpToolName } from "../lib/mcp-names.js";
+
+export type { McpServerHintEntry };
+export { formatMcpServers };
 
 export interface PersonProfile {
   slackUserId: string;
@@ -445,6 +450,7 @@ export function formatDeferredTools(
   const seen = new Set<string>();
   const entries = deferredTools
     .filter((tool) => {
+      if (isMcpToolName(tool.name)) return false;
       if (immediateTools.has(tool.name) || seen.has(tool.name)) return false;
       seen.add(tool.name);
       return true;
@@ -467,6 +473,16 @@ export function appendDeferredToolsBlock(
   const block = formatDeferredTools(deferredTools, immediateToolNames);
   if (!block) return prompt;
   if (prompt?.includes("<deferred_tools>")) return prompt;
+  return prompt ? `${prompt}\n\n${block}` : block;
+}
+
+export function appendMcpServersBlock(
+  prompt: string | undefined,
+  servers: McpServerHintEntry[] | undefined,
+): string | undefined {
+  const block = formatMcpServers(servers);
+  if (!block) return prompt;
+  if (prompt?.includes("<mcp_servers>")) return prompt;
   return prompt ? `${prompt}\n\n${block}` : block;
 }
 
@@ -685,6 +701,7 @@ export function buildEnvironmentContext(context: {
   availableToolNames?: string[];
   deferredTools?: DeferredToolSummary[];
   immediateToolNames?: string[];
+  mcpServers?: McpServerHintEntry[];
 }): string {
   const parts: string[] = [];
 
@@ -695,6 +712,9 @@ export function buildEnvironmentContext(context: {
 
   const storage = formatStorage(envVars.map((envVar) => envVar.envName));
   if (storage) parts.push(storage);
+
+  const mcpServers = formatMcpServers(context.mcpServers);
+  if (mcpServers) parts.push(mcpServers);
 
   const deferredTools = formatDeferredTools(context.deferredTools, context.immediateToolNames);
   if (deferredTools) parts.push(deferredTools);

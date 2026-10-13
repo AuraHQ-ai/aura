@@ -1,13 +1,23 @@
-import { eq } from "drizzle-orm";
+import { and, eq, or } from "drizzle-orm";
 import {
+  mcpConnections,
   mcpServers,
   type McpCachedTool,
   type McpConnection,
   type McpServer,
+  type ScheduleContext,
 } from "@aura/db/schema";
 import { db } from "../db/client.js";
-import { slugifyMcpName } from "./mcp-names.js";
+import { isMcpServerAllowlisted, slugifyMcpName } from "./mcp-names.js";
+import {
+  formatMcpServers,
+  renderMcpServerHintLine,
+  resolveMcpServerHint,
+  type McpHintSource,
+  type McpServerHintEntry,
+} from "./mcp-hints.js";
 import { hasLiveConnection } from "./mcp-runtime.js";
+import { executionContext } from "./tool.js";
 
 export const DEFAULT_MCP_WORKSPACE = "default";
 
@@ -76,6 +86,94 @@ export function allowedCachedTools(server: McpServer): McpCachedTool[] {
   return (server.cachedTools ?? []).filter((tool) => !denied.has(tool.name));
 }
 
+function isJobTurn(): boolean {
+  const ctx = executionContext.getStore();
+  return ctx?.triggerType === "scheduled_job" || ctx?.triggerType === "autonomous";
+}
+
+export async function listVisibleMcpServers(context?: ScheduleContext): Promise<McpServer[]> {
+  const workspaceId = context?.workspaceId ?? DEFAULT_MCP_WORKSPACE;
+  const userId = context?.userId;
+  const visibility = userId
+    ? or(eq(mcpServers.visibility, "workspace"), eq(mcpServers.ownerId, userId))
+    : eq(mcpServers.visibility, "workspace");
+
+  return db
+    .select()
+    .from(mcpServers)
+    .where(and(eq(mcpServers.workspaceId, workspaceId), eq(mcpServers.enabled, true), visibility));
+}
+
+export async function connectionsForUser(
+  workspaceId: string,
+  userId: string | undefined,
+): Promise<Map<string, McpConnection>> {
+  if (!userId) return new Map();
+  const rows = await db
+    .select()
+    .from(mcpConnections)
+    .where(and(eq(mcpConnections.workspaceId, workspaceId), eq(mcpConnections.userId, userId)));
+  return new Map(rows.map((row) => [row.serverId, row]));
+}
+
+/**
+ * Same visibility + live-connection + job-allowlist filters as `createMcpTools`.
+ * Pure so prompt-block tests can assert caller isolation without hitting the DB.
+ */
+export function selectLiveMcpServersForCaller(opts: {
+  servers: McpServer[];
+  connections: Map<string, McpConnection>;
+  userId?: string;
+  isJob: boolean;
+  envAllowlist?: string[];
+}): McpServer[] {
+  return opts.servers
+    .filter((server) => server.enabled)
+    .filter((server) => {
+      if (server.visibility === "workspace") return true;
+      return Boolean(opts.userId && server.ownerId === opts.userId);
+    })
+    .filter((server) => {
+      if (!opts.isJob) return true;
+      return isMcpServerAllowlisted(server.slug, opts.envAllowlist);
+    })
+    .filter((server) => hasLiveConnection(server, opts.connections.get(server.id)))
+    .sort((a, b) => a.slug.localeCompare(b.slug));
+}
+
+/**
+ * Servers that are enabled, visible to this caller, AND live for them.
+ * A job running as someone else never sees another user's personal connection;
+ * a job without `mcp:<slug>` in env_allowlist sees none of that server's tools.
+ */
+export async function listLiveMcpServersForCaller(context?: ScheduleContext): Promise<McpServer[]> {
+  const workspaceId = context?.workspaceId ?? DEFAULT_MCP_WORKSPACE;
+  const servers = await listVisibleMcpServers(context);
+  const connections = await connectionsForUser(workspaceId, context?.userId);
+  return selectLiveMcpServersForCaller({
+    servers,
+    connections,
+    userId: context?.userId,
+    isJob: isJobTurn(),
+    envAllowlist: executionContext.getStore()?.envAllowlist,
+  });
+}
+
+export function toMcpServerHintEntry(server: McpServer): McpServerHintEntry {
+  return {
+    slug: server.slug,
+    toolCount: allowedCachedTools(server).length,
+    hint: server.hint,
+    cachedInstructions: server.cachedInstructions,
+    fallbackDescription: server.name,
+  };
+}
+
+export async function loadMcpServersHintBlock(context?: ScheduleContext): Promise<string> {
+  const live = await listLiveMcpServersForCaller(context);
+  return formatMcpServers(live.map(toMcpServerHintEntry));
+}
+
 export function canViewMcpServer(
   server: McpServer,
   userId: string | undefined,
@@ -124,6 +222,10 @@ export interface McpServerDto {
   ownerId: string | null;
   enabled: boolean;
   trusted: boolean;
+  hint: string | null;
+  hintSource: McpHintSource | null;
+  effectiveHint: string | null;
+  promptLine: string | null;
   deniedTools: string[];
   toolCount: number;
   toolsCachedAt: Date | null;
@@ -141,6 +243,8 @@ export function toMcpServerDto(
   connection?: McpConnection | null,
   opts?: { userId?: string; isAdmin?: boolean },
 ): McpServerDto {
+  const hintEntry = toMcpServerHintEntry(server);
+  const resolved = resolveMcpServerHint(hintEntry);
   return redactSensitive({
     id: server.id,
     slug: server.slug,
@@ -154,6 +258,10 @@ export function toMcpServerDto(
     ownerId: server.ownerId,
     enabled: server.enabled,
     trusted: server.trusted,
+    hint: server.hint ?? null,
+    hintSource: resolved.source,
+    effectiveHint: resolved.text,
+    promptLine: renderMcpServerHintLine(hintEntry),
     deniedTools: server.deniedTools ?? [],
     toolCount: allowedCachedTools(server).length,
     toolsCachedAt: server.toolsCachedAt,

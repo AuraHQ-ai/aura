@@ -12,6 +12,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -22,6 +23,13 @@ import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
 
 type McpStatus = "connected" | "needs_auth" | "error";
+type McpHintSource = "hint" | "instructions" | "registry";
+
+const HINT_SOURCE_LABEL: Record<McpHintSource, string> = {
+  hint: "Admin hint (trusted)",
+  instructions: "Server instructions (untrusted)",
+  registry: "Server name / registry",
+};
 
 interface McpTool {
   name: string;
@@ -42,6 +50,10 @@ interface McpServer {
   ownerId: string | null;
   enabled: boolean;
   trusted: boolean;
+  hint: string | null;
+  hintSource: McpHintSource | null;
+  effectiveHint: string | null;
+  promptLine: string | null;
   deniedTools: string[];
   toolCount: number;
   status: McpStatus;
@@ -93,6 +105,64 @@ const STATUS_LABEL: Record<McpStatus, string> = {
   needs_auth: "Needs auth",
   error: "Error",
 };
+
+function McpHintEditor({
+  server,
+  onSave,
+  saving,
+}: {
+  server: McpServer;
+  onSave: (hint: string | null) => void;
+  saving: boolean;
+}) {
+  const [draft, setDraft] = useState(server.hint ?? "");
+  useEffect(() => {
+    setDraft(server.hint ?? "");
+  }, [server.hint]);
+
+  const overLimit = draft.length > 300;
+  const dirty = draft !== (server.hint ?? "");
+
+  return (
+    <div className="space-y-2 rounded-md border bg-background px-3 py-3">
+      <div className="flex items-baseline justify-between gap-2">
+        <label htmlFor={`mcp-hint-${server.id}`} className="text-sm font-medium">
+          Routing hint
+        </label>
+        <span className={cn("text-xs", overLimit ? "text-destructive" : "text-muted-foreground")}>
+          {draft.length}/300
+        </span>
+      </div>
+      <Textarea
+        id={`mcp-hint-${server.id}`}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        rows={3}
+        maxLength={400}
+        placeholder="e.g. France Close CRM — use for live sales numbers this week"
+        disabled={!server.canManage || saving}
+      />
+      <p className="text-xs text-muted-foreground">
+        Effective hint ({HINT_SOURCE_LABEL[server.hintSource ?? "registry"]}):{" "}
+        {server.effectiveHint || "—"}
+      </p>
+      {server.promptLine && (
+        <pre className="whitespace-pre-wrap break-words rounded bg-muted/60 px-2 py-1.5 font-mono text-[11px] leading-snug">
+          {server.promptLine}
+        </pre>
+      )}
+      <div className="flex justify-end">
+        <Button
+          size="sm"
+          onClick={() => onSave(draft.trim() || null)}
+          disabled={!server.canManage || saving || overLimit || !dirty}
+        >
+          {saving ? "Saving…" : "Save hint"}
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 function MarketplaceCard({
   entry,
@@ -418,6 +488,12 @@ function McpPage() {
     onSuccess: invalidate,
   });
 
+  const hintMutation = useMutation({
+    mutationFn: ({ id, hint }: { id: string; hint: string | null }) =>
+      apiPatch(`/mcp/${id}`, { hint }),
+    onSuccess: invalidate,
+  });
+
   const authMutation = useMutation({
     mutationFn: (id: string) => apiPost<McpServer>(`/mcp/${id}/auth`),
     onSuccess: (result) => {
@@ -618,7 +694,30 @@ function McpPage() {
                   rows.push(
                     <TableRow key={`${server.id}-tools`}>
                       <TableCell colSpan={isAdmin ? 8 : 7} className="bg-muted/30">
-                        <div className="space-y-2 py-2">
+                        <div className="space-y-3 py-2">
+                          <McpHintEditor
+                            server={{
+                              ...server,
+                              hint:
+                                detail?.id === server.id
+                                  ? (detail.hint ?? server.hint)
+                                  : server.hint,
+                              hintSource:
+                                detail?.id === server.id
+                                  ? (detail.hintSource ?? server.hintSource)
+                                  : server.hintSource,
+                              effectiveHint:
+                                detail?.id === server.id
+                                  ? (detail.effectiveHint ?? server.effectiveHint)
+                                  : server.effectiveHint,
+                              promptLine:
+                                detail?.id === server.id
+                                  ? (detail.promptLine ?? server.promptLine)
+                                  : server.promptLine,
+                            }}
+                            onSave={(hint) => hintMutation.mutate({ id: server.id, hint })}
+                            saving={hintMutation.isPending}
+                          />
                           <div className="text-sm font-medium">Tools</div>
                           {server.lastError && (
                             <p className="text-sm text-destructive">{server.lastError}</p>
