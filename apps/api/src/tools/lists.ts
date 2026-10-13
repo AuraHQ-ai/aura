@@ -15,7 +15,7 @@ export function createListWriteTools(client: WebClient) {
       inputSchema: z.object({
         list_id: z.string().describe("The ID of the Slack List"),
         fields: z
-          .record(z.any())
+          .record(z.string(), z.any())
           .optional()
           .describe(
             "Column values as a JSON object of column_id -> value pairs. " +
@@ -82,7 +82,7 @@ export function createListWriteTools(client: WebClient) {
         list_id: z.string().describe("The ID of the Slack List"),
         item_id: z.string().describe("The ID of the item/row to update"),
         fields: z
-          .record(z.any())
+          .record(z.string(), z.any())
           .describe(
             "Column values to update as a flat object: { column_id: value, ... }. " +
               "Simple formats: string for text, [\"value\"] for select/status, [\"U01234\"] for users. " +

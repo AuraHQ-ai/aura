@@ -128,7 +128,7 @@ interface ToolNameRef {
  */
 export function defineTool<TInput, TOutput>(config: {
   description: string;
-  inputSchema: ZodType<TInput, any, any>;
+  inputSchema: ZodType<TInput, any>;
   execute: (input: TInput) => PromiseLike<TOutput>;
   slack?: SlackToolMetadata<TInput, TOutput>;
   toModelOutput?: Tool<TInput, TOutput, any>["toModelOutput"];

@@ -41,7 +41,7 @@
     "@googleapis/drive": "^26.0.2",
     "@googleapis/gmail": "^22.0.1",
     "@hono/node-server": "^2.1.4",
-    "@hono/zod-openapi": "^0.19.10",
+    "@hono/zod-openapi": "^1.6.3",
     "@inquirer/prompts": "^8.7.3",
     "@langfuse/otel": "^5.13.1",
     "@langfuse/tracing": "^5.13.1",
@@ -76,7 +76,7 @@
     "undici": "^7.30.0",
     "workflow": "^5.2.1",
     "xlsx": "^0.18.5",
-    "zod": "^3.25.76"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",

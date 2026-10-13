@@ -313,7 +313,7 @@ export function createResourceTools(context?: ScheduleContext) {
           .optional()
           .describe("Optional title override."),
         metadata: z
-          .record(z.unknown())
+          .record(z.string(), z.unknown())
           .optional()
           .describe("Flexible source-specific metadata to store on the resource."),
         content_markdown: z
