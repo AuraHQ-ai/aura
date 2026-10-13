@@ -23,7 +23,7 @@
     ],
     "overrides": {
       "e2b>chalk": "4.1.2",
-      "@types/react": "19.2.14"
+      "@types/react": "19.3.0"
     },
     "packageExtensions": {
       "playwright-core": {
