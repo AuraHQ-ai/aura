@@ -132,6 +132,11 @@ export function defineTool<TInput, TOutput>(config: {
   execute: (input: TInput) => PromiseLike<TOutput>;
   slack?: SlackToolMetadata<TInput, TOutput>;
   toModelOutput?: Tool<TInput, TOutput, any>["toModelOutput"];
+  /**
+   * AI SDK user-approval gate. MCP write-like tools set this until the
+   * server is marked trusted.
+   */
+  needsApproval?: Tool<TInput, TOutput, any>["needsApproval"];
   requiredCredentials?: string[];
   /**
    * Provider-side strict schema validation for tool-call inputs (AI SDK
