@@ -62,6 +62,14 @@ vi.mock("./recurring-self-heal.js", () => ({
   selfHealTerminalRecurringJobs: vi.fn(async () => 0),
 }));
 
+const scanSchedulerZeroSuccessMock = vi.hoisted(() =>
+  vi.fn(async () => ({ scanned: 0, alerted: 0, recovered: 0 })),
+);
+
+vi.mock("./scheduler-health.js", () => ({
+  scanSchedulerZeroSuccess: scanSchedulerZeroSuccessMock,
+}));
+
 const executeJobMock = vi.hoisted(() => vi.fn());
 const sendJobFailureDmMock = vi.hoisted(() => vi.fn());
 const safePostMessageMock = vi.hoisted(() => vi.fn());
@@ -202,6 +210,7 @@ describe("heartbeat stale running recovery", () => {
     dbMock.results = [];
     dbMock.operations = [];
     vi.clearAllMocks();
+    scanSchedulerZeroSuccessMock.mockResolvedValue({ scanned: 0, alerted: 0, recovered: 0 });
     getSettingMock.mockResolvedValue(null);
     sendJobFailureDmMock.mockResolvedValue(true);
     safePostMessageMock.mockResolvedValue({ ok: true });
@@ -1309,6 +1318,32 @@ describe("heartbeat stale running recovery", () => {
       // Dispatch failed → inline fallback threw → counted as failed
       expect(body.failed).toBe(1);
       expect(body.executed).toBe(0);
+    });
+
+    it("keeps the heartbeat alive when the scheduler-wide zero-success monitor throws", async () => {
+      scanSchedulerZeroSuccessMock.mockRejectedValueOnce(new Error("monitor exploded"));
+      queueDbResults(
+        [], // pending jobs
+        [], // expired plan notes
+        [], // stale plan notes
+        [], // orphan pending_review
+        [], // orphan in_progress
+        [], // dequeued without exec
+        [], // stuck executions
+        [], // stale running
+        [], // stale exhausted
+      );
+
+      const { heartbeatApp } = await import("./heartbeat.js");
+      const response = await heartbeatApp.request("/api/cron/heartbeat", {
+        headers: { authorization: "Bearer test-secret" },
+      });
+
+      expect(response.status).toBe(200);
+      const body = await response.json();
+      expect(body.ok).toBe(true);
+      expect(body.schedulerZeroSuccessAlerted).toBe(0);
+      expect(body.schedulerZeroSuccessRecovered).toBe(0);
     });
   });
 

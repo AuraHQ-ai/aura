@@ -13,7 +13,14 @@ import {
   type TurnDeadlinePath,
   type TurnDeadlines,
 } from "./turn-deadline.js";
+import {
+  detectToolThrashFromSteps,
+  logToolThrashBreaker,
+  ToolThrashError,
+} from "./tool-thrash.js";
 import type { ModelCapabilities } from "@aura/db/schema";
+
+export { ToolThrashError } from "./tool-thrash.js";
 
 export class InvocationSupersededError extends Error {
   constructor(public readonly invocationId: string) {
@@ -31,6 +38,92 @@ export const WRAP_UP_MESSAGE =
   "IMPORTANT: You're approaching your step limit ({stepCount}/{limit}). " +
   "Start wrapping up — summarize your findings and post results now. " +
   "Do not start new investigations or long tool chains.";
+
+// ── Tool-thrash loop (issue #1524) ───────────────────────────────────────────
+// Identical search-style tools can fire 30+ times with no user-facing text
+// and still miss the 200-step wrap-up / 720s hard deadline. Detect a streak
+// of the same tool name without intervening assistant text and nudge the
+// model to stop and summarize.
+
+/** Consecutive same-tool calls without intervening text that trigger a wrap-up. */
+export const TOOL_LOOP_THRESHOLD = 15;
+
+export const TOOL_LOOP_MESSAGE =
+  "IMPORTANT: You have called `{toolName}` {callCount} times in a row without " +
+  "producing a user-facing reply. This is a tool loop. STOP calling " +
+  "`{toolName}`. Summarize what you already found and post a final answer now. " +
+  "If the results were empty or unhelpful, say so — do not retry the same " +
+  "tool with the same kind of query.";
+
+export interface ToolLoopDetection {
+  toolName: string;
+  callCount: number;
+}
+
+function toolNamesFromStep(step: unknown): string[] {
+  if (!step || typeof step !== "object") return [];
+  const record = step as {
+    toolCalls?: Array<{ toolName?: unknown }>;
+    toolResults?: Array<{ toolName?: unknown }>;
+  };
+  const source =
+    Array.isArray(record.toolCalls) && record.toolCalls.length > 0
+      ? record.toolCalls
+      : Array.isArray(record.toolResults)
+        ? record.toolResults
+        : [];
+  const names: string[] = [];
+  for (const item of source) {
+    const name = item?.toolName;
+    if (typeof name !== "string" || !name) continue;
+    names.push(name);
+  }
+  return names;
+}
+
+function stepHasInterveningText(step: unknown): boolean {
+  if (!step || typeof step !== "object") return false;
+  const text = (step as { text?: unknown }).text;
+  return typeof text === "string" && text.trim().length > 0;
+}
+
+/**
+ * True when the latest streak of the same tool name, with no intervening
+ * assistant text, meets `threshold`. Walks completed SDK steps in order.
+ */
+export function detectToolCallLoop(
+  steps: Array<unknown> | null | undefined,
+  threshold: number = TOOL_LOOP_THRESHOLD,
+): ToolLoopDetection | null {
+  if (!Array.isArray(steps) || steps.length === 0 || threshold <= 0) return null;
+
+  let streakName: string | null = null;
+  let streak = 0;
+
+  for (const step of steps) {
+    if (stepHasInterveningText(step)) {
+      streakName = null;
+      streak = 0;
+    }
+    for (const name of toolNamesFromStep(step)) {
+      if (name === streakName) {
+        streak++;
+      } else {
+        streakName = name;
+        streak = 1;
+      }
+    }
+  }
+
+  if (!streakName || streak < threshold) return null;
+  return { toolName: streakName, callCount: streak };
+}
+
+export function formatToolLoopMessage(detection: ToolLoopDetection): string {
+  return TOOL_LOOP_MESSAGE
+    .replaceAll("{toolName}", detection.toolName)
+    .replaceAll("{callCount}", String(detection.callCount));
+}
 
 // ── Turn wall-clock deadline messages (issue #1318) ──────────────────────────
 // Exported so the durable WDK path (workflows/slack-respond.ts) reuses the
@@ -261,6 +354,7 @@ export function createPrepareStep(opts: {
   let softDeadlineNudgeInjected = false;
   let hardDeadlineTripped = false;
   let continuationJobSpawned = false;
+  let toolLoopNudgeInjected = false;
 
   // Per-turn memo for summarize-on-evict (issue #1330): compaction reruns on
   // every step past the threshold, so summaries are keyed by toolCallId and
@@ -363,6 +457,23 @@ export function createPrepareStep(opts: {
     opts.recordStepModelId?.(stepNumber, effectiveModelId);
     providerOptions = await getCachedProviderThinkingOptions(effectiveModelId, opts.thinkingBudget);
 
+    // --- Execution-side thrash breaker (issue #1524) ---
+    // Consecutive tool-result errors (or a per-turn call cap) abort the turn
+    // instead of feeding another error round-trip to the model. Logged as
+    // `tool_thrash_breaker` so leak/thrash rate is measurable per model.
+    const thrash = detectToolThrashFromSteps(steps);
+    if (thrash) {
+      logToolThrashBreaker({
+        trip: thrash,
+        modelId: effectiveModelId,
+        channelId: opts.channelId,
+        userId: opts.userId,
+        path: opts.turnPath,
+        step: stepNumber,
+      });
+      throw new ToolThrashError(thrash);
+    }
+
     // --- Turn wall-clock deadline (issue #1318) ---
     // The step budget never binds in practice (turns die around step 40 while
     // the limit is 250) because sandbox tool calls cost 40-150s each. Enforce
@@ -451,6 +562,41 @@ export function createPrepareStep(opts: {
           String(Math.round(elapsedMs / 1000)),
         ),
       );
+    }
+
+    // --- Tool-thrash loop (issue #1524) ---
+    // Fires before the wall-clock hard deadline: a silent 15+ streak of the
+    // same tool will otherwise burn the turn to 720s. Re-injected on every
+    // subsequent step while the streak holds, because a later instructions
+    // override (step-limit wrap-up, etc.) would otherwise drop a one-shot
+    // nudge. Telemetry is recorded once.
+    if (!hardDeadlineActive) {
+      const loop = detectToolCallLoop(steps);
+      if (loop) {
+        if (!toolLoopNudgeInjected) {
+          toolLoopNudgeInjected = true;
+          logger.warn("prepareStep: tool-call loop detected — injecting stop/summarize nudge", {
+            toolName: loop.toolName,
+            callCount: loop.callCount,
+            stepNumber,
+          });
+          logError({
+            errorName: "ToolCallLoop",
+            errorMessage:
+              `Turn called ${loop.toolName} ${loop.callCount} times without intervening text; wrap-up nudge injected`,
+            errorCode: "tool_call_loop",
+            channelId: opts.channelId,
+            userId: opts.userId,
+            context: {
+              toolName: loop.toolName,
+              callCount: loop.callCount,
+              step: stepNumber,
+              path: opts.turnPath,
+            },
+          });
+        }
+        systemSuffixes.push(formatToolLoopMessage(loop));
+      }
     }
 
     // --- Step limit warning ---

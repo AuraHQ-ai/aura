@@ -10,7 +10,8 @@ import type { ModelMessage } from "ai";
 //
 // This module is a pure transform used at two boundaries:
 //   1. Delivery (slack-chunks / streaming buffer): strip markup from text
-//      before it reaches Slack.
+//      before it reaches Slack. Issue #1524 also strips bare registry tool
+//      names and `_suffix` fragments (`_history`) that survive the XML pass.
 //   2. Model (prepareStep): drop markup from replayed assistant text, and
 //      repairToolCall: salvage a native tool-call whose *name* is the XML
 //      blob, or refuse to execute it as a tool name.
@@ -35,6 +36,17 @@ const LEFTOVER_ARG_TAGS_RE =
   /<\/?(?:arg_key|arg_value|parameter)\b[^>]*>/gi;
 
 const TOOL_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]{0,127}$/;
+
+/** Shortest underscore-suffix we treat as a leaked fragment (`_url`, `_history`). */
+const MIN_SUFFIX_LEN = 4;
+
+/**
+ * Trailing token that might still grow into a known tool name / `_suffix`
+ * fragment on the next text-delta. Requires an underscore so ordinary words
+ * like "read" are not held back.
+ */
+const TRAILING_TOOL_TOKEN_RE =
+  /(_[A-Za-z0-9_]*|[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]*)$/;
 
 export interface StripToolCallMarkupResult {
   text: string;
@@ -174,6 +186,103 @@ export function stripToolCallMarkup(text: string): StripToolCallMarkupResult {
   out = out.replace(/[^\S\n]*\n[^\S\n]*\n+/g, "\n\n").replace(/[^\S\n]{2,}/g, " ");
 
   return { text: out, stripped: true, samples };
+}
+
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function collapseStripHoles(text: string): string {
+  return text.replace(/[^\S\n]*\n[^\S\n]*\n+/g, "\n\n").replace(/[^\S\n]{2,}/g, " ");
+}
+
+/**
+ * Tokens the Slack-boundary stripper should neutralize: each known tool
+ * registry name, plus every underscore-suffixed fragment of those names
+ * (issue #1524: `_history` leaked after the ChatML stripper ate the rest of
+ * `read_channel_history`).
+ */
+export function collectToolNameLeakTokens(
+  toolNames: Iterable<string> | null | undefined,
+): string[] {
+  const tokens = new Set<string>();
+  if (!toolNames) return [];
+  for (const name of toolNames) {
+    if (!name || !TOOL_NAME_RE.test(name) || isLeakedMarkupToolName(name)) continue;
+    tokens.add(name);
+    let i = name.indexOf("_");
+    while (i >= 0) {
+      const suffix = name.slice(i);
+      if (suffix.length >= MIN_SUFFIX_LEN) tokens.add(suffix);
+      i = name.indexOf("_", i + 1);
+    }
+  }
+  return [...tokens].sort((a, b) => b.length - a.length || a.localeCompare(b));
+}
+
+function toolNameLeakRegex(tokens: string[]): RegExp | null {
+  if (tokens.length === 0) return null;
+  return new RegExp(
+    `(?<![A-Za-z0-9])(?:${tokens.map(escapeRegex).join("|")})(?![A-Za-z0-9_])`,
+    "g",
+  );
+}
+
+/**
+ * Strip bare known-tool-name tokens and their `_suffix` fragments from
+ * assistant text so leftovers like `_history` never reach Slack.
+ *
+ * Does not touch ordinary prose ("channel history") — only identifier-bounded
+ * matches against the provided registry names.
+ */
+export function stripLeakedToolNameFragments(
+  text: string,
+  toolNames?: Iterable<string> | null,
+): StripToolCallMarkupResult {
+  if (!text) return { text, stripped: false, samples: [] };
+  const tokens = collectToolNameLeakTokens(toolNames);
+  const regex = toolNameLeakRegex(tokens);
+  if (!regex) return { text, stripped: false, samples: [] };
+
+  const samples: string[] = [];
+  const out = text.replace(regex, (match) => {
+    samples.push(truncateSample(match));
+    return "";
+  });
+  if (samples.length === 0) return { text, stripped: false, samples: [] };
+
+  return { text: collapseStripHoles(out), stripped: true, samples };
+}
+
+/** XML strip + bare tool-name fragment strip (Slack delivery). */
+export function sanitizeAssistantSlackText(
+  text: string,
+  toolNames?: Iterable<string> | null,
+): StripToolCallMarkupResult {
+  const markup = stripToolCallMarkup(text);
+  const fragments = stripLeakedToolNameFragments(markup.text, toolNames);
+  if (!markup.stripped && !fragments.stripped) {
+    return { text, stripped: false, samples: [] };
+  }
+  return {
+    text: fragments.text,
+    stripped: true,
+    samples: [...markup.samples, ...fragments.samples],
+  };
+}
+
+function holdIncompleteToolNameToken(
+  text: string,
+  tokens: string[],
+): { emit: string; hold: string } {
+  if (!text || tokens.length === 0) return { emit: text, hold: "" };
+  const match = TRAILING_TOOL_TOKEN_RE.exec(text);
+  TRAILING_TOOL_TOKEN_RE.lastIndex = 0;
+  if (!match?.[1] || match.index == null) return { emit: text, hold: "" };
+  const partial = match[1];
+  const isStrictPrefix = tokens.some((token) => token.startsWith(partial) && token !== partial);
+  if (!isStrictPrefix) return { emit: text, hold: "" };
+  return { emit: text.slice(0, match.index), hold: partial };
 }
 
 function decodeXmlEntities(value: string): string {
@@ -525,12 +634,17 @@ export async function repairLeakedToolCall(options: {
 /**
  * Streaming filter: hold back text from a markup opener until the closer
  * arrives (or flush), so `<tool_call>` split across text-deltas never
- * reaches Slack a token at a time.
+ * reaches Slack a token at a time. When `toolNames` is provided, also
+ * neutralize bare registry names and `_suffix` fragments (issue #1524).
  */
-export function createToolMarkupBuffer(): ToolMarkupBuffer {
+export function createToolMarkupBuffer(
+  toolNames?: Iterable<string> | null,
+): ToolMarkupBuffer {
   let pending = "";
   let leaked = false;
   const collected: string[] = [];
+  const leakTokens = collectToolNameLeakTokens(toolNames);
+  const leakNames = leakTokens.length > 0 ? leakTokens : null;
 
   const note = (samples: string[]) => {
     if (samples.length === 0) return;
@@ -539,6 +653,14 @@ export function createToolMarkupBuffer(): ToolMarkupBuffer {
       if (collected.length >= 5) break;
       if (!collected.includes(sample)) collected.push(sample);
     }
+  };
+
+  const scrub = (text: string): string => {
+    if (!text) return "";
+    const stripped = stripLeakedToolNameFragments(text, leakNames);
+    note(stripped.samples);
+    if (stripped.stripped) leaked = true;
+    return stripped.text;
   };
 
   return {
@@ -577,11 +699,19 @@ export function createToolMarkupBuffer(): ToolMarkupBuffer {
         pending = rest.slice(closedEnd);
       }
 
-      return emit;
+      // Hold a trailing `_hist` / `read_channel` until the next delta so a
+      // split `read_channel_history` is stripped as one token, not leaked.
+      if (!pending && leakTokens.length > 0) {
+        const split = holdIncompleteToolNameToken(emit, leakTokens);
+        emit = split.emit;
+        pending = split.hold;
+      }
+
+      return scrub(emit);
     },
     flush(): string {
       if (!pending) return "";
-      const stripped = stripToolCallMarkup(pending);
+      const stripped = sanitizeAssistantSlackText(pending, leakNames);
       pending = "";
       note(stripped.samples);
       if (stripped.stripped) leaked = true;
