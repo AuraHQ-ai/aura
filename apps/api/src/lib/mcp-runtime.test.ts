@@ -8,6 +8,7 @@ vi.mock("./logger.js", () => ({
 import {
   describeUntrustedMcpTool,
   mcpResultToModelOutput,
+  normalizeMcpInputSchema,
   wrapUntrustedMcpResult,
 } from "./mcp-runtime.js";
 
@@ -35,5 +36,17 @@ describe("untrusted MCP result wrapping", () => {
     expect(describeUntrustedMcpTool("stripe", "list_customers", "List customers")).toBe(
       "[Untrusted MCP tool from stripe] List customers",
     );
+  });
+});
+
+describe("normalizeMcpInputSchema", () => {
+  it("unwraps AI SDK Schema wrappers persisted in the tool cache", () => {
+    const inner = { type: "object", properties: { id: { type: "string" } } };
+    expect(normalizeMcpInputSchema({ jsonSchema: inner })).toEqual(inner);
+  });
+
+  it("always yields an object schema with a type", () => {
+    expect(normalizeMcpInputSchema(undefined)).toEqual({ type: "object", properties: {} });
+    expect(normalizeMcpInputSchema({ properties: {} }).type).toBe("object");
   });
 });

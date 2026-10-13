@@ -72,16 +72,33 @@ export function describeUntrustedMcpTool(
   return `[Untrusted MCP tool from ${slug}] ${body}`;
 }
 
+/**
+ * Coerce whatever we got for an MCP tool's input schema into a raw JSON Schema
+ * object with `type: "object"`. `client.tools()` from @ai-sdk/mcp returns AI SDK
+ * `Schema` wrappers (`{ jsonSchema, validate }`), and older cache rows persisted
+ * that wrapper verbatim — Anthropic rejects tools whose input_schema lacks `type`.
+ */
+export function normalizeMcpInputSchema(raw: unknown): Record<string, unknown> {
+  let schema: any = raw;
+  if (schema && typeof schema === "object" && "jsonSchema" in schema) {
+    schema = schema.jsonSchema;
+  }
+  if (!schema || typeof schema !== "object" || Array.isArray(schema)) {
+    return { type: "object", properties: {} };
+  }
+  if (schema.type !== "object") {
+    return { ...schema, type: "object", properties: schema.properties ?? {} };
+  }
+  return schema as Record<string, unknown>;
+}
+
 export function cachedToolsFromRemote(
   remote: Record<string, any>,
 ): McpCachedTool[] {
   return Object.entries(remote).map(([name, t]) => ({
     name,
     description: typeof t?.description === "string" ? t.description : undefined,
-    inputSchema:
-      t?.inputSchema && typeof t.inputSchema === "object"
-        ? (t.inputSchema as Record<string, unknown>)
-        : { type: "object", properties: {} },
+    inputSchema: normalizeMcpInputSchema(t?.inputSchema),
     annotations: t?.metadata?.annotations ?? t?.annotations,
   }));
 }
@@ -203,7 +220,7 @@ export function buildMcpToolStubs(
     const needsApproval =
       !server.trusted && isWriteLikeMcpTool(cachedTool.name, cachedTool.annotations);
     const inputSchema = jsonSchema(
-      (cachedTool.inputSchema ?? { type: "object", properties: {} }) as any,
+      normalizeMcpInputSchema(cachedTool.inputSchema) as any,
     );
 
     tools[namespaced] = tool({
