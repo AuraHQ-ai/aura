@@ -429,6 +429,14 @@ async function updateJob(
   return tool.execute(tool.inputSchema.parse(input));
 }
 
+describe("update_job recurring status guard", () => {
+  it("rejects completed status for recurring jobs", async () => {
+    dbMock.rows = [baseJob({ name: "weekly-check", cronSchedule: "0 9 * * 1" })];
+    const result = await updateJob({ name: "weekly-check", updates: { status: "completed" } });
+    expect(result).toMatchObject({ ok: false, error: expect.stringContaining("cannot be marked completed") });
+  });
+});
+
 describe("update_job requested_by transfer", () => {
   beforeEach(() => {
     vi.useFakeTimers();

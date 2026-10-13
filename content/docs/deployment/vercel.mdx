@@ -26,6 +26,10 @@ aura/
 
 The API and the dashboard deploy together as **one** Vercel project; only `apps/web` is a separate project.
 
+## Continuous integration
+
+Pull requests and pushes to `main` run `.github/workflows/ci.yml`. The `ci` job installs with the frozen pnpm lockfile, builds `@aura/db`, runs `pnpm typecheck`, runs the API test suite, and finishes with the Vercel-preset build (`pnpm --filter aura-api build:vercel`). The Vercel build is deliberately the final gate because it exercises the production bundling path.
+
 ## Architecture
 
 - **Runtime:** Node.js serverless functions, region `fra1`, max duration 800 seconds

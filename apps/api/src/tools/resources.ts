@@ -6,7 +6,7 @@ import { z } from "zod";
 import { db } from "../db/client.js";
 import { resources } from "@aura/db/schema";
 import type { ScheduleContext } from "@aura/db/schema";
-import { getFastModel } from "../lib/ai.js";
+import { getFastModel, getMediumModel } from "../lib/ai.js";
 import { embedText } from "../lib/embeddings.js";
 import { logger } from "../lib/logger.js";
 import { aiTelemetry } from "../lib/langfuse.js";
@@ -194,24 +194,25 @@ async function fetchUrlAsMarkdown(url: string): Promise<{
   };
 }
 
+// Reasoning-tier fast models (e.g. tencent/hy3) can burn the entire output
+// budget on hidden reasoning and return text="" with finishReason "length"
+// (verified: 2048/2048 reasoning tokens on a one-line prompt). Summaries are
+// low-volume and quality-sensitive, so try medium first and fall back to fast.
+const SUMMARY_MAX_OUTPUT_TOKENS = 2_048;
+
 async function summarizeResource(input: {
   url: string;
   title: string | null;
   source: string;
   content: string;
 }): Promise<string> {
-  const model = await getFastModel();
   const maxChars = 24_000;
   const boundedContent =
     input.content.length > maxChars
       ? `${input.content.slice(0, maxChars)}\n\n[content truncated for summarization]`
       : input.content;
 
-  const { text } = await generateText({
-    model,
-    maxOutputTokens: 320,
-    telemetry: aiTelemetry("resource-summary"),
-    prompt: `Summarize this resource in ~200 words for fast retrieval.
+  const prompt = `Summarize this resource in ~200 words for fast retrieval.
 
 Focus on:
 - what this resource is
@@ -224,14 +225,43 @@ URL: ${input.url}
 Title: ${input.title ?? "(unknown)"}
 
 Resource content:
-${boundedContent}`,
-  });
+${boundedContent}`;
 
-  const summary = text.trim();
-  if (!summary) {
-    throw new Error("Summary generation returned empty output");
+  const attempts: Array<{ tier: string; getModel: () => Promise<any> }> = [
+    { tier: "medium", getModel: async () => (await getMediumModel()).model },
+    { tier: "fast", getModel: () => getFastModel() },
+  ];
+
+  let lastFinishReason: string | undefined;
+  for (const { tier, getModel } of attempts) {
+    try {
+      const model = await getModel();
+      const { text, finishReason } = await generateText({
+        model,
+        maxOutputTokens: SUMMARY_MAX_OUTPUT_TOKENS,
+        telemetry: aiTelemetry("resource-summary"),
+        prompt,
+      });
+      const summary = text.trim();
+      if (summary) return summary;
+      lastFinishReason = finishReason;
+      logger.warn("resource summary empty, trying next model tier", {
+        url: input.url,
+        tier,
+        finishReason,
+      });
+    } catch (error) {
+      logger.warn("resource summary attempt failed", {
+        url: input.url,
+        tier,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
-  return summary;
+
+  throw new Error(
+    `Summary generation returned empty output${lastFinishReason ? ` (finishReason=${lastFinishReason})` : ""}`,
+  );
 }
 
 interface ResourceSearchRow {

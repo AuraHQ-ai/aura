@@ -1,0 +1,67 @@
+---
+title: "MCP Servers"
+description: "Connect remote Model Context Protocol servers so their tools become available to Aura — 4 management tools plus dynamic per-server tools."
+---
+
+# MCP Servers
+
+Aura is an MCP **client**. Add a remote [Model Context Protocol](https://modelcontextprotocol.io) server by HTTPS URL and its tools show up in Aura's tool set as `mcp__<slug>__<tool>`. Servers can be added from Slack (via tools) or from the dashboard `/mcp` page.
+
+## Management tools
+
+| Tool | What it does |
+| --- | --- |
+| `mcp_add_server` | Probes an HTTPS MCP URL and registers it. Returns `{ status: "connected" }` or `{ status: "needs_auth", auth_url }` when the server requires OAuth. Inputs: `url`, optional `name` (defaults to the hostname), optional `visibility` (`personal` default, or `workspace`, admin only). |
+| `mcp_list_servers` | Lists servers visible to you (workspace-wide plus your personal ones) with slug, URL, visibility, auth type, `trusted`, `enabled`, tool count, and connection status. |
+| `mcp_remove_server` | Removes a server by `slug` and cascade-deletes its connections (including encrypted OAuth tokens). Personal servers: owner only. Workspace servers: admin only. |
+| `mcp_reauth` | Starts a fresh per-user OAuth flow for an existing server and returns an `auth_url`. |
+
+The management tools are **not** available in scheduled-job or autonomous turns, and require a signed-in user. Servers that authenticate with a static header (name + value) are added from the dashboard, not the Slack tool.
+
+## Tool naming and discovery
+
+Each remote tool is exposed as `mcp__<slug>__<tool>`. The slug is derived from the URL or display name (lowercase, non-alphanumerics become `_`, always starting with a letter) and made unique per workspace. Tool names are sanitized to `[a-zA-Z0-9_-]`. Tool definitions are cached on the server row (`cached_tools`) and refreshed on connect, from the dashboard, or on demand. MCP tools are always **deferred** — loaded through tool search rather than sitting in the base prompt.
+
+## Visibility and ownership
+
+- **personal** (default) — visible to and manageable by the owner (and admins).
+- **workspace** — visible to every member; only admins can add or manage it.
+
+OAuth connections are **per user**: each person authorizes with their own account, and tokens are stored encrypted in `mcp_connections`.
+
+## Authentication
+
+| `auth_type` | How it works |
+| --- | --- |
+| `none` | No credentials; considered connected whenever the server is enabled. |
+| `oauth` | OAuth with PKCE and dynamic client registration. Aura sends you an auth URL; the callback is `GET /api/mcp/oauth/callback` (derived from `AURA_PUBLIC_URL`, falling back to the Vercel URL). When authorization finishes, Aura posts back into the originating Slack thread. |
+| `header` | A static header (`headerName` / `headerValue`) stored encrypted. Added via the dashboard. |
+
+## Security model
+
+- **HTTPS only, SSRF-guarded.** `http://` and stdio servers are rejected. Server URLs, discovered OAuth authorization servers, and every redirect hop (max 5) must resolve to public addresses — private, loopback and link-local targets are refused.
+- **Output is untrusted.** Tool results are wrapped in `<untrusted-mcp-content>` markers with a warning to treat the content as data only, and tool descriptions are prefixed `[Untrusted MCP tool from <slug>]`.
+- **Approval for write-like tools.** On servers that are not `trusted`, tools that look like writes need approval before running. A tool counts as write-like if its `readOnlyHint` annotation is `false`, or — when no hint is given — its name matches a write verb (create, update, delete, send, post, set, add, edit, …). A `readOnlyHint: true` tool never needs approval. Only admins can mark a server trusted.
+- **Denied tools.** Individual tools can be denied per server (`denied_tools`); denied tools are not exposed to Aura at all.
+- **Audit log.** Every MCP call is written to `action_log` with `credential_name` `mcp:<slug>`.
+
+## Scheduled jobs
+
+Jobs only see MCP server tools they are explicitly opted into via `env_allowlist`. Add `mcp:<slug>` (or `MCP_<SLUG>` uppercased) to the job's `env_allowlist`; a job with no allowlist gets no MCP tools. See [Jobs & Scheduling](/tools/jobs#env_allowlist--credential-narrowing).
+
+## Dashboard
+
+The **MCP** page in the dashboard sidebar (`/mcp`) lets you:
+
+- Browse the **marketplace**: a curated featured list (Stripe, Linear, Notion, Sentry, Mako) plus the official MCP registry (`registry.modelcontextprotocol.io`, HTTPS `streamable-http`/`sse` remotes only, cached for 10 minutes). Installed entries are flagged, and registry text is sanitized as untrusted.
+- Add a server by URL with optional header auth and `http`/`sse` transport.
+- See connection status and the cached tool list, allow or deny individual tools, enable/disable a server, test the connection, refresh tools, start or restart OAuth, and (admins) mark a server trusted.
+
+The underlying endpoints are listed under [Dashboard API](/api-reference/overview#mcp-endpoints).
+
+## Data model
+
+Migrations `0090_mcp_client.sql` and `0091_mcp_denied_tools.sql` add:
+
+- `mcp_servers` — slug, URL, transport, auth type, encrypted header, visibility/owner, `enabled`, `trusted`, `denied_tools`, cached tools.
+- `mcp_connections` — per-user OAuth state, encrypted tokens/client info/PKCE verifier, status, and the Slack channel/thread to notify.

@@ -398,7 +398,7 @@ export async function resolveUserByName(
 
   // Fuzzy match fallback via fast model (for voice/STT contexts)
   try {
-    const { generateText } = await import("ai");
+    const { generateText, Output } = await import("ai");
     const { getFastModel } = await import("../lib/ai.js");
 
     const model = await getFastModel();
@@ -406,17 +406,21 @@ export async function resolveUserByName(
       .map((u) => `${u.id}: ${u.displayName || u.realName} (@${u.username})`)
       .join("\n");
 
-    const { text } = await generateText({
+    const { output } = await generateText({
       model,
       instructions:
-        "Given a list of team members and a possibly misspelled or speech-transcribed name, return ONLY the user ID (e.g. U066V1AN6) of the best match. If no reasonable match exists, return 'NONE'. Do not explain.",
+        "Given a list of team members and a possibly misspelled or speech-transcribed name, return the user ID (e.g. U066V1AN6) of the best match as userId. If no reasonable match exists, return null. Do not explain.",
       prompt: `Team members:\n${userListStr}\n\nFind: "${cleaned}"`,
-      maxOutputTokens: 50,
+      output: Output.object({
+        schema: z.object({ userId: z.string().nullable() }),
+      }),
+      maxOutputTokens: 256,
+      temperature: 0,
       telemetry: aiTelemetry("resolve-user-name"),
     });
 
-    const matchedId = text.trim();
-    if (matchedId !== "NONE" && /^U[A-Z0-9]+$/.test(matchedId)) {
+    const matchedId = output.userId?.trim() ?? null;
+    if (matchedId && /^U[A-Z0-9]+$/.test(matchedId)) {
       const matchedUser = users.find((u) => u.id === matchedId);
       if (matchedUser) {
         logger.info("resolveUserByName: fuzzy match via fast model", {
@@ -2486,8 +2490,12 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
                 error: "Sandbox file access requires sandbox credentials. You don't have permission to read sandbox files.",
               };
             }
-            const { getOrCreateSandbox } = await import("../lib/sandbox.js");
-            const sandbox = await getOrCreateSandbox(context?.userId);
+            const { getOrCreateSandbox, resolveSandboxUserId } = await import(
+              "../lib/sandbox.js"
+            );
+            const sandbox = await getOrCreateSandbox(
+              resolveSandboxUserId(context?.userId),
+            );
             const fileBytes = await sandbox.files.read(file_path, { format: "bytes" });
             fileBuffer = Buffer.from(fileBytes);
           } else {
@@ -2606,9 +2614,15 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
           });
 
           if (save_to_disk) {
-            const { writeToSandbox } = await import("../lib/sandbox.js");
+            const { writeToSandbox, resolveSandboxUserId } = await import(
+              "../lib/sandbox.js"
+            );
             const buf = Buffer.from(data);
-            const savedPath = await writeToSandbox(filename, buf);
+            const savedPath = await writeToSandbox(
+              filename,
+              buf,
+              resolveSandboxUserId(context?.userId),
+            );
             return {
               ok: true,
               saved_to_disk: true,
