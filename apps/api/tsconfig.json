@@ -25,7 +25,6 @@
         "./src/*"
       ]
     },
-    "baseUrl": ".",
     "incremental": true
   },
   "include": [
