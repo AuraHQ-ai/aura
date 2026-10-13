@@ -26,7 +26,9 @@ The watchdog is idempotent: every DB update uses a `status = 'running'` guard so
 
 ## Recurring job recovery
 
-If a recurring job is left in `running` past the stale threshold and has already exhausted retries, the heartbeat does not leave it in `failed` forever. It resets the job to `pending`, clears `retries`, computes the next cron tick in the job timezone, and DMs the requester with the last error and next attempt time. One-shot jobs that exhaust stale retries stay `failed` and also send a DM.
+The heartbeat self-heals enabled recurring jobs that are accidentally left in a terminal `completed` or `failed` state: it resets them to `pending` before evaluating the queue, so the next scheduled tick is not silently lost. This repair is idempotent and is recorded in the logs.
+
+If a recurring job is left in `running` past the stale threshold and has already exhausted retries, the heartbeat also resets it to `pending`, clears `retries`, computes the next cron tick in the job timezone, and DMs the requester with the last error and next attempt time. One-shot jobs that exhaust stale retries stay `failed` and also send a DM.
 
 ## Turn wall-clock budget
 
@@ -207,6 +209,7 @@ Update an existing job's configuration without recreating it. Preserves job ID a
 | `updates.model` | enum/null | no | New model category (`fast`, `medium`, `main`, `escalation`). Set to `null` to reset to the default (`medium`). |
 | `updates.env_allowlist` | string[]/null | no | New sandbox env allowlist. Set to `null` to restore full inheritance. |
 | `updates.prompt_mode` | enum/null | no | `full` or `task` — see [Prompt Modes](/prompt-modes). Set to `null` to reset to the default (`full`). |
+| `updates.status` | enum | no | Administrative status update: `pending`, `failed`, `completed`, or `cancelled`. Recurring jobs cannot be marked `completed`; disable or archive them instead. |
 
 When a cron schedule or timezone is updated, the next execution time is automatically recalculated. Setting `enabled: true` on a cancelled recurring job re-enables it with a fresh next execution time; if the job was archived, it is also un-archived and becomes visible in `list_jobs` again.
 
