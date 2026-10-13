@@ -348,7 +348,7 @@ describe("GET /api/dashboard/mcp/marketplace", () => {
     expect(body.error).toBeNull();
   });
 
-  it("still returns 200 with featured servers when the registry reports an error", async () => {
+  it("still returns 200 when the registry reports an error", async () => {
     getCatalogMock.mockResolvedValue({
       featured: [
         {

@@ -9,6 +9,20 @@ export const MCP_REGISTRY_MAX_LIMIT = 50;
 
 const HTTP_REMOTE_TYPES = new Set(["streamable-http", "sse"]);
 
+/**
+ * Registry `name` values to pin at the top of an empty marketplace browse.
+ * Titles and URLs are resolved live from the registry — never hand-copied.
+ * Names the registry does not return are skipped.
+ */
+export const PINNED_REGISTRY_NAMES = [
+  "com.close/close-mcp",
+  "com.stripe/mcp",
+  "app.linear/linear",
+  "com.notion/mcp",
+  "io.github.getsentry/sentry-mcp",
+  "io.github.mako-ai/mako",
+] as const;
+
 export type McpCatalogTransport = "http" | "sse";
 
 export interface McpCatalogEntry {
@@ -35,57 +49,6 @@ export type RegistryFetch = (
   text(): Promise<string>;
 }>;
 
-/**
- * Curated featured MCP servers. Each remote was probed on 2026-10-12:
- * - Stripe  https://mcp.stripe.com           GET 401 (up, auth required)
- * - Linear  https://mcp.linear.app/mcp       GET 401
- * - Notion  https://mcp.notion.com/mcp       GET 401
- * - Sentry  https://mcp.sentry.dev/mcp       GET 401 (not listed in the registry)
- * - Mako    https://app.mako.ai/api/mcp      GET 405 (host up, streamable-http)
- */
-export const FEATURED_MCP_SERVERS: McpCatalogEntry[] = [
-  {
-    name: "com.stripe/mcp",
-    title: "Stripe",
-    description: "Official Stripe MCP server — customers, products, payments, and more.",
-    url: "https://mcp.stripe.com",
-    transport: "http",
-    featured: true,
-  },
-  {
-    name: "app.linear/linear",
-    title: "Linear",
-    description: "Official Linear MCP server for project management and issue tracking.",
-    url: "https://mcp.linear.app/mcp",
-    transport: "http",
-    featured: true,
-  },
-  {
-    name: "com.notion/mcp",
-    title: "Notion",
-    description: "Official Notion MCP server.",
-    url: "https://mcp.notion.com/mcp",
-    transport: "http",
-    featured: true,
-  },
-  {
-    name: "io.sentry/mcp",
-    title: "Sentry",
-    description: "Official Sentry MCP server for issues, projects, and error tracking.",
-    url: "https://mcp.sentry.dev/mcp",
-    transport: "http",
-    featured: true,
-  },
-  {
-    name: "io.github.mako-ai/mako",
-    title: "Mako",
-    description: "Explore databases, validate SQL, and build data apps in a Mako workspace.",
-    url: "https://app.mako.ai/api/mcp",
-    transport: "http",
-    featured: true,
-  },
-];
-
 export type RegistryPageCache = Map<string, CachedRegistryPage>;
 
 const memoryCache: RegistryPageCache = new Map();
@@ -96,6 +59,10 @@ export function resetMcpRegistryCache(cache: RegistryPageCache = memoryCache): v
 
 export function registryCacheKey(search: string, cursor: string, limit: number): string {
   return `${search}\0${cursor}\0${limit}`;
+}
+
+function pinnedCacheKey(names: readonly string[]): string {
+  return `\0pinned\0${names.join("\0")}`;
 }
 
 /** Strip tags/control chars. Registry text is untrusted; never treated as HTML. */
@@ -124,6 +91,41 @@ export function normalizeMcpUrl(url: string): string {
   } catch {
     return url.trim().replace(/\/+$/, "");
   }
+}
+
+function prettifyRegistrySegment(segment: string): string {
+  return segment
+    .split(/[-_]+/)
+    .filter(Boolean)
+    .map((word) => {
+      if (/^mcp$/i.test(word)) return "MCP";
+      return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase();
+    })
+    .join(" ");
+}
+
+/**
+ * Display name when registry `title` is empty: last path segment of `name`
+ * (`com.close/close-mcp` → "Close MCP"). If that segment is just "mcp"
+ * (`com.stripe/mcp`), use the last label of the namespace instead ("Stripe").
+ */
+export function displayNameFromRegistryName(name: string): string {
+  const parts = name.split("/").filter(Boolean);
+  let segment = parts.at(-1) || name;
+  if (/^mcp$/i.test(segment.replace(/[-_]/g, "")) && parts.length >= 2) {
+    const ns = parts[parts.length - 2] ?? segment;
+    segment = ns.split(".").filter(Boolean).at(-1) || ns;
+  }
+  return prettifyRegistrySegment(segment) || name;
+}
+
+export function searchTokens(query: string): string[] {
+  return query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+}
+
+export function longestSearchToken(tokens: string[]): string {
+  if (tokens.length === 0) return "";
+  return tokens.reduce((best, token) => (token.length > best.length ? token : best));
 }
 
 export function pickHttpsRemote(
@@ -210,9 +212,10 @@ export function parseRegistryServers(payload: unknown): {
     const dedupeKey = name.toLowerCase();
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
+    const title = untrustedPlainText(raw.title, 120) || displayNameFromRegistryName(name);
     entries.push({
       name,
-      title: untrustedPlainText(raw.title, 120) || name,
+      title,
       description: untrustedPlainText(raw.description, 400),
       url: remote.url,
       transport: remote.transport,
@@ -222,27 +225,25 @@ export function parseRegistryServers(payload: unknown): {
   return { entries, nextCursor };
 }
 
+export function catalogSearchHaystack(entry: McpCatalogEntry): string {
+  return [entry.name, entry.title, entry.description, displayNameFromRegistryName(entry.name)]
+    .join("\n")
+    .toLowerCase();
+}
+
 export function matchesCatalogSearch(entry: McpCatalogEntry, search: string): boolean {
-  const q = search.trim().toLowerCase();
-  if (!q) return true;
-  return [entry.title, entry.name, entry.description, entry.url].some((value) =>
-    value.toLowerCase().includes(q),
-  );
+  const tokens = searchTokens(search);
+  if (tokens.length === 0) return true;
+  const haystack = catalogSearchHaystack(entry);
+  return tokens.every((token) => haystack.includes(token));
 }
 
-export function featuredMcpServers(search = ""): McpCatalogEntry[] {
-  return FEATURED_MCP_SERVERS.filter((entry) => matchesCatalogSearch(entry, search));
-}
-
-function featuredKeys(): { names: Set<string>; urls: Set<string> } {
-  return {
-    names: new Set(FEATURED_MCP_SERVERS.map((entry) => entry.name.toLowerCase())),
-    urls: new Set(FEATURED_MCP_SERVERS.map((entry) => normalizeMcpUrl(entry.url))),
-  };
-}
-
-export function excludeFeatured(entries: McpCatalogEntry[]): McpCatalogEntry[] {
-  const { names, urls } = featuredKeys();
+export function excludePinned(
+  entries: McpCatalogEntry[],
+  pinned: McpCatalogEntry[],
+): McpCatalogEntry[] {
+  const names = new Set(pinned.map((entry) => entry.name.toLowerCase()));
+  const urls = new Set(pinned.map((entry) => normalizeMcpUrl(entry.url)));
   return entries.filter(
     (entry) => !names.has(entry.name.toLowerCase()) && !urls.has(normalizeMcpUrl(entry.url)),
   );
@@ -268,6 +269,26 @@ export function buildRegistryUrl(opts: {
   return url.href;
 }
 
+export function buildPinnedServerUrl(name: string): string {
+  return `${MCP_REGISTRY_URL}/${encodeURIComponent(name)}/versions/latest`;
+}
+
+function registryRequestHeaders(): Record<string, string> {
+  return {
+    accept: "application/json",
+    "user-agent": "AuraMCP/0.1",
+  };
+}
+
+async function parseJsonBody(response: { text(): Promise<string> }): Promise<unknown> {
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error("MCP registry returned invalid JSON");
+  }
+}
+
 async function fetchRegistryPage(
   opts: { search?: string; cursor?: string; limit?: number },
   fetchFn: RegistryFetch,
@@ -276,27 +297,132 @@ async function fetchRegistryPage(
   const href = buildRegistryUrl(opts);
   const response = await fetchFn(href, {
     signal: AbortSignal.timeout(MCP_REGISTRY_TIMEOUT_MS),
-    headers: {
-      accept: "application/json",
-      "user-agent": "AuraMCP/0.1",
-    },
+    headers: registryRequestHeaders(),
   });
   if (!response.ok) {
     throw new Error(`MCP registry returned HTTP ${response.status}`);
   }
-  const text = await response.text();
-  let payload: unknown;
-  try {
-    payload = JSON.parse(text);
-  } catch {
-    throw new Error("MCP registry returned invalid JSON");
-  }
-  const parsed = parseRegistryServers(payload);
+  const parsed = parseRegistryServers(await parseJsonBody(response));
   return {
     fetchedAt: now,
     entries: parsed.entries,
     nextCursor: parsed.nextCursor,
   };
+}
+
+interface CatalogPageResult {
+  entries: McpCatalogEntry[];
+  nextCursor: string | null;
+  stale: boolean;
+  error: string | null;
+}
+
+async function loadCatalogPage(opts: {
+  search: string;
+  cursor: string;
+  limit: number;
+  fetchFn: RegistryFetch;
+  now: number;
+  cache: RegistryPageCache;
+}): Promise<CatalogPageResult> {
+  const key = registryCacheKey(opts.search, opts.cursor, opts.limit);
+  const cached = opts.cache.get(key);
+
+  if (cached && opts.now - cached.fetchedAt < MCP_REGISTRY_CACHE_TTL_MS) {
+    return {
+      entries: cached.entries,
+      nextCursor: cached.nextCursor,
+      stale: false,
+      error: null,
+    };
+  }
+
+  try {
+    const page = await fetchRegistryPage(
+      { search: opts.search || undefined, cursor: opts.cursor || undefined, limit: opts.limit },
+      opts.fetchFn,
+      opts.now,
+    );
+    opts.cache.set(key, page);
+    return {
+      entries: page.entries,
+      nextCursor: page.nextCursor,
+      stale: false,
+      error: null,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn("MCP registry fetch failed", {
+      error: message,
+      search: opts.search,
+      cursor: opts.cursor,
+    });
+    const staleStillUsable = cached && opts.now - cached.fetchedAt < MCP_REGISTRY_STALE_TTL_MS;
+    if (staleStillUsable && cached) {
+      return {
+        entries: cached.entries,
+        nextCursor: cached.nextCursor,
+        stale: true,
+        error: message,
+      };
+    }
+    return {
+      entries: [],
+      nextCursor: null,
+      stale: false,
+      error: message,
+    };
+  }
+}
+
+async function fetchPinnedServer(
+  name: string,
+  fetchFn: RegistryFetch,
+): Promise<McpCatalogEntry | null> {
+  try {
+    const response = await fetchFn(buildPinnedServerUrl(name), {
+      signal: AbortSignal.timeout(MCP_REGISTRY_TIMEOUT_MS),
+      headers: registryRequestHeaders(),
+    });
+    if (!response.ok) return null;
+    const parsed = parseRegistryServers({ servers: [await parseJsonBody(response)] });
+    const entry = parsed.entries.find((item) => item.name.toLowerCase() === name.toLowerCase());
+    return entry ? { ...entry, featured: true } : null;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.warn("MCP registry pinned lookup failed", { name, error: message });
+    return null;
+  }
+}
+
+async function resolvePinnedServers(opts: {
+  names: readonly string[];
+  fetchFn: RegistryFetch;
+  now: number;
+  cache: RegistryPageCache;
+}): Promise<{ entries: McpCatalogEntry[]; stale: boolean }> {
+  if (opts.names.length === 0) return { entries: [], stale: false };
+
+  const key = pinnedCacheKey(opts.names);
+  const cached = opts.cache.get(key);
+  if (cached && opts.now - cached.fetchedAt < MCP_REGISTRY_CACHE_TTL_MS) {
+    return { entries: cached.entries, stale: false };
+  }
+
+  const fetched = await Promise.all(
+    opts.names.map((name) => fetchPinnedServer(name, opts.fetchFn)),
+  );
+  const entries = fetched.filter((entry): entry is McpCatalogEntry => entry !== null);
+
+  if (entries.length > 0) {
+    opts.cache.set(key, { fetchedAt: opts.now, entries, nextCursor: null });
+    return { entries, stale: false };
+  }
+
+  if (cached && opts.now - cached.fetchedAt < MCP_REGISTRY_STALE_TTL_MS) {
+    return { entries: cached.entries, stale: true };
+  }
+  return { entries: [], stale: false };
 }
 
 export interface MarketplaceCatalog {
@@ -308,8 +434,13 @@ export interface MarketplaceCatalog {
 }
 
 /**
- * Server-side registry proxy. Never throws: on failure returns featured
- * servers plus stale catalog items when a previous page is cached.
+ * Server-side registry proxy. Never throws: on failure returns any live-resolved
+ * pinned servers plus stale catalog items when a previous page is cached.
+ *
+ * Search: split the query into tokens, ask the registry for the longest token
+ * (it only substring-matches one string, on names), then keep entries where
+ * every token matches name, title, description, or the derived display name.
+ * If that yields nothing, retry with the first token and filter again.
  */
 export async function getMarketplaceCatalog(opts: {
   search?: string;
@@ -318,6 +449,7 @@ export async function getMarketplaceCatalog(opts: {
   fetchFn?: RegistryFetch;
   now?: number;
   cache?: RegistryPageCache;
+  pinnedNames?: readonly string[];
 }): Promise<MarketplaceCatalog> {
   const search = opts.search?.trim() ?? "";
   const cursor = opts.cursor?.trim() ?? "";
@@ -325,49 +457,39 @@ export async function getMarketplaceCatalog(opts: {
   const fetchFn = opts.fetchFn ?? (fetch as RegistryFetch);
   const now = opts.now ?? Date.now();
   const cache = opts.cache ?? memoryCache;
-  const key = registryCacheKey(search, cursor, limit);
-  const featured = featuredMcpServers(search);
-  const cached = cache.get(key);
+  const pinnedNames = opts.pinnedNames ?? PINNED_REGISTRY_NAMES;
+  const tokens = searchTokens(search);
+  const primaryToken = longestSearchToken(tokens);
 
-  if (cached && now - cached.fetchedAt < MCP_REGISTRY_CACHE_TTL_MS) {
-    return {
-      featured,
-      items: excludeFeatured(cached.entries),
-      nextCursor: cached.nextCursor,
-      stale: false,
-      error: null,
-    };
-  }
+  const loadPage = (registrySearch: string) =>
+    loadCatalogPage({ search: registrySearch, cursor, limit, fetchFn, now, cache });
 
-  try {
-    const page = await fetchRegistryPage({ search, cursor, limit }, fetchFn, now);
-    cache.set(key, page);
-    return {
-      featured,
-      items: excludeFeatured(page.entries),
-      nextCursor: page.nextCursor,
-      stale: false,
-      error: null,
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    logger.warn("MCP registry fetch failed", { error: message, search, cursor });
-    const staleStillUsable = cached && now - cached.fetchedAt < MCP_REGISTRY_STALE_TTL_MS;
-    if (staleStillUsable && cached) {
-      return {
-        featured,
-        items: excludeFeatured(cached.entries),
-        nextCursor: cached.nextCursor,
-        stale: true,
-        error: message,
-      };
+  const [page, pinnedResult] = await Promise.all([
+    loadPage(primaryToken),
+    resolvePinnedServers({ names: pinnedNames, fetchFn, now, cache }),
+  ]);
+
+  let resolved = page;
+  let items = page.entries.filter((entry) => matchesCatalogSearch(entry, search));
+  const fallbackToken = tokens[0] ?? "";
+  if (items.length === 0 && !cursor && fallbackToken && fallbackToken !== primaryToken) {
+    const retry = await loadPage(fallbackToken);
+    const retryItems = retry.entries.filter((entry) => matchesCatalogSearch(entry, search));
+    if (retryItems.length > 0 || page.entries.length === 0) {
+      resolved = retry;
+      items = retryItems;
     }
-    return {
-      featured,
-      items: [],
-      nextCursor: null,
-      stale: false,
-      error: message,
-    };
   }
+
+  const featured = pinnedResult.entries
+    .filter((entry) => matchesCatalogSearch(entry, search))
+    .map((entry) => ({ ...entry, featured: true }));
+
+  return {
+    featured,
+    items: excludePinned(items, pinnedResult.entries),
+    nextCursor: resolved.nextCursor,
+    stale: resolved.stale || pinnedResult.stale,
+    error: resolved.error,
+  };
 }

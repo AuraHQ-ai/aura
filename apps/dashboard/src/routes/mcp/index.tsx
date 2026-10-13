@@ -80,7 +80,7 @@ function normalizeMcpUrl(url: string): string {
   return url.trim().replace(/\/+$/, "").toLowerCase();
 }
 
-const MARKETPLACE_SEARCH_HINT = "Search Stripe, Linear, Notion…";
+const MARKETPLACE_SEARCH_HINT = "Search Close, Stripe, Linear…";
 
 const STATUS_VARIANT: Record<McpStatus, "success" | "warning" | "destructive"> = {
   connected: "success",
@@ -222,8 +222,8 @@ function MarketplacePanel({
         <Alert variant="destructive">
           <AlertDescription>
             {stale
-              ? "Registry is unavailable; showing a cached catalog. You can still add a featured server or a manual URL."
-              : "Registry is unavailable. Featured servers below still work, or add a server by URL."}
+              ? "Registry is unavailable; showing a cached catalog. You can still add a server by URL."
+              : "Registry is unavailable. Add a server by URL, or try again shortly."}
           </AlertDescription>
         </Alert>
       )}

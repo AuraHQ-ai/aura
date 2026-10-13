@@ -8,7 +8,6 @@ import { logger } from "../../lib/logger.js";
 import { startMcpOAuth, upsertPendingConnection } from "../../lib/mcp-oauth.js";
 import { createMcpClientForServer, refreshMcpToolCache } from "../../lib/mcp-runtime.js";
 import {
-  featuredMcpServers,
   getMarketplaceCatalog,
   normalizeMcpUrl,
   type McpCatalogEntry,
@@ -245,7 +244,7 @@ const marketplaceRoute = createRoute({
   method: "get",
   path: "/marketplace",
   tags: ["MCP"],
-  summary: "List featured and registry MCP servers",
+  summary: "List pinned and official-registry MCP servers",
   request: { query: marketplaceQuery },
   responses: {
     200: {
@@ -312,7 +311,7 @@ dashboardMcpApp.openapi(marketplaceRoute, async (c) => {
     logger.error("Failed to load MCP marketplace", { error: String(error) });
     return c.json(
       {
-        featured: withInstalledState(featuredMcpServers(query.search), new Map()),
+        featured: [],
         items: [],
         nextCursor: null,
         stale: false,

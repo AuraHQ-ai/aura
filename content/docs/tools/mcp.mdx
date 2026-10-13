@@ -1,6 +1,6 @@
 ---
 title: "MCP Servers"
-description: "Connect remote Model Context Protocol servers so their tools become available to Aura — 4 management tools plus dynamic per-server tools."
+description: "Connect remote Model Context Protocol servers so their tools become available to Aura — 5 management tools plus dynamic per-server tools."
 ---
 
 # MCP Servers
@@ -11,7 +11,8 @@ Aura is an MCP **client**. Add a remote [Model Context Protocol](https://modelco
 
 | Tool | What it does |
 | --- | --- |
-| `mcp_add_server` | Probes an HTTPS MCP URL and registers it. Returns `{ status: "connected" }` or `{ status: "needs_auth", auth_url }` when the server requires OAuth. Inputs: `url`, optional `name` (defaults to the hostname), optional `visibility` (`personal` default, or `workspace`, admin only). |
+| `mcp_search_registry` | Searches the official MCP registry. Multi-word queries are split into tokens; the registry is queried with the longest token, then results are kept only if every token matches name, title, description, or the derived display name. Returns name, display title, truncated plain-text description, remote URL, and whether already installed. Add a result with `mcp_add_server` using its URL. |
+| `mcp_add_server` | Probes an HTTPS MCP URL and registers it. Returns `{ status: "connected" }` or `{ status: "needs_auth", auth_url }` when the server requires OAuth. Inputs: `url`, optional `name` (defaults to the hostname), optional `visibility` (`personal` default, or `workspace`, admin only). Find a URL with `mcp_search_registry` first. |
 | `mcp_list_servers` | Lists servers visible to you (workspace-wide plus your personal ones) with slug, URL, visibility, auth type, `trusted`, `enabled`, tool count, and connection status. |
 | `mcp_remove_server` | Removes a server by `slug` and cascade-deletes its connections (including encrypted OAuth tokens). Personal servers: owner only. Workspace servers: admin only. |
 | `mcp_reauth` | Starts a fresh per-user OAuth flow for an existing server and returns an `auth_url`. |
@@ -53,7 +54,7 @@ Jobs only see MCP server tools they are explicitly opted into via `env_allowlist
 
 The **MCP** page in the dashboard sidebar (`/mcp`) lets you:
 
-- Browse the **marketplace**: a curated featured list (Stripe, Linear, Notion, Sentry, Mako) plus the official MCP registry (`registry.modelcontextprotocol.io`, HTTPS `streamable-http`/`sse` remotes only, cached for 10 minutes). Installed entries are flagged, and registry text is sanitized as untrusted.
+- Browse the **marketplace**: the official MCP registry (`registry.modelcontextprotocol.io`) only, HTTPS `streamable-http`/`sse` remotes, cached for 10 minutes. Multi-word search splits the query and filters locally (the registry itself substring-matches one string on the name). A top row pins a few registry names (Close, Stripe, Linear, Notion, Sentry, Mako) and resolves title/URL live — nothing is hand-copied, and names the registry does not return are skipped. Empty titles fall back to a prettified last path segment of the registry name. Installed entries are flagged, and registry text is sanitized as untrusted.
 - Add a server by URL with optional header auth and `http`/`sse` transport.
 - See connection status and the cached tool list, allow or deny individual tools, enable/disable a server, test the connection, refresh tools, start or restart OAuth, and (admins) mark a server trusted.
 

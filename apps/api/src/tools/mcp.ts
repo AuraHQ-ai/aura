@@ -27,6 +27,7 @@ import {
   refreshMcpToolCache,
   type McpClientHandle,
 } from "../lib/mcp-runtime.js";
+import { getMarketplaceCatalog, normalizeMcpUrl } from "../lib/mcp-registry.js";
 import {
   allowedCachedTools,
   displayNameFromUrlOrName,
@@ -151,9 +152,55 @@ export async function createMcpTools(context?: ScheduleContext) {
 
 function createMcpManagementTools(context?: ScheduleContext) {
   return {
+    mcp_search_registry: defineTool({
+      description:
+        "Search the official MCP registry for remote HTTPS servers. The registry itself only substring-matches one string on the server name, so this tool splits the query into tokens, queries with the longest token, then keeps entries where every token matches name, title, description, or the derived display name (empty titles fall back to the last path segment of the registry name). Returns name, display title, truncated plain-text description, remote URL, and whether already installed for you. To connect a result, call mcp_add_server with its URL (not the registry name).",
+      inputSchema: z.object({
+        query: z
+          .string()
+          .min(1)
+          .max(200)
+          .describe(
+            'Search text, e.g. "close crm" or "stripe". Every token must match; prefer a distinctive name token.',
+          ),
+      }),
+      slack: {
+        status: "Searching MCP registry...",
+        detail: (input) => input.query,
+      },
+      execute: async ({ query }) => {
+        const catalog = await getMarketplaceCatalog({ search: query });
+        const seen = new Set<string>();
+        const combined = [...catalog.featured, ...catalog.items].filter((entry) => {
+          const key = entry.name.toLowerCase();
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        });
+        const installedUrls = new Set(
+          (await listVisibleServers(context)).map((server) => normalizeMcpUrl(server.url)),
+        );
+        return {
+          ok: true,
+          query,
+          results: combined.map((entry) => ({
+            name: entry.name,
+            title: entry.title,
+            description: entry.description,
+            url: entry.url,
+            transport: entry.transport,
+            installed: installedUrls.has(normalizeMcpUrl(entry.url)),
+          })),
+          next_cursor: catalog.nextCursor,
+          stale: catalog.stale,
+          error: catalog.error,
+        };
+      },
+    }),
+
     mcp_add_server: defineTool({
       description:
-        "Add an MCP server by HTTPS URL so its tools become available as mcp__<slug>__<tool>. Probes the server (SSRF-safe). Returns { status: 'connected' } or { status: 'needs_auth', auth_url } for OAuth. Default visibility is personal (any member). visibility='workspace' is admin-only. Header-auth servers are added from the dashboard (phase 2). After OAuth, click the auth URL; Aura posts back into this Slack thread when connected.",
+        "Add an MCP server by HTTPS URL so its tools become available as mcp__<slug>__<tool>. Find a URL with mcp_search_registry first. Probes the server (SSRF-safe). Returns { status: 'connected' } or { status: 'needs_auth', auth_url } for OAuth. Default visibility is personal (any member). visibility='workspace' is admin-only. Header-auth servers are added from the dashboard (phase 2). After OAuth, click the auth URL; Aura posts back into this Slack thread when connected.",
       inputSchema: z.object({
         url: z.string().url().describe("HTTPS MCP server URL (http/stdio rejected)"),
         name: z
