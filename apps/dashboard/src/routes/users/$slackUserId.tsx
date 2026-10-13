@@ -6,7 +6,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { DetailSkeleton } from "@/components/page-skeleton";
 import { formatDate, truncate } from "@/lib/utils";
 import { useState } from "react";
@@ -91,8 +97,12 @@ function UserDetailPage() {
   });
 
   const personMutation = useMutation({
-    mutationFn: (personData: { jobTitle?: string; preferredLanguage?: string; gender?: string; notes?: string }) =>
-      apiPatch(`/users/person/${data?.person?.id}`, personData),
+    mutationFn: (personData: {
+      jobTitle?: string;
+      preferredLanguage?: string;
+      gender?: string;
+      notes?: string;
+    }) => apiPatch(`/users/person/${data?.person?.id}`, personData),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["users"] });
       setErrMsg(null);
@@ -101,7 +111,8 @@ function UserDetailPage() {
   });
 
   if (isLoading) return <DetailSkeleton />;
-  if (error) return <div className="text-destructive text-sm">Failed to load user: {error.message}</div>;
+  if (error)
+    return <div className="text-destructive text-sm">Failed to load user: {error.message}</div>;
   if (!data) return null;
 
   const { profile, person, memories } = data;
@@ -111,7 +122,9 @@ function UserDetailPage() {
     <div className="space-y-4">
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon-sm" asChild>
-          <Link to="/users"><ArrowLeft className="h-4 w-4" /></Link>
+          <Link to="/users">
+            <ArrowLeft className="h-4 w-4" />
+          </Link>
         </Button>
         <div>
           <h1 className="text-base font-semibold">{profile.displayName}</h1>
@@ -121,20 +134,28 @@ function UserDetailPage() {
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <Card>
-          <CardHeader><CardTitle>Interactions</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle>Interactions</CardTitle>
+          </CardHeader>
           <CardContent>
             <div className="text-xl font-bold">{profile.interactionCount}</div>
-            <p className="text-xs text-muted-foreground">Last: {formatDate(profile.lastInteractionAt)}</p>
+            <p className="text-xs text-muted-foreground">
+              Last: {formatDate(profile.lastInteractionAt)}
+            </p>
           </CardContent>
         </Card>
         <Card>
-          <CardHeader><CardTitle className="text-sm">Timezone</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle className="text-sm">Timezone</CardTitle>
+          </CardHeader>
           <CardContent>
             <div className="text-lg font-medium">{profile.timezone || "Unknown"}</div>
           </CardContent>
         </Card>
         <Card>
-          <CardHeader><CardTitle className="text-sm">Communication Style</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle className="text-sm">Communication Style</CardTitle>
+          </CardHeader>
           <CardContent>
             {commStyle ? (
               <div className="flex flex-wrap gap-1">
@@ -143,7 +164,9 @@ function UserDetailPage() {
                 <Badge variant="outline">{commStyle.emojiUsage} emoji</Badge>
                 <Badge variant="outline">{commStyle.preferredFormat}</Badge>
               </div>
-            ) : <span className="text-sm text-muted-foreground">Not set</span>}
+            ) : (
+              <span className="text-sm text-muted-foreground">Not set</span>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -158,8 +181,12 @@ function UserDetailPage() {
 
       <Tabs defaultValue="profile">
         <TabsList>
-          <TabsTrigger value="profile"><UserRound /> Profile</TabsTrigger>
-          <TabsTrigger value="memories"><Brain /> Memories ({memories.length})</TabsTrigger>
+          <TabsTrigger value="profile">
+            <UserRound /> Profile
+          </TabsTrigger>
+          <TabsTrigger value="memories">
+            <Brain /> Memories ({memories.length})
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="profile">
@@ -167,14 +194,18 @@ function UserDetailPage() {
             <CardContent className="pt-4 space-y-3">
               <div className="grid gap-3 sm:grid-cols-2">
                 <div>
-                  <label className="text-sm font-medium">Role</label>
+                  <label htmlFor="user-role" className="text-sm font-medium">
+                    Role
+                  </label>
                   <Select value={role} onValueChange={setRole}>
-                    <SelectTrigger className="w-full">
+                    <SelectTrigger id="user-role" className="w-full">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
                       {roleOptions.map((opt) => (
-                        <SelectItem key={opt.value} value={opt.value}>{opt.label}</SelectItem>
+                        <SelectItem key={opt.value} value={opt.value}>
+                          {opt.label}
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -195,28 +226,51 @@ function UserDetailPage() {
               <CardContent className="pt-4 space-y-3">
                 <div className="grid gap-3 sm:grid-cols-2">
                   <div>
-                    <label className="text-sm font-medium">Job Title</label>
-                    <Input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} />
+                    <label htmlFor="user-job-title" className="text-sm font-medium">
+                      Job Title
+                    </label>
+                    <Input
+                      id="user-job-title"
+                      value={jobTitle}
+                      onChange={(e) => setJobTitle(e.target.value)}
+                    />
                   </div>
                   <div>
-                    <label className="text-sm font-medium">Preferred Language</label>
-                    <Input value={preferredLanguage} onChange={(e) => setPreferredLanguage(e.target.value)} />
+                    <label htmlFor="user-preferred-language" className="text-sm font-medium">
+                      Preferred Language
+                    </label>
+                    <Input
+                      id="user-preferred-language"
+                      value={preferredLanguage}
+                      onChange={(e) => setPreferredLanguage(e.target.value)}
+                    />
                   </div>
                   <div>
-                    <label className="text-sm font-medium">Gender</label>
-                    <Input value={gender} onChange={(e) => setGender(e.target.value)} />
+                    <label htmlFor="user-gender" className="text-sm font-medium">
+                      Gender
+                    </label>
+                    <Input
+                      id="user-gender"
+                      value={gender}
+                      onChange={(e) => setGender(e.target.value)}
+                    />
                   </div>
                 </div>
                 <div>
-                  <label className="text-sm font-medium">Notes</label>
+                  <label htmlFor="user-notes" className="text-sm font-medium">
+                    Notes
+                  </label>
                   <textarea
+                    id="user-notes"
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
                     className="flex min-h-[100px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
                   />
                 </div>
                 <Button
-                  onClick={() => personMutation.mutate({ jobTitle, preferredLanguage, gender, notes })}
+                  onClick={() =>
+                    personMutation.mutate({ jobTitle, preferredLanguage, gender, notes })
+                  }
                   disabled={personMutation.isPending}
                   size="sm"
                 >
@@ -236,10 +290,14 @@ function UserDetailPage() {
                 <Card className="hover:bg-muted/50 transition-colors">
                   <CardContent className="py-3 flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2 min-w-0">
-                      <Badge variant="secondary" className="shrink-0">{m.type}</Badge>
+                      <Badge variant="secondary" className="shrink-0">
+                        {m.type}
+                      </Badge>
                       <span className="text-sm truncate">{truncate(m.content, 80)}</span>
                     </div>
-                    <span className="text-xs text-muted-foreground whitespace-nowrap shrink-0">{formatDate(m.createdAt)}</span>
+                    <span className="text-xs text-muted-foreground whitespace-nowrap shrink-0">
+                      {formatDate(m.createdAt)}
+                    </span>
                   </CardContent>
                 </Card>
               </Link>

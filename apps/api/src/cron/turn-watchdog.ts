@@ -40,8 +40,7 @@ export const TURN_RECOVERY_MESSAGE =
 export function turnWatchdogStaleMs(): number {
   const raw = process.env.TURN_WATCHDOG_STALE_MINUTES;
   const parsed = raw ? Number(raw) : NaN;
-  const minutes =
-    Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STALE_MINUTES;
+  const minutes = Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STALE_MINUTES;
   return minutes * 60 * 1000;
 }
 
@@ -77,12 +76,7 @@ export async function sweepStaleTurnMarkers(
     const staleMarkers = await db
       .select()
       .from(turnMarkers)
-      .where(
-        and(
-          eq(turnMarkers.status, "started"),
-          lt(turnMarkers.startedAt, cutoff),
-        ),
-      )
+      .where(and(eq(turnMarkers.status, "started"), lt(turnMarkers.startedAt, cutoff)))
       .orderBy(turnMarkers.startedAt)
       .limit(SWEEP_BATCH_SIZE);
 
@@ -94,12 +88,7 @@ export async function sweepStaleTurnMarkers(
       const claimed = await db
         .update(turnMarkers)
         .set({ status: "recovered", endedAt: new Date() })
-        .where(
-          and(
-            eq(turnMarkers.id, marker.id),
-            eq(turnMarkers.status, "started"),
-          ),
-        )
+        .where(and(eq(turnMarkers.id, marker.id), eq(turnMarkers.status, "started")))
         .returning({ id: turnMarkers.id });
 
       if (claimed.length === 0) continue;

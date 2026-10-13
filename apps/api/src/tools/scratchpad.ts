@@ -20,9 +20,7 @@ export function createScratchpadTools(invocationId: string) {
     inputSchema: z.object({
       key: z
         .string()
-        .describe(
-          "Section name, e.g. 'findings', 'running-total', 'channels-checked'",
-        ),
+        .describe("Section name, e.g. 'findings', 'running-total', 'channels-checked'"),
       content: z
         .string()
         .describe(
@@ -42,10 +40,7 @@ export function createScratchpadTools(invocationId: string) {
     // key is optional — cannot be represented as strict JSON Schema (#1517).
     strict: false,
     inputSchema: z.object({
-      key: z
-        .string()
-        .optional()
-        .describe("Specific section to read. Omit to read all sections."),
+      key: z.string().optional().describe("Specific section to read. Omit to read all sections."),
     }),
     execute: async ({ key }) => {
       if (key) {
@@ -67,9 +62,7 @@ export function createScratchpadTools(invocationId: string) {
 }
 
 /** Retrieve scratchpad contents for persistence at end of invocation. */
-export function getScratchpadContents(
-  invocationId: string,
-): Record<string, string> | null {
+export function getScratchpadContents(invocationId: string): Record<string, string> | null {
   const pad = scratchpads.get(invocationId);
   if (!pad || pad.size === 0) return null;
   return Object.fromEntries(pad);

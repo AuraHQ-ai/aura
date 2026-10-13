@@ -29,18 +29,13 @@ export async function ensureSlackUserEntityLink(
       entityId: users.entityId,
     })
     .from(users)
-    .where(
-      input.userId
-        ? eq(users.id, input.userId)
-        : eq(users.slackUserId, input.slackUserId),
-    )
+    .where(input.userId ? eq(users.id, input.userId) : eq(users.slackUserId, input.slackUserId))
     .limit(1);
 
   if (!user?.slackUserId) return null;
 
   const workspaceId = input.workspaceId ?? user.workspaceId ?? "default";
-  const displayName =
-    (input.displayName ?? user.displayName ?? user.slackUserId).trim();
+  const displayName = (input.displayName ?? user.displayName ?? user.slackUserId).trim();
 
   // 1) Prefer entity already linked by Slack user ID.
   const [entityBySlack] = await db
@@ -76,8 +71,7 @@ export async function ensureSlackUserEntityLink(
 
     if (
       !linkedEntity ||
-      (linkedEntity.slackUserId &&
-        linkedEntity.slackUserId !== user.slackUserId)
+      (linkedEntity.slackUserId && linkedEntity.slackUserId !== user.slackUserId)
     ) {
       targetEntityId = null;
     }
@@ -92,10 +86,7 @@ export async function ensureSlackUserEntityLink(
       .where(eq(entities.id, resolved.entityId))
       .limit(1);
 
-    if (
-      resolvedEntity?.slackUserId &&
-      resolvedEntity.slackUserId !== user.slackUserId
-    ) {
+    if (resolvedEntity?.slackUserId && resolvedEntity.slackUserId !== user.slackUserId) {
       const [created] = await db
         .insert(entities)
         .values({

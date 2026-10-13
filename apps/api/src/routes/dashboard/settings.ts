@@ -4,7 +4,11 @@ import { settings } from "@aura/db/schema";
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
 import { errorSchema, createDashboardApp } from "./schemas.js";
-import { isSecretSettingKey, redactSettingValue, MASKED_VALUE } from "../../lib/settings-redaction.js";
+import {
+  isSecretSettingKey,
+  redactSettingValue,
+  MASKED_VALUE,
+} from "../../lib/settings-redaction.js";
 
 export const dashboardSettingsApp = createDashboardApp();
 
@@ -44,10 +48,7 @@ const listSettingsRoute = createRoute({
 
 dashboardSettingsApp.openapi(listSettingsRoute, async (c) => {
   try {
-    const allSettings = await db
-      .select()
-      .from(settings)
-      .orderBy(asc(settings.key));
+    const allSettings = await db.select().from(settings).orderBy(asc(settings.key));
 
     return c.json(allSettings.map(redactSettingValue) as any, 200);
   } catch (error) {
@@ -96,11 +97,7 @@ dashboardSettingsApp.openapi(getSettingRoute, async (c) => {
   try {
     const key = c.req.param("key");
 
-    const [setting] = await db
-      .select()
-      .from(settings)
-      .where(eq(settings.key, key))
-      .limit(1);
+    const [setting] = await db.select().from(settings).where(eq(settings.key, key)).limit(1);
 
     if (!setting) return c.json({ error: "Not found" }, 404);
 

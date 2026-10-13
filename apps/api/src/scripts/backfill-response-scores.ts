@@ -16,8 +16,8 @@
  *   pnpm backfill:response-scores --until=2026-04-01    # stop once the walk passes a date
  */
 import { config } from "dotenv";
-import { resolve } from "path";
-import { fileURLToPath } from "url";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = resolve(__dirname, "../../../..");
@@ -49,9 +49,7 @@ if (until && Number.isNaN(until.getTime())) {
   process.exit(1);
 }
 
-const { findUnscoredGroups, scoreGroup } = await import(
-  "../cron/eval-responses.js"
-);
+const { findUnscoredGroups, scoreGroup } = await import("../cron/eval-responses.js");
 const { pool } = await import("../lib/pool.js");
 
 console.log("=== Eval Response Score Backfill ===");
@@ -80,9 +78,7 @@ while (batch < maxBatches) {
     break;
   }
 
-  const eligible = until
-    ? groups.filter((g) => g.firstAt.getTime() < until.getTime())
-    : groups;
+  const eligible = until ? groups.filter((g) => g.firstAt.getTime() < until.getTime()) : groups;
 
   console.log(`\n--- Batch ${batch}: ${eligible.length} thread group(s) ---`);
   await pool(eligible, concurrency, async (group) => {

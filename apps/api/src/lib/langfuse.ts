@@ -68,9 +68,7 @@ const GEN_AI_MODEL_ATTRIBUTES = [
  * - claude-sonnet-4-6 -> claude-sonnet-4-6
  * - openai/gpt-5.1 -> gpt-5-1
  */
-export function normalizeLangfuseModelSlug(
-  modelId: string | undefined,
-): string | undefined {
+export function normalizeLangfuseModelSlug(modelId: string | undefined): string | undefined {
   const trimmed = modelId?.trim();
   if (!trimmed) return undefined;
 
@@ -101,8 +99,7 @@ function normalizeGenAIModelAttributes(span: ReadableSpan): void {
  * and drop the whole operation — never just the root — so we never leave an
  * orphaned `doEmbed` child behind.
  */
-const DROP_SINGLE_EMBEDDING_SPANS =
-  process.env.LANGFUSE_DROP_ORPHAN_EMBEDDINGS === "true";
+const DROP_SINGLE_EMBEDDING_SPANS = process.env.LANGFUSE_DROP_ORPHAN_EMBEDDINGS === "true";
 
 function isSingleEmbeddingSpan(span: ReadableSpan): boolean {
   const operationId = span.attributes["ai.operationId"];
@@ -164,10 +161,7 @@ function maskSensitiveData({ data }: { data: unknown }): unknown {
       .replace(/\bxox[baprs]-[A-Za-z0-9-]{10,}/g, "***REDACTED_SLACK_TOKEN***")
       .replace(/\bSG\.[A-Za-z0-9._-]{12,}/g, "***REDACTED_API_KEY***")
       // Credit card numbers (PCI safety net)
-      .replace(
-        /\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b/g,
-        "***REDACTED_CARD***",
-      )
+      .replace(/\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b/g, "***REDACTED_CARD***")
   );
 }
 
@@ -197,9 +191,7 @@ export function initLangfuseTracing(): boolean {
   const baseUrl = process.env.LANGFUSE_BASE_URL;
 
   if (!publicKey || !secretKey) {
-    logger.warn(
-      "Langfuse tracing disabled: LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY not set",
-    );
+    logger.warn("Langfuse tracing disabled: LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY not set");
     return false;
   }
 
@@ -211,8 +203,7 @@ export function initLangfuseTracing(): boolean {
     baseUrl,
     environment,
     // Tie traces to the deployed commit for regression hunting across releases.
-    release:
-      process.env.LANGFUSE_RELEASE || process.env.VERCEL_GIT_COMMIT_SHA,
+    release: process.env.LANGFUSE_RELEASE || process.env.VERCEL_GIT_COMMIT_SHA,
     mask: maskSensitiveData,
     // Serverless: ship spans as they end rather than buffering a batch that a
     // frozen/terminated instance could never drain.
@@ -302,10 +293,7 @@ export function aiTelemetry(
  * person is a single user across channels. Falls back to the bare id when no
  * name is available, and returns undefined when there's no id at all.
  */
-export function formatTraceUser(
-  id: string | undefined,
-  name?: string | null,
-): string | undefined {
+export function formatTraceUser(id: string | undefined, name?: string | null): string | undefined {
   if (!id) return undefined;
   const trimmed = name?.trim();
   return trimmed ? `${trimmed} (${id})` : id;
@@ -358,11 +346,7 @@ export function withTrace<T>(attrs: TraceAttributes, fn: () => T): T {
  * auto-ends when `fn`'s returned promise settles. No-op passthrough when tracing
  * is off.
  */
-export function withTraceSpan<T>(
-  name: string,
-  attrs: TraceAttributes,
-  fn: () => T,
-): T {
+export function withTraceSpan<T>(name: string, attrs: TraceAttributes, fn: () => T): T {
   if (!spanProcessor) return fn();
   return startActiveObservation(name, () => withTrace(attrs, fn)) as T;
 }

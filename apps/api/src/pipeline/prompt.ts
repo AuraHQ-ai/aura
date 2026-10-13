@@ -48,7 +48,7 @@ export async function assemblePrompt(
             .slice(-5)
             .map((m) => m.text)
             .join("\n")
-      : context.text;
+        : context.text;
 
   // Extract @mentioned user IDs from message text (excluding the sender).
   // By this point, resolveSlackEntities has converted <@U066V1AN6> to @name (U066V1AN6).
@@ -76,9 +76,7 @@ export async function assemblePrompt(
     (async (): Promise<string | undefined> => {
       if (!context.isDm && client) {
         const name = await resolveChannelName(client, context.channelId);
-        return name !== context.channelId
-          ? `#${name} (${context.channelId})`
-          : context.channelId;
+        return name !== context.channelId ? `#${name} (${context.channelId})` : context.channelId;
       }
       return undefined;
     })(),
@@ -97,8 +95,7 @@ export async function assemblePrompt(
     userTimezone,
   );
 
-  const isChannelHistory =
-    !conversation.thread?.length && !!threadContext && !context.isDm;
+  const isChannelHistory = !conversation.thread?.length && !!threadContext && !context.isDm;
 
   // Delegate to the channel-agnostic core
   const core = await buildCorePrompt({
@@ -121,8 +118,7 @@ export async function assemblePrompt(
 
   // Slack List item notification guidance
   if (context.slackListItemContext) {
-    const { messageTs, channelId: listChannelId } =
-      context.slackListItemContext;
+    const { messageTs, channelId: listChannelId } = context.slackListItemContext;
     dynamicContext += `\n\n## Slack List Item Notification Context
 
 The incoming message is a Slackbot notification about a Slack List item, NOT a real user message.

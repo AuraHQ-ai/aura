@@ -248,11 +248,9 @@ async function runSlackAgentStep(
   const { streamText, isStepCount } = await import("ai");
   const { WebClient } = await import("@slack/web-api");
   const { gateway } = await import("@ai-sdk/gateway");
-  const {
-    withAnthropicFallback,
-    getEscalationModel,
-    buildCachedSystemMessages,
-  } = await import("../src/lib/ai.js");
+  const { withAnthropicFallback, getEscalationModel, buildCachedSystemMessages } = await import(
+    "../src/lib/ai.js"
+  );
   const { createSlackTools } = await import("../src/tools/slack.js");
   const { getDeferredToolManifest } = await import("../src/tools/deferred.js");
   const { appendDeferredToolsBlock } = await import("../src/personality/system-prompt.js");
@@ -268,7 +266,9 @@ async function runSlackAgentStep(
   const { isInvocationCurrent } = await import("../src/lib/invocation-lock.js");
   const { executionContext } = await import("../src/lib/tool.js");
   const { getSlackMeta } = await import("../src/lib/tool.js");
-  const { rememberLaunchLabelFromCall, resolveToolCardTitle } = await import("../src/lib/tool-card-title.js");
+  const { rememberLaunchLabelFromCall, resolveToolCardTitle } = await import(
+    "../src/lib/tool-card-title.js"
+  );
   const { pruneMessages } = await import("ai");
   const { compactMessages, summarizeEvictedToolResult } = await import(
     "../src/pipeline/compact-messages.js"
@@ -284,11 +284,7 @@ async function runSlackAgentStep(
 
   // ── Invocation staleness: one check per model call ──────────────────
   try {
-    const current = await isInvocationCurrent(
-      input.channelId,
-      input.threadTs,
-      input.invocationId,
-    );
+    const current = await isInvocationCurrent(input.channelId, input.threadTs, input.invocationId);
     if (!current) {
       return supersededResult(state, Date.now() - turn.turnStartedAt);
     }
@@ -329,18 +325,11 @@ async function runSlackAgentStep(
   };
   const tools = turn.hardDeadlineReached
     ? ({} as Awaited<ReturnType<typeof createSlackTools>>)
-    : await createSlackTools(
-        slackClient,
-        scheduleContext as any,
-        stepModelId,
-        input.invocationId,
-      );
+    : await createSlackTools(slackClient, scheduleContext as any, stepModelId, input.invocationId);
 
   const environmentContext =
-    appendDeferredToolsBlock(
-      input.environmentContext,
-      getDeferredToolManifest(tools),
-    ) ?? input.environmentContext;
+    appendDeferredToolsBlock(input.environmentContext, getDeferredToolManifest(tools)) ??
+    input.environmentContext;
 
   // ── Dynamic-context nudges (mirrors prepare-step.ts) ────────────────
   let dynamicContext = input.dynamicContext;
@@ -361,38 +350,36 @@ async function runSlackAgentStep(
       channelId: input.channelId,
     });
     appendNudge(
-      TURN_SOFT_DEADLINE_MESSAGE.replace(
-        "{elapsedSec}",
-        String(Math.round(turn.elapsedMs / 1000)),
-      ),
+      TURN_SOFT_DEADLINE_MESSAGE.replace("{elapsedSec}", String(Math.round(turn.elapsedMs / 1000))),
     );
   }
 
   if (stepIndex >= WRAP_UP_THRESHOLD) {
     appendNudge(
-      WRAP_UP_MESSAGE
-        .replace("{stepCount}", String(stepIndex))
-        .replace("{limit}", String(SLACK_STEP_LIMIT)),
+      WRAP_UP_MESSAGE.replace("{stepCount}", String(stepIndex)).replace(
+        "{limit}",
+        String(SLACK_STEP_LIMIT),
+      ),
     );
   }
 
   if (!turn.hardDeadlineReached) {
     const loop = detectToolCallLoop(turn.previousSteps ?? []);
     if (loop) {
-      const alreadyNudged = detectToolCallLoop(
-        (turn.previousSteps ?? []).slice(0, -1),
+      const alreadyNudged = detectToolCallLoop((turn.previousSteps ?? []).slice(0, -1));
+      logger.warn(
+        "slackRespondWorkflow: tool-call loop detected — injecting stop/summarize nudge",
+        {
+          toolName: loop.toolName,
+          callCount: loop.callCount,
+          stepIndex,
+          channelId: input.channelId,
+        },
       );
-      logger.warn("slackRespondWorkflow: tool-call loop detected — injecting stop/summarize nudge", {
-        toolName: loop.toolName,
-        callCount: loop.callCount,
-        stepIndex,
-        channelId: input.channelId,
-      });
       if (!alreadyNudged) {
         logError({
           errorName: "ToolCallLoop",
-          errorMessage:
-            `Turn called ${loop.toolName} ${loop.callCount} times without intervening text; wrap-up nudge injected`,
+          errorMessage: `Turn called ${loop.toolName} ${loop.callCount} times without intervening text; wrap-up nudge injected`,
           errorCode: "tool_call_loop",
           channelId: input.channelId,
           userId: input.userId,
@@ -415,9 +402,7 @@ async function runSlackAgentStep(
     dynamicContext,
   );
 
-  const providerOptions = await getProviderThinkingOptions(stepModelId, 8000).catch(
-    () => ({}),
-  );
+  const providerOptions = await getProviderThinkingOptions(stepModelId, 8000).catch(() => ({}));
 
   // ── Slack append helpers ─────────────────────────────────────────────
   async function openStream(): Promise<void> {
@@ -452,8 +437,13 @@ async function runSlackAgentStep(
     // call: one malformed element rejects the whole batch with
     // `invalid_arguments … [json-pointer:/chunks/N]` and the text in that
     // batch never reaches Slack (issue #1348).
-    const { sanitizeChunks, markdownOnly, describeChunks, slackErrorDetail, isChunkSchemaRejection } =
-      await import("../src/lib/slack-chunks.js");
+    const {
+      sanitizeChunks,
+      markdownOnly,
+      describeChunks,
+      slackErrorDetail,
+      isChunkSchemaRejection,
+    } = await import("../src/lib/slack-chunks.js");
     const { chunks, dropped } = sanitizeChunks(rawChunks);
     if (dropped.length > 0) {
       logger.warn("slackRespondWorkflow: dropped malformed chunk(s) before append", {
@@ -584,7 +574,7 @@ async function runSlackAgentStep(
 
   function truncate(s: string | undefined, max: number): string | undefined {
     if (!s) return undefined;
-    return s.length <= max ? s : s.slice(0, max - 1) + "…";
+    return s.length <= max ? s : `${s.slice(0, max - 1)}…`;
   }
 
   // ── Run one model call ───────────────────────────────────────────────
@@ -763,7 +753,9 @@ async function runSlackAgentStep(
           let details: string | undefined;
           try {
             details = meta?.detail?.(inputArgs);
-          } catch { /* partial input args */ }
+          } catch {
+            /* partial input args */
+          }
           await flushPendingText(true);
           await append([
             {
@@ -799,7 +791,9 @@ async function runSlackAgentStep(
           let taskOutput: string | undefined;
           try {
             taskOutput = meta?.output?.(output);
-          } catch { /* display-only */ }
+          } catch {
+            /* display-only */
+          }
           taskOutput ??= isError && output?.error ? String(output.error) : undefined;
           await append([
             {
@@ -958,7 +952,11 @@ async function runSlackAgentStep(
     // bypasses retries, anything else still gets its 3 retries.
     const { FatalError, getStepMetadata } = await import("workflow");
     let attempt: number | undefined;
-    try { attempt = getStepMetadata().attempt; } catch { /* not in a step (tests) */ }
+    try {
+      attempt = getStepMetadata().attempt;
+    } catch {
+      /* not in a step (tests) */
+    }
     if (!FatalError.is(error)) {
       logError({
         errorName: error?.name && error.name !== "Error" ? error.name : "SlackWorkflowStepError",
@@ -991,10 +989,7 @@ function safeParse(s: string): unknown {
   }
 }
 
-function supersededResult(
-  state: SlackStreamState,
-  elapsedMs: number,
-): SlackAgentStepResult {
+function supersededResult(state: SlackStreamState, elapsedMs: number): SlackAgentStepResult {
   return {
     superseded: true,
     responseMessages: [],
@@ -1022,11 +1017,8 @@ async function checkToolThrash(params: {
   step: number;
 }): Promise<{ note: string } | null> {
   "use step";
-  const {
-    detectToolThrashFromSteps,
-    formatToolThrashUserMessage,
-    logToolThrashBreaker,
-  } = await import("../src/pipeline/tool-thrash.js");
+  const { detectToolThrashFromSteps, formatToolThrashUserMessage, logToolThrashBreaker } =
+    await import("../src/pipeline/tool-thrash.js");
   const trip = detectToolThrashFromSteps(params.steps);
   if (!trip) return null;
   logToolThrashBreaker({
@@ -1062,10 +1054,20 @@ async function finalizeSlackRespond(params: {
   const { runBackgroundTasks } = await import("../src/pipeline/index.js");
   const { logger } = await import("../src/lib/logger.js");
 
-  const { input, streamState, fullText, steps, stepModelIds, toolRecords, outcome, failureMessage } = params;
-  const failureNote = outcome === "failed"
-    ? `_Sorry — something went wrong and I had to stop${failureMessage ? `: ${failureMessage.slice(0, 300)}` : "."}_`
-    : null;
+  const {
+    input,
+    streamState,
+    fullText,
+    steps,
+    stepModelIds,
+    toolRecords,
+    outcome,
+    failureMessage,
+  } = params;
+  const failureNote =
+    outcome === "failed"
+      ? `_Sorry — something went wrong and I had to stop${failureMessage ? `: ${failureMessage.slice(0, 300)}` : "."}_`
+      : null;
   const { trySetAgentSessionStatus } = await import("../src/lib/slack-status.js");
   const slackClient = new WebClient(process.env.SLACK_BOT_TOKEN);
 
@@ -1084,22 +1086,28 @@ async function finalizeSlackRespond(params: {
         // the marker twice (issue #1355). Only "newer_message" keeps the
         // markdown note — Slack has no native indicator for that. Append is
         // best effort: the stream may already be closed.
-        const { getSupersedeReason, interruptionNote } = await import("../src/lib/invocation-lock.js");
+        const { getSupersedeReason, interruptionNote } = await import(
+          "../src/lib/invocation-lock.js"
+        );
         const reason = await getSupersedeReason(input.channelId, input.threadTs);
         if (reason !== "stopped") {
-          await slackClient.apiCall("chat.appendStream", {
-            channel: input.channelId,
-            ts: streamState.streamTs,
-            chunks: [{ type: "markdown_text", text: `\n\n${interruptionNote(reason)}` }],
-          }).catch(() => {});
+          await slackClient
+            .apiCall("chat.appendStream", {
+              channel: input.channelId,
+              ts: streamState.streamTs,
+              chunks: [{ type: "markdown_text", text: `\n\n${interruptionNote(reason)}` }],
+            })
+            .catch(() => {});
         }
       }
       if (failureNote) {
-        await slackClient.apiCall("chat.appendStream", {
-          channel: input.channelId,
-          ts: streamState.streamTs,
-          chunks: [{ type: "markdown_text", text: `\n\n${failureNote}` }],
-        }).catch(() => {});
+        await slackClient
+          .apiCall("chat.appendStream", {
+            channel: input.channelId,
+            ts: streamState.streamTs,
+            chunks: [{ type: "markdown_text", text: `\n\n${failureNote}` }],
+          })
+          .catch(() => {});
       }
       await slackClient.apiCall("chat.stopStream", stopParams);
     } else if (failureNote) {
@@ -1236,107 +1244,100 @@ export async function slackRespondWorkflow(input: SlackRespondWorkflowInput) {
   let continuationSpawned = false;
 
   try {
-  for (let stepIndex = 0; stepIndex < SLACK_STEP_LIMIT; stepIndex++) {
-    const { softDeadlineReached, hardDeadlineReached } = evaluateTurnDeadlines(
-      elapsedMs,
-      turnClock,
-    );
-
-    if (hardDeadlineReached && !hardDeadlineHandled) {
-      hardDeadlineHandled = true;
-      continuationSpawned = await handleTurnHardDeadline(
-        input,
+    for (let stepIndex = 0; stepIndex < SLACK_STEP_LIMIT; stepIndex++) {
+      const { softDeadlineReached, hardDeadlineReached } = evaluateTurnDeadlines(
         elapsedMs,
-        stepIndex,
-        turnClock.hardDeadlineMs,
+        turnClock,
       );
-    }
 
-    const r = await runSlackAgentStep(input, messages, streamState, stepIndex, escalate, {
-      turnStartedAt: turnClock.turnStartedAt,
-      elapsedMs,
-      softDeadlineReached,
-      hardDeadlineReached,
-      continuationSpawned,
-      previousSteps: steps,
-    });
+      if (hardDeadlineReached && !hardDeadlineHandled) {
+        hardDeadlineHandled = true;
+        continuationSpawned = await handleTurnHardDeadline(
+          input,
+          elapsedMs,
+          stepIndex,
+          turnClock.hardDeadlineMs,
+        );
+      }
 
-    if (r.superseded) {
-      await finalizeSlackRespond({
-        input,
-        // Use the step's stream state, not the loop's: a mid-tool supersede
-        // (issue #1355) may have opened the bubble inside the aborted step,
-        // and the `_[stopped]_` note must land on THAT stream.
-        streamState: r.streamState,
-        fullText,
-        steps,
-        stepModelIds,
-        toolRecords,
-        outcome: "superseded",
-        compactionTotals,
+      const r = await runSlackAgentStep(input, messages, streamState, stepIndex, escalate, {
+        turnStartedAt: turnClock.turnStartedAt,
+        elapsedMs,
+        softDeadlineReached,
+        hardDeadlineReached,
+        continuationSpawned,
+        previousSteps: steps,
       });
-      return { interrupted: true, text: fullText };
-    }
 
-    messages = [...messages, ...r.responseMessages];
-    streamState = r.streamState;
-    fullText += r.text;
-    steps.push(r.stepRecord);
-    stepModelIds.push(r.stepModelId);
-    toolRecords.push(...r.toolRecords);
-    elapsedMs = r.elapsedMs;
-    compactionTotals.compactedToolResults += r.compaction.compactedCount;
-    compactionTotals.compactionTokensSaved += r.compaction.estimatedTokensSaved;
-    if (r.hadToolFailure) failureCount++;
-    if (!escalate && stepIndex > 15 && failureCount >= 3) {
-      escalate = true;
-    }
+      if (r.superseded) {
+        await finalizeSlackRespond({
+          input,
+          // Use the step's stream state, not the loop's: a mid-tool supersede
+          // (issue #1355) may have opened the bubble inside the aborted step,
+          // and the `_[stopped]_` note must land on THAT stream.
+          streamState: r.streamState,
+          fullText,
+          steps,
+          stepModelIds,
+          toolRecords,
+          outcome: "superseded",
+          compactionTotals,
+        });
+        return { interrupted: true, text: fullText };
+      }
 
-    const thrashCheck = await checkToolThrash({
-      steps,
-      modelId: r.stepModelId || input.modelId,
-      channelId: input.channelId,
-      userId: input.userId,
-      step: stepIndex,
-    });
-    if (thrashCheck) {
-      const note = thrashCheck.note;
-      fullText = fullText.trim() ? `${fullText}\n\n${note}` : note;
-      await finalizeSlackRespond({
-        input,
-        streamState,
-        fullText,
+      messages = [...messages, ...r.responseMessages];
+      streamState = r.streamState;
+      fullText += r.text;
+      steps.push(r.stepRecord);
+      stepModelIds.push(r.stepModelId);
+      toolRecords.push(...r.toolRecords);
+      elapsedMs = r.elapsedMs;
+      compactionTotals.compactedToolResults += r.compaction.compactedCount;
+      compactionTotals.compactionTokensSaved += r.compaction.estimatedTokensSaved;
+      if (r.hadToolFailure) failureCount++;
+      if (!escalate && stepIndex > 15 && failureCount >= 3) {
+        escalate = true;
+      }
+
+      const thrashCheck = await checkToolThrash({
         steps,
-        stepModelIds,
-        toolRecords,
-        outcome: "completed",
+        modelId: r.stepModelId || input.modelId,
+        channelId: input.channelId,
+        userId: input.userId,
+        step: stepIndex,
       });
-      return { interrupted: true, text: fullText };
+      if (thrashCheck) {
+        const note = thrashCheck.note;
+        fullText = fullText.trim() ? `${fullText}\n\n${note}` : note;
+        await finalizeSlackRespond({
+          input,
+          streamState,
+          fullText,
+          steps,
+          stepModelIds,
+          toolRecords,
+          outcome: "completed",
+        });
+        return { interrupted: true, text: fullText };
+      }
+
+      // Past the hard deadline the step ran with no tools — its output is the
+      // final message, regardless of finishReason.
+      if (hardDeadlineReached) break;
+
+      if (r.finishReason === "tool-calls") continue;
+
+      // Empty-completion relaunch (legacy parity): the model ran tools but
+      // produced no user-visible text — nudge it once to summarize.
+      if (!relaunchedForEmptyCompletion && fullText.trim().length === 0 && toolRecords.length > 0) {
+        relaunchedForEmptyCompletion = true;
+        messages = [...messages, { role: "user", content: EMPTY_COMPLETION_RELAUNCH_PROMPT }];
+        continue;
+      }
+
+      break;
     }
-
-    // Past the hard deadline the step ran with no tools — its output is the
-    // final message, regardless of finishReason.
-    if (hardDeadlineReached) break;
-
-    if (r.finishReason === "tool-calls") continue;
-
-    // Empty-completion relaunch (legacy parity): the model ran tools but
-    // produced no user-visible text — nudge it once to summarize.
-    if (
-      !relaunchedForEmptyCompletion &&
-      fullText.trim().length === 0 &&
-      toolRecords.length > 0
-    ) {
-      relaunchedForEmptyCompletion = true;
-      messages = [
-        ...messages,
-        { role: "user", content: EMPTY_COMPLETION_RELAUNCH_PROMPT },
-      ];
-      continue;
-    }
-
-    break;
-  }
   } catch (error: any) {
     // A step threw (model/provider error, tool crash, Slack outage…). Before
     // this catch existed the run died here as a Workflow FatalError: no

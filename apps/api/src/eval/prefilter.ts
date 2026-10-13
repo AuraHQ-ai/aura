@@ -46,7 +46,7 @@ function isPureReaction(text: string): boolean {
   const trimmed = text.trim();
   if (!trimmed || trimmed.length > 80) return false;
 
-  const slackEmoji = /:[a-z0-9_+\-]+:/gi;
+  const slackEmoji = /:[a-z0-9_+-]+:/gi;
   const withoutSlackEmoji = trimmed.replace(slackEmoji, "");
   if (withoutSlackEmoji.trim().length === 0) return true;
 

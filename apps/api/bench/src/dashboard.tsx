@@ -18,7 +18,8 @@
  * so it MUST only ever be loaded via dynamic `import()` from the TTY bench
  * path — never on the Vercel runtime.
  */
-import React, { useEffect, useState, useSyncExternalStore } from "react";
+import type React from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { render, Box, Text } from "ink";
 import Spinner from "ink-spinner";
 
@@ -154,12 +155,9 @@ function renderBar(done: number, total: number): string {
 
 function StageRow({ stage, now }: { stage: StageState; now: number }): React.ReactElement {
   const { status, done, total, label, startedAt, finishedAt } = stage;
-  const elapsed =
-    startedAt == null ? 0 : (finishedAt ?? now) - startedAt;
+  const elapsed = startedAt == null ? 0 : (finishedAt ?? now) - startedAt;
   const eta =
-    status === "active" && done > 0 && total > 0
-      ? (elapsed / done) * (total - done)
-      : null;
+    status === "active" && done > 0 && total > 0 ? (elapsed / done) * (total - done) : null;
 
   const icon =
     status === "done" ? (
@@ -172,8 +170,7 @@ function StageRow({ stage, now }: { stage: StageState; now: number }): React.Rea
       <Text color="gray">·</Text>
     );
 
-  const barColor =
-    status === "done" ? "green" : status === "active" ? "cyan" : "gray";
+  const barColor = status === "done" ? "green" : status === "active" ? "cyan" : "gray";
 
   return (
     <Box>
@@ -208,9 +205,7 @@ function Dashboard({ store }: { store: DashboardStore }): React.ReactElement {
 
   const { scores, cost } = snap;
   const qaPct =
-    scores && scores.qaTotal > 0
-      ? ((scores.qaCorrect / scores.qaTotal) * 100).toFixed(0)
-      : null;
+    scores && scores.qaTotal > 0 ? ((scores.qaCorrect / scores.qaTotal) * 100).toFixed(0) : null;
   const recallPct =
     scores && scores.recallTotal > 0
       ? ((scores.recallHit / scores.recallTotal) * 100).toFixed(0)
@@ -232,14 +227,12 @@ function Dashboard({ store }: { store: DashboardStore }): React.ReactElement {
           QA {qaPct != null ? `${qaPct}%` : "—"}
           {scores && scores.qaTotal > 0 ? ` (${scores.qaCorrect}/${scores.qaTotal})` : ""}
         </Text>
-        <Text color="gray">  ·  </Text>
+        <Text color="gray"> · </Text>
         <Text color="blue">
           recall {recallPct != null ? `${recallPct}%` : "—"}
-          {scores && scores.recallTotal > 0
-            ? ` (${scores.recallHit}/${scores.recallTotal})`
-            : ""}
+          {scores && scores.recallTotal > 0 ? ` (${scores.recallHit}/${scores.recallTotal})` : ""}
         </Text>
-        <Text color="gray">  ·  </Text>
+        <Text color="gray"> · </Text>
         <Text color="yellow">
           ${cost ? cost.usd.toFixed(4) : "0.0000"}
           {cost && cost.tokens > 0 ? ` (${(cost.tokens / 1000).toFixed(1)}k tok)` : ""}
@@ -278,8 +271,7 @@ export function createDashboard(stageDefs: StageDef[]): Dashboard {
     stage(name: string): StageHandle {
       return {
         start: (total: number) => store.startStage(name, total),
-        update: (done: number, total?: number) =>
-          store.updateStage(name, done, total),
+        update: (done: number, total?: number) => store.updateStage(name, done, total),
         done: () => store.finishStage(name),
       };
     },

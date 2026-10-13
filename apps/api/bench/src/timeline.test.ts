@@ -152,16 +152,8 @@ describe("runTimeline", () => {
     const scored: string[] = [];
     // The early question's T_Q is after the late conversation's in-flight
     // extraction timestamp. A global-min watermark would therefore block it.
-    const early = makeCase(
-      "early",
-      "2024-01-01T00:00:00.000Z",
-      "2024-01-15T00:00:00.000Z",
-    );
-    const late = makeCase(
-      "late",
-      "2024-01-10T00:00:00.000Z",
-      "2024-01-11T00:00:00.000Z",
-    );
+    const early = makeCase("early", "2024-01-01T00:00:00.000Z", "2024-01-15T00:00:00.000Z");
+    const late = makeCase("late", "2024-01-10T00:00:00.000Z", "2024-01-11T00:00:00.000Z");
 
     const run = runTimeline({
       cases: [early, late],

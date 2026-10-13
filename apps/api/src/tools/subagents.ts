@@ -1,7 +1,6 @@
 import { defineTool, filterToolsByCredentials } from "../lib/tool.js";
 import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
-import { logger } from "../lib/logger.js";
 import { runSubagent } from "../lib/subagent.js";
 import { getFastModel, getMainModel } from "../lib/ai.js";
 import { resolveUserCredentials } from "../lib/permissions.js";
@@ -83,10 +82,7 @@ async function buildToolScope(
   }
 }
 
-export function createSubagentTools(
-  client?: WebClient,
-  context?: ScheduleContext,
-) {
+export function createSubagentTools(client?: WebClient, context?: ScheduleContext) {
   return {
     run_subagent: defineTool({
       requiredCredentials: ["e2b_api_key"],
@@ -101,9 +97,7 @@ export function createSubagentTools(
           ),
         task: z
           .string()
-          .describe(
-            "What the subagent should do. Be specific — this is the user prompt.",
-          ),
+          .describe("What the subagent should do. Be specific — this is the user prompt."),
         system_prompt: z
           .string()
           .optional()
@@ -129,13 +123,7 @@ export function createSubagentTools(
           .default(50)
           .describe("Maximum agent loop steps for the subagent."),
       }),
-      execute: async ({
-        task,
-        system_prompt,
-        scope,
-        model_preference,
-        max_steps,
-      }) => {
+      execute: async ({ task, system_prompt, scope, model_preference, max_steps }) => {
         const { modelId, model } =
           model_preference === "main"
             ? await getMainModel()

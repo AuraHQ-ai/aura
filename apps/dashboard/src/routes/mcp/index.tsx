@@ -14,12 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { TableRowsSkeleton } from "@/components/page-skeleton";
 import { cn } from "@/lib/utils";
@@ -161,24 +156,18 @@ function MarketplacePanel({
   adding: boolean;
   onAdd: (entry: McpCatalogEntry) => void;
 }) {
-  const {
-    data,
-    isLoading,
-    isFetchingNextPage,
-    fetchNextPage,
-    hasNextPage,
-    error,
-  } = useInfiniteQuery({
-    queryKey: ["mcp-marketplace", marketSearch],
-    queryFn: ({ pageParam }) =>
-      apiGet<McpMarketplaceResponse>("/mcp/marketplace", {
-        search: marketSearch || undefined,
-        cursor: pageParam,
-        limit: "30",
-      }),
-    initialPageParam: undefined as string | undefined,
-    getNextPageParam: (last) => last.nextCursor ?? undefined,
-  });
+  const { data, isLoading, isFetchingNextPage, fetchNextPage, hasNextPage, error } =
+    useInfiniteQuery({
+      queryKey: ["mcp-marketplace", marketSearch],
+      queryFn: ({ pageParam }) =>
+        apiGet<McpMarketplaceResponse>("/mcp/marketplace", {
+          search: marketSearch || undefined,
+          cursor: pageParam,
+          limit: "30",
+        }),
+      initialPageParam: undefined as string | undefined,
+      getNextPageParam: (last) => last.nextCursor ?? undefined,
+    });
 
   const featured = data?.pages[0]?.featured ?? [];
   const items = data?.pages.flatMap((page) => page.items) ?? [];
@@ -216,12 +205,13 @@ function MarketplacePanel({
         </div>
       </div>
       <div className="space-y-1.5">
-        <label className="text-sm font-medium">Visibility</label>
+        <label htmlFor="mcp-visibility" className="text-sm font-medium">
+          Visibility
+        </label>
         <select
+          id="mcp-visibility"
           value={visibility}
-          onChange={(e) =>
-            onVisibilityChange(e.target.value as "personal" | "workspace")
-          }
+          onChange={(e) => onVisibilityChange(e.target.value as "personal" | "workspace")}
           className="h-9 w-full rounded-md border border-input bg-transparent px-2.5 text-sm"
         >
           <option value="personal">Personal</option>
@@ -446,9 +436,7 @@ function McpPage() {
 
   if (error && !data) {
     return (
-      <div className="text-destructive text-sm">
-        Failed to load MCP servers: {error.message}
-      </div>
+      <div className="text-destructive text-sm">Failed to load MCP servers: {error.message}</div>
     );
   }
 
@@ -675,16 +663,22 @@ function McpPage() {
             </TabsList>
             <TabsContent value="url" className="space-y-4 pt-3">
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">Server URL</label>
+                <label htmlFor="mcp-server-url" className="text-sm font-medium">
+                  Server URL
+                </label>
                 <Input
+                  id="mcp-server-url"
                   placeholder="https://mcp.stripe.com/mcp"
                   value={newUrl}
                   onChange={(e) => setNewUrl(e.target.value)}
                 />
               </div>
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">Name</label>
+                <label htmlFor="mcp-name" className="text-sm font-medium">
+                  Name
+                </label>
                 <Input
+                  id="mcp-name"
                   placeholder="Stripe (optional)"
                   value={newName}
                   onChange={(e) => setNewName(e.target.value)}
@@ -692,12 +686,13 @@ function McpPage() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="space-y-1.5">
-                  <label className="text-sm font-medium">Visibility</label>
+                  <label htmlFor="mcp-new-visibility" className="text-sm font-medium">
+                    Visibility
+                  </label>
                   <select
+                    id="mcp-new-visibility"
                     value={newVisibility}
-                    onChange={(e) =>
-                      setNewVisibility(e.target.value as "personal" | "workspace")
-                    }
+                    onChange={(e) => setNewVisibility(e.target.value as "personal" | "workspace")}
                     className="h-9 w-full rounded-md border border-input bg-transparent px-2.5 text-sm"
                   >
                     <option value="personal">Personal</option>
@@ -705,8 +700,11 @@ function McpPage() {
                   </select>
                 </div>
                 <div className="space-y-1.5">
-                  <label className="text-sm font-medium">Transport</label>
+                  <label htmlFor="mcp-transport" className="text-sm font-medium">
+                    Transport
+                  </label>
                   <select
+                    id="mcp-transport"
                     value={newTransport}
                     onChange={(e) => setNewTransport(e.target.value as "http" | "sse")}
                     className="h-9 w-full rounded-md border border-input bg-transparent px-2.5 text-sm"
@@ -717,8 +715,11 @@ function McpPage() {
                 </div>
               </div>
               <div className="space-y-1.5">
-                <label className="text-sm font-medium">Header auth (optional)</label>
+                <label htmlFor="mcp-header-auth-optional" className="text-sm font-medium">
+                  Header auth (optional)
+                </label>
                 <Input
+                  id="mcp-header-auth-optional"
                   placeholder="Header name, e.g. Authorization"
                   value={newHeaderName}
                   onChange={(e) => setNewHeaderName(e.target.value)}
@@ -734,12 +735,7 @@ function McpPage() {
               {authUrl && (
                 <p className="text-sm">
                   Authorization required.{" "}
-                  <a
-                    href={authUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="underline"
-                  >
+                  <a href={authUrl} target="_blank" rel="noreferrer" className="underline">
                     Open auth URL
                   </a>
                 </p>
@@ -785,13 +781,17 @@ function McpPage() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={Boolean(authUrl) && !showAdd} onOpenChange={(open) => !open && setAuthUrl(null)}>
+      <Dialog
+        open={Boolean(authUrl) && !showAdd}
+        onOpenChange={(open) => !open && setAuthUrl(null)}
+      >
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Authorize MCP server</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            Open the authorization URL, then return here. Aura will mark the server connected after the callback.
+            Open the authorization URL, then return here. Aura will mark the server connected after
+            the callback.
           </p>
           {authUrl && (
             <a
@@ -812,7 +812,8 @@ function McpPage() {
             <DialogTitle>Remove MCP server</DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            This deletes the server and any stored connections. Encrypted tokens are removed with it.
+            This deletes the server and any stored connections. Encrypted tokens are removed with
+            it.
           </p>
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setDeleteId(null)}>

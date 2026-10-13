@@ -23,12 +23,15 @@ import { PageSkeleton } from "@/components/page-skeleton";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 interface AdoptionData {
   range: { start: string; end: string; timezone: string };
@@ -178,9 +181,7 @@ function AdoptionPage() {
   const [defaultRange] = useState(defaultDateRange);
 
   const committed =
-    search.start && search.end
-      ? { start: search.start, end: search.end }
-      : defaultRange;
+    search.start && search.end ? { start: search.start, end: search.end } : defaultRange;
 
   const [range, setRange] = useState<DateRange | undefined>(() => ({
     from: parseLocalYMD(committed.start),
@@ -218,19 +219,22 @@ function AdoptionPage() {
     });
   }, [defaultRange.end, defaultRange.start, navigate]);
 
-  const handleRangeSelect = useCallback((next: DateRange | undefined) => {
-    setRange(next);
-    const from = next?.from;
-    const to = next?.to;
-    if (!from || !to) return;
-    navigate({
-      search: (prev) => ({
-        ...prev,
-        start: formatLocalYMD(from),
-        end: formatLocalYMD(to),
-      }),
-    });
-  }, [navigate]);
+  const handleRangeSelect = useCallback(
+    (next: DateRange | undefined) => {
+      setRange(next);
+      const from = next?.from;
+      const to = next?.to;
+      if (!from || !to) return;
+      navigate({
+        search: (prev) => ({
+          ...prev,
+          start: formatLocalYMD(from),
+          end: formatLocalYMD(to),
+        }),
+      });
+    },
+    [navigate],
+  );
 
   const { data, isLoading, error, isFetching } = useQuery({
     queryKey: ["adoption", committed.start, committed.end],
@@ -264,22 +268,24 @@ function AdoptionPage() {
       <div className="space-y-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <h1 className="text-lg font-semibold tracking-tight">Adoption</h1>
-          <DateRangeControls
-            range={range}
-            onRangeSelect={handleRangeSelect}
-            onReset={resetRange}
-          />
+          <DateRangeControls range={range} onRangeSelect={handleRangeSelect} onReset={resetRange} />
         </div>
         <p className="text-sm text-destructive">Start date must be on or before end date.</p>
       </div>
     );
   }
-  if (error) return <div className="text-destructive text-sm">Failed to load adoption data: {error.message}</div>;
+  if (error)
+    return (
+      <div className="text-destructive text-sm">Failed to load adoption data: {error.message}</div>
+    );
   if (!data) return null;
 
   const rangeDescription = `${format(parseLocalYMD(committed.start), "LLL d, y")} – ${format(parseLocalYMD(committed.end), "LLL d, y")}`;
   const maxFunnelCount = Math.max(...data.funnel.map((step) => step.count), 1);
-  const maxCohortWeek = Math.max(0, ...data.cohorts.flatMap((cohort) => cohort.retention.map((cell) => cell.weekOffset)));
+  const maxCohortWeek = Math.max(
+    0,
+    ...data.cohorts.flatMap((cohort) => cohort.retention.map((cell) => cell.weekOffset)),
+  );
   const cohortWeekOffsets = Array.from({ length: maxCohortWeek + 1 }, (_, index) => index);
 
   return (
@@ -327,7 +333,9 @@ function AdoptionPage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Activity volume</CardTitle>
-            <p className="text-xs text-muted-foreground">DAU, rolling 7-day WAU, and rolling 28-day MAU. Pale bars mark weekends.</p>
+            <p className="text-xs text-muted-foreground">
+              DAU, rolling 7-day WAU, and rolling 28-day MAU. Pale bars mark weekends.
+            </p>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={320}>
@@ -337,10 +345,37 @@ function AdoptionPage() {
                 <YAxis className="text-xs" allowDecimals={false} />
                 <Tooltip content={<AdoptionTooltip />} />
                 <Legend />
-                <Bar dataKey="weekendMarker" name="Weekend" fill="#e5e7eb" fillOpacity={0.35} barSize={8} />
-                <Line type="monotone" dataKey="dau" name="DAU" stroke="#2563eb" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="wau" name="WAU" stroke="#16a34a" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="mau" name="MAU" stroke="#9333ea" strokeWidth={2} dot={false} />
+                <Bar
+                  dataKey="weekendMarker"
+                  name="Weekend"
+                  fill="#e5e7eb"
+                  fillOpacity={0.35}
+                  barSize={8}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="dau"
+                  name="DAU"
+                  stroke="#2563eb"
+                  strokeWidth={2}
+                  dot={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="wau"
+                  name="WAU"
+                  stroke="#16a34a"
+                  strokeWidth={2}
+                  dot={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="mau"
+                  name="MAU"
+                  stroke="#9333ea"
+                  strokeWidth={2}
+                  dot={false}
+                />
               </ComposedChart>
             </ResponsiveContainer>
           </CardContent>
@@ -349,21 +384,43 @@ function AdoptionPage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Stickiness</CardTitle>
-            <p className="text-xs text-muted-foreground">DAU/MAU and WAU/MAU ratios with 20%, 30%, and 50% reference lines.</p>
+            <p className="text-xs text-muted-foreground">
+              DAU/MAU and WAU/MAU ratios with 20%, 30%, and 50% reference lines.
+            </p>
           </CardHeader>
           <CardContent>
             <ResponsiveContainer width="100%" height={320}>
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                 <XAxis dataKey="date" className="text-xs" minTickGap={28} />
-                <YAxis className="text-xs" domain={[0, 100]} tickFormatter={(value) => `${value}%`} />
-                <Tooltip content={<AdoptionTooltip percentKeys={["dauMauRatio", "wauMauRatio"]} />} />
+                <YAxis
+                  className="text-xs"
+                  domain={[0, 100]}
+                  tickFormatter={(value) => `${value}%`}
+                />
+                <Tooltip
+                  content={<AdoptionTooltip percentKeys={["dauMauRatio", "wauMauRatio"]} />}
+                />
                 <Legend />
                 <ReferenceLine y={20} stroke="#94a3b8" strokeDasharray="4 4" label="20%" />
                 <ReferenceLine y={30} stroke="#f59e0b" strokeDasharray="4 4" label="30%" />
                 <ReferenceLine y={50} stroke="#10b981" strokeDasharray="4 4" label="50%" />
-                <Line type="monotone" dataKey="dauMauRatio" name="DAU/MAU" stroke="#f97316" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="wauMauRatio" name="WAU/MAU" stroke="#0ea5e9" strokeWidth={2} dot={false} />
+                <Line
+                  type="monotone"
+                  dataKey="dauMauRatio"
+                  name="DAU/MAU"
+                  stroke="#f97316"
+                  strokeWidth={2}
+                  dot={false}
+                />
+                <Line
+                  type="monotone"
+                  dataKey="wauMauRatio"
+                  name="WAU/MAU"
+                  stroke="#0ea5e9"
+                  strokeWidth={2}
+                  dot={false}
+                />
               </LineChart>
             </ResponsiveContainer>
           </CardContent>
@@ -374,7 +431,10 @@ function AdoptionPage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Penetration funnel</CardTitle>
-            <p className="text-xs text-muted-foreground">Workspace reach through active and power usage. Power users are active on at least 5 days in the last 7.</p>
+            <p className="text-xs text-muted-foreground">
+              Workspace reach through active and power usage. Power users are active on at least 5
+              days in the last 7.
+            </p>
           </CardHeader>
           <CardContent className="space-y-3">
             {data.funnel.map((step) => (
@@ -391,7 +451,11 @@ function AdoptionPage() {
                 </div>
                 <div className="flex items-center justify-between text-xs text-muted-foreground">
                   <span>{formatPct(step.shareOfWorkspace)} of workspace</span>
-                  <span>{step.dropOffFromPrevious === 0 ? "Start" : `${formatPct(step.dropOffFromPrevious)} drop-off`}</span>
+                  <span>
+                    {step.dropOffFromPrevious === 0
+                      ? "Start"
+                      : `${formatPct(step.dropOffFromPrevious)} drop-off`}
+                  </span>
                 </div>
               </div>
             ))}
@@ -401,7 +465,9 @@ function AdoptionPage() {
         <Card>
           <CardHeader>
             <CardTitle className="text-base">Depth of engagement</CardTitle>
-            <p className="text-xs text-muted-foreground">Messages per active user in the last 7 days.</p>
+            <p className="text-xs text-muted-foreground">
+              Messages per active user in the last 7 days.
+            </p>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-3 gap-2 pb-3">
@@ -426,18 +492,23 @@ function AdoptionPage() {
         <CardHeader>
           <CardTitle className="text-base">Weekly cohort retention</CardTitle>
           <p className="text-xs text-muted-foreground">
-            Cohorts are based on first-ever message to Aura. Cells show the share returning in each subsequent week.
+            Cohorts are based on first-ever message to Aura. Cells show the share returning in each
+            subsequent week.
           </p>
         </CardHeader>
         <CardContent>
           <div className="overflow-x-auto">
             <div
               className="grid min-w-max gap-1 text-xs"
-              style={{ gridTemplateColumns: `8rem repeat(${cohortWeekOffsets.length}, minmax(3rem, 1fr))` }}
+              style={{
+                gridTemplateColumns: `8rem repeat(${cohortWeekOffsets.length}, minmax(3rem, 1fr))`,
+              }}
             >
               <div className="font-medium text-muted-foreground">Cohort</div>
               {cohortWeekOffsets.map((offset) => (
-                <div key={offset} className="text-center font-medium text-muted-foreground">W{offset}</div>
+                <div key={offset} className="text-center font-medium text-muted-foreground">
+                  W{offset}
+                </div>
               ))}
               {data.cohorts.map((cohort) => {
                 const cells = new Map(cohort.retention.map((cell) => [cell.weekOffset, cell]));
@@ -454,7 +525,9 @@ function AdoptionPage() {
             </div>
           </div>
           {data.cohorts.length === 0 && (
-            <p className="py-8 text-center text-sm text-muted-foreground">No cohorts in this range.</p>
+            <p className="py-8 text-center text-sm text-muted-foreground">
+              No cohorts in this range.
+            </p>
           )}
         </CardContent>
       </Card>
@@ -480,7 +553,9 @@ function AdoptionPage() {
       <Card className="gap-0 overflow-hidden p-0">
         <CardHeader className="px-6 pt-6 pb-4">
           <CardTitle className="text-base">Team adoption</CardTitle>
-          <p className="text-xs text-muted-foreground">Team comes from the person entity (entities.metadata.team) when available.</p>
+          <p className="text-xs text-muted-foreground">
+            Team comes from the person entity (entities.metadata.team) when available.
+          </p>
         </CardHeader>
         <CardContent className="px-0 pb-0">
           <div className="overflow-auto">
@@ -501,24 +576,33 @@ function AdoptionPage() {
                 {data.teams.map((team) => (
                   <TableRow key={team.team}>
                     <TableCell className="py-2 font-medium">{team.team}</TableCell>
-                    <TableCell className="py-2 text-right">{formatNumber(team.memberCount)}</TableCell>
+                    <TableCell className="py-2 text-right">
+                      {formatNumber(team.memberCount)}
+                    </TableCell>
                     <TableCell className="py-2 text-right">{formatNumber(team.dau)}</TableCell>
                     <TableCell className="py-2 text-right">{formatNumber(team.wau)}</TableCell>
                     <TableCell className="py-2 text-right">{formatNumber(team.mau)}</TableCell>
                     <TableCell className="py-2 text-right">{formatPct(team.mauPct)}</TableCell>
                     <TableCell className="py-2">
                       {team.topUser ? (
-                        <UserLink userId={team.topUser.userId} label={team.topUser.displayName || team.topUser.userId} />
+                        <UserLink
+                          userId={team.topUser.userId}
+                          label={team.topUser.displayName || team.topUser.userId}
+                        />
                       ) : (
                         <span className="text-muted-foreground">—</span>
                       )}
                     </TableCell>
-                    <TableCell className="py-2 text-right">{formatNumber(team.dormantUsers)}</TableCell>
+                    <TableCell className="py-2 text-right">
+                      {formatNumber(team.dormantUsers)}
+                    </TableCell>
                   </TableRow>
                 ))}
                 {data.teams.length === 0 && (
                   <TableRow className="border-0 hover:bg-transparent">
-                    <TableCell colSpan={8} className="py-4 text-center text-muted-foreground">No team data</TableCell>
+                    <TableCell colSpan={8} className="py-4 text-center text-muted-foreground">
+                      No team data
+                    </TableCell>
                   </TableRow>
                 )}
               </TableBody>
@@ -549,8 +633,12 @@ function AdoptionPage() {
                 <UserLink userId={user.userId} label={user.displayName || user.userId} />
               </TableCell>
               <TableCell className="py-2">{user.team}</TableCell>
-              <TableCell className="py-2 text-right">{formatNumber(user.previousMessages)}</TableCell>
-              <TableCell className="py-2 text-right" colSpan={2}>{formatShortDate(user.lastSeen)}</TableCell>
+              <TableCell className="py-2 text-right">
+                {formatNumber(user.previousMessages)}
+              </TableCell>
+              <TableCell className="py-2 text-right" colSpan={2}>
+                {formatShortDate(user.lastSeen)}
+              </TableCell>
             </TableRow>
           ))}
         </UserTableCard>
@@ -628,7 +716,15 @@ function UserLink({ userId, label }: { userId: string; label: string }) {
   );
 }
 
-function UserTableCard({ title, emptyLabel, children }: { title: string; emptyLabel: string; children: React.ReactNode }) {
+function UserTableCard({
+  title,
+  emptyLabel,
+  children,
+}: {
+  title: string;
+  emptyLabel: string;
+  children: React.ReactNode;
+}) {
   const hasRows = Array.isArray(children) ? children.length > 0 : Boolean(children);
   return (
     <Card className="gap-0 overflow-hidden p-0">
@@ -648,9 +744,13 @@ function UserTableCard({ title, emptyLabel, children }: { title: string; emptyLa
               </TableRow>
             </TableHeader>
             <TableBody className="[&_tr]:border-0">
-              {hasRows ? children : (
+              {hasRows ? (
+                children
+              ) : (
                 <TableRow className="border-0 hover:bg-transparent">
-                  <TableCell colSpan={5} className="py-4 text-center text-muted-foreground">{emptyLabel}</TableCell>
+                  <TableCell colSpan={5} className="py-4 text-center text-muted-foreground">
+                    {emptyLabel}
+                  </TableCell>
                 </TableRow>
               )}
             </TableBody>
@@ -668,7 +768,12 @@ function AdoptionTooltip({
   percentKeys = [],
 }: {
   active?: boolean;
-  payload?: Array<{ name?: string; value?: number; dataKey?: string; payload?: { fullDate?: string; dayType?: string } }>;
+  payload?: Array<{
+    name?: string;
+    value?: number;
+    dataKey?: string;
+    payload?: { fullDate?: string; dayType?: string };
+  }>;
   label?: string;
   percentKeys?: string[];
 }) {
@@ -687,7 +792,9 @@ function AdoptionTooltip({
           return (
             <div key={`${dataKey}-${item.name}`} className="flex justify-between gap-4">
               <span>{item.name ?? dataKey}</span>
-              <span className="font-medium">{percentKeys.includes(dataKey) ? formatPct(value) : formatNumber(value)}</span>
+              <span className="font-medium">
+                {percentKeys.includes(dataKey) ? formatPct(value) : formatNumber(value)}
+              </span>
             </div>
           );
         })}
@@ -733,7 +840,10 @@ function DateRangeControls({
               )}
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-auto max-w-[calc(100vw-2rem)] overflow-x-auto p-0" align="end">
+          <PopoverContent
+            className="w-auto max-w-[calc(100vw-2rem)] overflow-x-auto p-0"
+            align="end"
+          >
             <Calendar
               mode="range"
               showOutsideDays={false}
@@ -749,16 +859,15 @@ function DateRangeControls({
       <Button type="button" variant="outline" size="sm" className="sm:mb-0.5" onClick={onReset}>
         Last 180 days
       </Button>
-      {isFetching ? (
-        <span className="text-xs text-muted-foreground sm:mb-2">Updating…</span>
-      ) : null}
+      {isFetching ? <span className="text-xs text-muted-foreground sm:mb-2">Updating…</span> : null}
     </div>
   );
 }
 
 export const Route = createFileRoute("/adoption/")({
   validateSearch: (raw: Record<string, unknown>) => {
-    const start = typeof raw.start === "string" && ISO_DATE_RE.test(raw.start) ? raw.start : undefined;
+    const start =
+      typeof raw.start === "string" && ISO_DATE_RE.test(raw.start) ? raw.start : undefined;
     const end = typeof raw.end === "string" && ISO_DATE_RE.test(raw.end) ? raw.end : undefined;
     return {
       start: start && end ? start : undefined,

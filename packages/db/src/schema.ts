@@ -32,11 +32,7 @@ export const channelTypeEnum = pgEnum("channel_type", [
   "dashboard",
 ]);
 
-export const messageRoleEnum = pgEnum("message_role", [
-  "user",
-  "assistant",
-  "tool",
-]);
+export const messageRoleEnum = pgEnum("message_role", ["user", "assistant", "tool"]);
 
 export const memoryTypeEnum = pgEnum("memory_type", [
   "fact",
@@ -78,8 +74,7 @@ export const memoryEntityRoleEnum = pgEnum("memory_entity_role", [
 ]);
 
 // Helper for timestamptz columns
-const timestamptz = (name: string) =>
-  timestamp(name, { withTimezone: true, mode: "date" });
+const timestamptz = (name: string) => timestamp(name, { withTimezone: true, mode: "date" });
 
 // Helper for workspace_id columns
 const workspaceId = () => text("workspace_id").notNull().default("default");
@@ -100,9 +95,7 @@ export const workspaces = pgTable("workspaces", {
 export const messages = pgTable(
   "messages",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     externalId: text("external_id").notNull(),
     slackTs: text("slack_ts"),
@@ -113,7 +106,11 @@ export const messages = pgTable(
     role: messageRoleEnum("role").notNull(),
     content: text("content").notNull(),
     metadata: jsonb("metadata").$type<Record<string, unknown>>(),
-    tokenUsage: jsonb("token_usage").$type<{ inputTokens: number; outputTokens: number; totalTokens: number }>(),
+    tokenUsage: jsonb("token_usage").$type<{
+      inputTokens: number;
+      outputTokens: number;
+      totalTokens: number;
+    }>(),
     model: text("model"),
     embedding: vector("embedding", { dimensions: 1536 }),
     createdAt: timestamptz("created_at").notNull().defaultNow(),
@@ -123,10 +120,7 @@ export const messages = pgTable(
     index("messages_channel_created_idx").on(table.channelId, table.createdAt),
     index("messages_thread_idx").on(table.slackThreadTs),
     index("messages_role_created_idx").on(table.role, table.createdAt),
-    index("messages_embedding_idx").using(
-      "hnsw",
-      table.embedding.op("vector_cosine_ops"),
-    ),
+    index("messages_embedding_idx").using("hnsw", table.embedding.op("vector_cosine_ops")),
   ],
 );
 
@@ -135,9 +129,7 @@ export const messages = pgTable(
 export const memories = pgTable(
   "memories",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     content: text("content").notNull(),
     type: memoryTypeEnum("type").notNull(),
@@ -146,10 +138,7 @@ export const memories = pgTable(
     sourceChannelType: channelTypeEnum("source_channel_type").notNull(),
     sourceThreadTs: text("source_thread_ts"),
     sourceChannelId: text("source_channel_id"),
-    relatedUserIds: text("related_user_ids")
-      .array()
-      .notNull()
-      .default(sql`'{}'::text[]`),
+    relatedUserIds: text("related_user_ids").array().notNull().default(sql`'{}'::text[]`),
     embedding: vector("embedding", { dimensions: 1536 }),
     importance: integer("importance"),
     relevanceScore: real("relevance_score").notNull().default(1.0),
@@ -179,17 +168,11 @@ export const memories = pgTable(
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
   (table) => [
-    index("memories_embedding_idx").using(
-      "hnsw",
-      table.embedding.op("vector_cosine_ops"),
-    ),
+    index("memories_embedding_idx").using("hnsw", table.embedding.op("vector_cosine_ops")),
     index("memories_related_users_idx").using("gin", table.relatedUserIds),
     index("memories_type_idx").on(table.type),
     index("memories_created_at_idx").on(table.createdAt),
-    index("memories_search_vector_idx").using(
-      "gin",
-      sql`${table.searchVector}`,
-    ),
+    index("memories_search_vector_idx").using("gin", sql`${table.searchVector}`),
     index("memories_status_idx").on(table.status),
     index("memories_valid_from_idx").on(table.validFrom),
     index("memories_supersedes_idx")
@@ -204,9 +187,7 @@ export const memories = pgTable(
 export const entities = pgTable(
   "entities",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     type: entityTypeEnum("type").notNull(),
     canonicalName: text("canonical_name").notNull(),
@@ -218,7 +199,11 @@ export const entities = pgTable(
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("entities_type_canonical_idx").on(table.workspaceId, table.type, sql`lower(${table.canonicalName})`),
+    uniqueIndex("entities_type_canonical_idx").on(
+      table.workspaceId,
+      table.type,
+      sql`lower(${table.canonicalName})`,
+    ),
     uniqueIndex("entities_slack_user_idx")
       .on(table.workspaceId, table.slackUserId)
       .where(sql`slack_user_id IS NOT NULL`),
@@ -230,9 +215,7 @@ export const entities = pgTable(
 export const entityAliases = pgTable(
   "entity_aliases",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     entityId: uuid("entity_id")
       .notNull()
       .references(() => entities.id, { onDelete: "cascade" }),
@@ -292,9 +275,7 @@ export interface KnownFacts {
 export const users = pgTable(
   "users",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     slackUserId: text("slack_user_id"),
     displayName: text("display_name").notNull(),
@@ -307,14 +288,12 @@ export const users = pgTable(
     managerId: text("manager_id"),
     notes: text("notes"),
     entityId: uuid("entity_id").references(() => entities.id),
-    communicationStyle: jsonb("communication_style")
-      .$type<CommunicationStyle>()
-      .default({
-        verbosity: "moderate",
-        formality: "neutral",
-        emojiUsage: "light",
-        preferredFormat: "mixed",
-      }),
+    communicationStyle: jsonb("communication_style").$type<CommunicationStyle>().default({
+      verbosity: "moderate",
+      formality: "neutral",
+      emojiUsage: "light",
+      preferredFormat: "mixed",
+    }),
     /**
      * @deprecated (#911) Frozen — no longer written. Read the linked entity's
      * summary/metadata instead. Kept for a soak period before a drop migration.
@@ -328,19 +307,19 @@ export const users = pgTable(
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("user_profiles_workspace_slack_user_id_idx").on(table.workspaceId, table.slackUserId),
+    uniqueIndex("user_profiles_workspace_slack_user_id_idx").on(
+      table.workspaceId,
+      table.slackUserId,
+    ),
   ],
 );
-
 
 // ── Addresses ──────────────────────────────────────────────────────────────
 
 export const addresses = pgTable(
   "addresses",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     personId: uuid("person_id"),
     userId: uuid("user_id").references(() => users.id),
@@ -350,7 +329,11 @@ export const addresses = pgTable(
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("addresses_workspace_channel_value_idx").on(table.workspaceId, table.channel, table.value),
+    uniqueIndex("addresses_workspace_channel_value_idx").on(
+      table.workspaceId,
+      table.channel,
+      table.value,
+    ),
     index("addresses_person_id_idx").on(table.personId),
     index("addresses_user_id_idx").on(table.userId),
   ],
@@ -361,9 +344,7 @@ export const addresses = pgTable(
 export const channels = pgTable(
   "channels",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     slackChannelId: text("slack_channel_id").notNull(),
     name: text("name").notNull(),
@@ -372,7 +353,10 @@ export const channels = pgTable(
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("channels_workspace_slack_channel_id_idx").on(table.workspaceId, table.slackChannelId),
+    uniqueIndex("channels_workspace_slack_channel_id_idx").on(
+      table.workspaceId,
+      table.slackChannelId,
+    ),
   ],
 );
 
@@ -387,9 +371,7 @@ export const settings = pgTable(
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
     updatedBy: text("updated_by"),
   },
-  (table) => [
-    primaryKey({ columns: [table.workspaceId, table.key] }),
-  ],
+  (table) => [primaryKey({ columns: [table.workspaceId, table.key] })],
 );
 
 // ── Model Catalog ───────────────────────────────────────────────────────────
@@ -419,9 +401,7 @@ export type ModelCapabilities = z.infer<typeof ModelCapabilities>;
 export const modelCatalog = pgTable(
   "model_catalog",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     modelId: text("model_id").notNull(),
     provider: text("provider").notNull(),
@@ -439,10 +419,7 @@ export const modelCatalog = pgTable(
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
   (table) => [
-    uniqueIndex("model_catalog_workspace_model_id_idx").on(
-      table.workspaceId,
-      table.modelId,
-    ),
+    uniqueIndex("model_catalog_workspace_model_id_idx").on(table.workspaceId, table.modelId),
     index("model_catalog_provider_idx").on(table.provider),
     index("model_catalog_type_idx").on(table.type),
   ],
@@ -453,9 +430,7 @@ export const modelCatalog = pgTable(
 export const notes = pgTable(
   "notes",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     topic: text("topic").notNull(),
     content: text("content").notNull(),
@@ -473,10 +448,7 @@ export const notes = pgTable(
   (table) => [
     uniqueIndex("notes_workspace_topic_idx").on(table.workspaceId, table.topic),
     index("notes_category_idx").on(table.category),
-    index("notes_embedding_idx").using(
-      "hnsw",
-      table.embedding.op("vector_cosine_ops"),
-    ),
+    index("notes_embedding_idx").using("hnsw", table.embedding.op("vector_cosine_ops")),
   ],
 );
 
@@ -485,17 +457,12 @@ export const notes = pgTable(
 export const resources = pgTable(
   "resources",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     url: text("url").notNull(),
     parentUrl: text("parent_url"),
     title: text("title"),
     source: text("source").notNull(),
-    status: text("status")
-      .$type<"pending" | "ready" | "error">()
-      .notNull()
-      .default("pending"),
+    status: text("status").$type<"pending" | "ready" | "error">().notNull().default("pending"),
     content: text("content"),
     summary: text("summary"),
     metadata: jsonb("metadata")
@@ -511,18 +478,13 @@ export const resources = pgTable(
   },
   (table) => [
     uniqueIndex("resources_url_idx").on(table.url),
-    index("resources_embedding_idx").using(
-      "hnsw",
-      table.embedding.op("vector_cosine_ops"),
-    ),
+    index("resources_embedding_idx").using("hnsw", table.embedding.op("vector_cosine_ops")),
     index("resources_content_fts_idx").using(
       "gin",
       sql`to_tsvector('english', coalesce(${table.content}, ''))`,
     ),
     index("resources_source_idx").on(table.source),
-    index("resources_parent_url_idx")
-      .on(table.parentUrl)
-      .where(sql`parent_url IS NOT NULL`),
+    index("resources_parent_url_idx").on(table.parentUrl).where(sql`parent_url IS NOT NULL`),
     index("resources_crawled_at_idx").on(table.crawledAt),
   ],
 );
@@ -552,9 +514,7 @@ export interface FrequencyConfig {
 export const jobs = pgTable(
   "jobs",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     name: text("name").notNull(),
     description: text("description").notNull(),
@@ -614,9 +574,7 @@ export const jobs = pgTable(
 export const jobExecutions = pgTable(
   "job_executions",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     jobId: uuid("job_id").references(() => jobs.id),
     startedAt: timestamptz("started_at").notNull().defaultNow(),
@@ -660,9 +618,7 @@ export type JobOutcomeSupervisorDecision =
 export const jobOutcomes = pgTable(
   "job_outcomes",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     jobId: uuid("job_id")
       .notNull()
@@ -762,9 +718,7 @@ export interface DetailedTokenUsage {
 export const modelPricing = pgTable(
   "model_pricing",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     modelId: text("model_id").notNull(),
     tokenType: text("token_type").notNull(),
@@ -789,9 +743,7 @@ export const modelPricing = pgTable(
 export const conversationTraces = pgTable(
   "conversation_traces",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     sourceType: text("source_type").notNull(),
     source: text("source").notNull().default("slack"),
@@ -815,19 +767,14 @@ export const conversationTraces = pgTable(
     index("idx_ct_job_execution").on(table.jobExecutionId),
     index("idx_ct_channel_thread").on(table.channelId, table.threadTs),
     index("idx_ct_created_at").on(table.createdAt),
-    check(
-      "ct_source_type_check",
-      sql`${table.sourceType} IN ('job_execution', 'interactive')`,
-    ),
+    check("ct_source_type_check", sql`${table.sourceType} IN ('job_execution', 'interactive')`),
   ],
 );
 
 export const conversationMessages = pgTable(
   "conversation_messages",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     conversationId: uuid("conversation_id")
       .notNull()
@@ -842,19 +789,14 @@ export const conversationMessages = pgTable(
   },
   (table) => [
     index("idx_cm_conversation").on(table.conversationId, table.orderIndex),
-    check(
-      "cm_role_check",
-      sql`${table.role} IN ('system', 'user', 'assistant')`,
-    ),
+    check("cm_role_check", sql`${table.role} IN ('system', 'user', 'assistant')`),
   ],
 );
 
 export const conversationParts = pgTable(
   "conversation_parts",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     messageId: uuid("message_id")
       .notNull()
@@ -887,9 +829,7 @@ export const conversationParts = pgTable(
 export const dashboardChatRuns = pgTable(
   "dashboard_chat_runs",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     threadId: text("thread_id").notNull(),
     runId: text("run_id").notNull(),
@@ -906,15 +846,8 @@ export const dashboardChatRuns = pgTable(
     completedAt: timestamptz("completed_at"),
   },
   (table) => [
-    uniqueIndex("dashboard_chat_runs_workspace_run_idx").on(
-      table.workspaceId,
-      table.runId,
-    ),
-    index("dashboard_chat_runs_thread_idx").on(
-      table.workspaceId,
-      table.threadId,
-      table.createdAt,
-    ),
+    uniqueIndex("dashboard_chat_runs_workspace_run_idx").on(table.workspaceId, table.runId),
+    index("dashboard_chat_runs_thread_idx").on(table.workspaceId, table.threadId, table.createdAt),
     check(
       "dashboard_chat_runs_status_check",
       sql`${table.status} IN ('running', 'completed', 'failed', 'cancelled')`,
@@ -927,9 +860,7 @@ export const dashboardChatRuns = pgTable(
 export const eventLocks = pgTable(
   "event_locks",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     eventTs: text("event_ts").notNull(),
     channelId: text("channel_id").notNull(),
@@ -956,9 +887,7 @@ export const conversationLocks = pgTable(
     messageTs: text("message_ts").notNull(),
     startedAt: timestamptz("started_at").notNull().defaultNow(),
   },
-  (table) => [
-    primaryKey({ columns: [table.workspaceId, table.channelId, table.threadTs] }),
-  ],
+  (table) => [primaryKey({ columns: [table.workspaceId, table.channelId, table.threadTs] })],
 );
 
 // ── Stop Events (append-only audit of Stop presses, issue #1359) ─────────────
@@ -969,9 +898,7 @@ export const conversationLocks = pgTable(
 export const stopEvents = pgTable(
   "stop_events",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     channelId: text("channel_id").notNull(),
     threadTs: text("thread_ts").notNull(),
@@ -1004,9 +931,7 @@ export const stopEvents = pgTable(
 export const turnMarkers = pgTable(
   "turn_markers",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     invocationId: text("invocation_id").notNull(),
     channelId: text("channel_id").notNull(),
@@ -1019,14 +944,8 @@ export const turnMarkers = pgTable(
     endedAt: timestamptz("ended_at"),
   },
   (table) => [
-    uniqueIndex("turn_markers_workspace_invocation_idx").on(
-      table.workspaceId,
-      table.invocationId,
-    ),
-    index("turn_markers_status_started_at_idx").on(
-      table.status,
-      table.startedAt,
-    ),
+    uniqueIndex("turn_markers_workspace_invocation_idx").on(table.workspaceId, table.invocationId),
+    index("turn_markers_status_started_at_idx").on(table.status, table.startedAt),
     check(
       "turn_markers_status_check",
       sql`${table.status} IN ('started', 'completed', 'failed', 'recovered')`,
@@ -1083,9 +1002,7 @@ export const appContextCache = pgTable(
     eventTs: text("event_ts"),
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
-  (table) => [
-    primaryKey({ columns: [table.workspaceId, table.userId] }),
-  ],
+  (table) => [primaryKey({ columns: [table.workspaceId, table.userId] })],
 );
 
 // ── Error Events ────────────────────────────────────────────────────────────
@@ -1093,9 +1010,7 @@ export const appContextCache = pgTable(
 export const errorEvents = pgTable(
   "error_events",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     timestamp: timestamptz("timestamp").notNull().defaultNow(),
     errorName: text("error_name").notNull(),
@@ -1114,15 +1029,12 @@ export const errorEvents = pgTable(
   ],
 );
 
-
 // ── Emails Raw (email staging pipeline) ────────────────────────────────────
 
 export const emailsRaw = pgTable(
   "emails_raw",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     userId: text("user_id").notNull(),
     gmailMessageId: text("gmail_message_id").notNull(),
@@ -1158,10 +1070,7 @@ export const emailsRaw = pgTable(
     index("emails_raw_user_triage_idx").on(table.userId, table.triage),
     index("emails_raw_user_thread_state_idx").on(table.userId, table.threadState),
     index("emails_raw_user_date_idx").on(table.userId, table.date),
-    index("emails_raw_embedding_idx").using(
-      "hnsw",
-      table.embedding.op("vector_cosine_ops"),
-    ),
+    index("emails_raw_embedding_idx").using("hnsw", table.embedding.op("vector_cosine_ops")),
   ],
 );
 
@@ -1194,9 +1103,7 @@ export const oauthTokens = pgTable(
 export const voiceCalls = pgTable(
   "voice_calls",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     conversationId: text("conversation_id").notNull().unique(),
     agentId: text("agent_id"),
     direction: text("direction").notNull().default("outbound"),
@@ -1225,9 +1132,7 @@ export const voiceCalls = pgTable(
 export const actionLog = pgTable(
   "action_log",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     toolName: text("tool_name").notNull(),
     params: jsonb("params").notNull(),
@@ -1241,15 +1146,15 @@ export const actionLog = pgTable(
     createdAt: timestamptz("created_at").notNull().defaultNow(),
   },
   (table) => [
-    check(
-      "action_log_status_check",
-      sql`${table.status} IN ('executed','failed')`,
-    ),
+    check("action_log_status_check", sql`${table.status} IN ('executed','failed')`),
     check(
       "action_log_trigger_type_check",
       sql`${table.triggerType} IN ('user_message','scheduled_job','autonomous')`,
     ),
-    unique("action_log_workspace_idempotency_key_unique").on(table.workspaceId, table.idempotencyKey),
+    unique("action_log_workspace_idempotency_key_unique").on(
+      table.workspaceId,
+      table.idempotencyKey,
+    ),
     index("action_log_tool_name_idx").on(table.toolName),
     index("action_log_triggered_by_idx").on(table.triggeredBy),
     index("action_log_status_idx").on(table.status),
@@ -1327,9 +1232,7 @@ export interface ScheduleContext {
 export const feedback = pgTable(
   "feedback",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     messageTs: text("message_ts").notNull(),
     channelId: text("channel_id").notNull(),
@@ -1338,7 +1241,12 @@ export const feedback = pgTable(
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [
-    unique("feedback_workspace_unique_vote").on(table.workspaceId, table.messageTs, table.channelId, table.userId),
+    unique("feedback_workspace_unique_vote").on(
+      table.workspaceId,
+      table.messageTs,
+      table.channelId,
+      table.userId,
+    ),
   ],
 );
 
@@ -1350,9 +1258,7 @@ export type NewFeedback = typeof feedback.$inferInsert;
 export const credentials = pgTable(
   "credentials",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     ownerId: text("owner_id").notNull(),
     name: text("name").notNull(),
@@ -1367,15 +1273,13 @@ export const credentials = pgTable(
     updatedAt: timestamptz("updated_at").notNull().defaultNow(),
   },
   (table) => [
-    unique("credentials_workspace_owner_id_name_unique").on(table.workspaceId, table.ownerId, table.name),
-    check(
-      "credentials_name_check",
-      sql`${table.name} ~ '^[a-z][a-z0-9_]{1,62}$'`,
+    unique("credentials_workspace_owner_id_name_unique").on(
+      table.workspaceId,
+      table.ownerId,
+      table.name,
     ),
-    check(
-      "credentials_type_check",
-      sql`${table.type} IN ('token', 'oauth_client')`,
-    ),
+    check("credentials_name_check", sql`${table.name} ~ '^[a-z][a-z0-9_]{1,62}$'`),
+    check("credentials_type_check", sql`${table.type} IN ('token', 'oauth_client')`),
     check(
       "credentials_scope_check",
       sql`${table.scope} IN ('member', 'power_user', 'admin', 'owner', 'per_user')`,
@@ -1386,9 +1290,7 @@ export const credentials = pgTable(
 export const credentialGrants = pgTable(
   "credential_grants",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     credentialId: uuid("credential_id")
       .notNull()
@@ -1416,9 +1318,7 @@ export const credentialGrants = pgTable(
 export const credentialAuditLog = pgTable(
   "credential_audit_log",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     credentialId: uuid("credential_id").references(() => credentials.id, {
       onDelete: "set null",
@@ -1451,18 +1351,13 @@ export type NewCredentialAuditEntry = typeof credentialAuditLog.$inferInsert;
 export const content = pgTable(
   "content",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     slug: text("slug").notNull(),
     type: text("type").notNull(),
     title: text("title").notNull(),
     excerpt: text("excerpt"),
     author: text("author"),
-    tags: text("tags")
-      .array()
-      .notNull()
-      .default(sql`'{}'::text[]`),
+    tags: text("tags").array().notNull().default(sql`'{}'::text[]`),
     publishedAt: timestamptz("published_at"),
     readingMinutes: integer("reading_minutes"),
     ogImage: text("og_image"),
@@ -1476,10 +1371,7 @@ export const content = pgTable(
     index("content_type_idx").on(table.type),
     index("content_published_at_idx").on(table.publishedAt),
     index("content_tags_idx").using("gin", table.tags),
-    index("content_embedding_idx").using(
-      "hnsw",
-      table.embedding.op("vector_cosine_ops"),
-    ),
+    index("content_embedding_idx").using("hnsw", table.embedding.op("vector_cosine_ops")),
   ],
 );
 
@@ -1496,9 +1388,7 @@ export type NewContent = typeof content.$inferInsert;
 export const benchRuns = pgTable(
   "bench_runs",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     /** Stable identifier for one full bench execution (groups all rows of a run). */
     runId: text("run_id").notNull(),
@@ -1564,9 +1454,7 @@ export interface EvalRubric {
 export const evalResponseScores = pgTable(
   "eval_response_scores",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     /** SCORING grain: the atomic assistant response being judged. */
     messageId: uuid("message_id")
@@ -1589,10 +1477,7 @@ export const evalResponseScores = pgTable(
     /** Null when scorable=false (acks, clarifying questions, tool-relay turns). */
     verdict: text("verdict").$type<EvalVerdict | null>(),
     scorable: boolean("scorable").notNull(),
-    failureClass: text("failure_class")
-      .$type<EvalFailureClass>()
-      .notNull()
-      .default("none"),
+    failureClass: text("failure_class").$type<EvalFailureClass>().notNull().default("none"),
     note: text("note"),
     /** Human-authored during adjudication. */
     goldAnswer: text("gold_answer"),
@@ -1633,9 +1518,7 @@ export const evalResponseScores = pgTable(
 export const githubPullRequests = pgTable(
   "github_pull_requests",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     /** Repository in "owner/name" form, e.g. "AuraHQ-ai/aura". */
     repo: text("repo").notNull(),
@@ -1646,10 +1529,7 @@ export const githubPullRequests = pgTable(
     /** "open" | "closed" | "merged" */
     state: text("state").notNull().default("open"),
     /** Issue numbers referenced via closing keywords ("Fixes #N") in the body. */
-    linkedIssues: integer("linked_issues")
-      .array()
-      .notNull()
-      .default(sql`'{}'::integer[]`),
+    linkedIssues: integer("linked_issues").array().notNull().default(sql`'{}'::integer[]`),
     openedAt: timestamptz("opened_at"),
     mergedAt: timestamptz("merged_at"),
     closedAt: timestamptz("closed_at"),
@@ -1677,9 +1557,7 @@ export type NewGithubPullRequest = typeof githubPullRequests.$inferInsert;
 export const mcpServers = pgTable(
   "mcp_servers",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     slug: text("slug").notNull(),
     name: text("name").notNull(),
@@ -1711,9 +1589,7 @@ export const mcpServers = pgTable(
 export const mcpConnections = pgTable(
   "mcp_connections",
   {
-    id: uuid("id")
-      .primaryKey()
-      .default(sql`gen_random_uuid()`),
+    id: uuid("id").primaryKey().default(sql`gen_random_uuid()`),
     workspaceId: workspaceId().references(() => workspaces.id),
     serverId: uuid("server_id")
       .notNull()

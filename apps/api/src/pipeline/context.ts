@@ -54,7 +54,13 @@ export interface SlackAppMentionEvent {
 
 export type SlackEvent = SlackMessageEvent | SlackAppMentionEvent;
 
-export type ChannelType = "dm" | "mpim" | "dashboard" | "public_channel" | "private_channel" | "slack_list_item";
+export type ChannelType =
+  | "dm"
+  | "mpim"
+  | "dashboard"
+  | "public_channel"
+  | "private_channel"
+  | "slack_list_item";
 
 export interface SlackListItemContext {
   /** The message ts that doubles as the list item's thread_ts */
@@ -96,10 +102,7 @@ export interface MessageContext {
 /**
  * Parse a Slack message event into a structured context object.
  */
-export function buildMessageContext(
-  event: SlackEvent,
-  botUserId: string,
-): MessageContext | null {
+export function buildMessageContext(event: SlackEvent, botUserId: string): MessageContext | null {
   // Skip system/meta subtypes but allow content-bearing ones (forwarded, shared, edited, file_share, etc.)
   const ignoredSubtypes = new Set([
     "channel_join",
@@ -125,7 +128,7 @@ export function buildMessageContext(
     return null;
   }
 
-  let text = "text" in event ? (event.text || "") : "";
+  let text = "text" in event ? event.text || "" : "";
   const userId = "user" in event ? event.user! : "";
   const channelId = event.channel;
 
@@ -202,7 +205,6 @@ export function isChannelGatedOut(
 // "always_process_channels" (which OPENS the gate), "gated_channels" CLOSES it.
 // Enforced in runPipeline — see issue #918.
 
-
 /**
  * Determine if Aura should respond to this message (Tiers 2–4).
  *
@@ -216,7 +218,9 @@ export function isChannelGatedOut(
  * 4. Cold observation: Aura monitors but hasn't been active (fail-closed, high bar)
  */
 const shouldRespondSchema = z.object({
-  respond: z.boolean().describe("true if Aura should reply to the latest message, false to stay silent"),
+  respond: z
+    .boolean()
+    .describe("true if Aura should reply to the latest message, false to stay silent"),
 });
 
 export async function shouldRespond(
@@ -300,11 +304,7 @@ When in doubt, respond=false. Being quiet is better than being noisy.
 
 Return respond=true for RESPOND, respond=false for SKIP.`;
 
-export type ShouldRespondEngine =
-  | "jev"
-  | "haiku_fallback"
-  | "tier_fallback"
-  | "haiku";
+export type ShouldRespondEngine = "jev" | "haiku_fallback" | "tier_fallback" | "haiku";
 
 export interface ShouldRespondGateLog {
   engine: ShouldRespondEngine;
@@ -351,7 +351,11 @@ async function llmShouldRespond(
   coldObservation: boolean = false,
 ): Promise<boolean> {
   const gateStartedAt = Date.now();
-  const tier: GateTier = coldObservation ? "cold" : isParticipant ? "participant" : "recently_active";
+  const tier: GateTier = coldObservation
+    ? "cold"
+    : isParticipant
+      ? "participant"
+      : "recently_active";
   let engine: Exclude<ShouldRespondEngine, "jev" | "tier_fallback"> = "haiku";
   try {
     // Build a concise view of the last few messages
@@ -385,7 +389,11 @@ async function llmShouldRespond(
           {
             sessionId: context.threadTs ?? context.messageTs ?? context.channelId,
             userId: context.userId,
-            tags: [`channel:${context.channelType ?? "unknown"}`, "stage:should-respond", "engine:jev"],
+            tags: [
+              `channel:${context.channelType ?? "unknown"}`,
+              "stage:should-respond",
+              "engine:jev",
+            ],
           },
           () =>
             jevShouldRespond(
@@ -475,9 +483,7 @@ async function llmShouldRespond(
   }
 }
 
-function resolveChannelType(
-  event: SlackEvent,
-): ChannelType {
+function resolveChannelType(event: SlackEvent): ChannelType {
   if ("channel_type" in event) {
     const ct = (event as any).channel_type;
     if (ct === "im") return "dm";
@@ -504,10 +510,7 @@ const userNameCache = new Map<string, string>();
  *
  * The LLM then sees both the name and the ID, so tools can use either.
  */
-export async function resolveSlackEntities(
-  client: WebClient,
-  text: string,
-): Promise<string> {
+export async function resolveSlackEntities(client: WebClient, text: string): Promise<string> {
   // Match all Slack entity references: <@U...>, <#C...|name>, <#C...>
   const entityPattern = /<(@|#)([A-Z0-9]+)(?:\|([^>]*))?>/g;
   const matches = [...text.matchAll(entityPattern)];
@@ -538,20 +541,14 @@ export async function resolveSlackEntities(
   return resolved;
 }
 
-async function resolveUserId(
-  client: WebClient,
-  userId: string,
-): Promise<string> {
+async function resolveUserId(client: WebClient, userId: string): Promise<string> {
   const cached = userNameCache.get(userId);
   if (cached) return cached;
 
   try {
     const result = await client.users.info({ user: userId });
     const name =
-      result.user?.profile?.display_name ||
-      result.user?.real_name ||
-      result.user?.name ||
-      userId;
+      result.user?.profile?.display_name || result.user?.real_name || result.user?.name || userId;
     userNameCache.set(userId, name);
     return name;
   } catch {
@@ -559,10 +556,7 @@ async function resolveUserId(
   }
 }
 
-export async function resolveChannelName(
-  client: WebClient,
-  channelId: string,
-): Promise<string> {
+export async function resolveChannelName(client: WebClient, channelId: string): Promise<string> {
   try {
     const info = await resolveChannelById(client, channelId);
     return info?.name || channelId;

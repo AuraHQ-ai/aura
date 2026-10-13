@@ -1,6 +1,11 @@
 import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { conversationTraces, conversationMessages, conversationParts, type DetailedTokenUsage } from "@aura/db/schema";
+import {
+  conversationTraces,
+  conversationMessages,
+  conversationParts,
+  type DetailedTokenUsage,
+} from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
 import {
   computeConversationCost,
@@ -130,7 +135,11 @@ function stepToParts(step: Step): PartRow[] {
   parts.push({ type: "step-start", orderIndex: idx++ });
 
   if (step.reasoning?.length) {
-    parts.push({ type: "reasoning", orderIndex: idx++, textValue: step.reasoning.map((r) => r.text).join('\n\n') });
+    parts.push({
+      type: "reasoning",
+      orderIndex: idx++,
+      textValue: step.reasoning.map((r) => r.text).join("\n\n"),
+    });
   }
 
   // Text must precede tool-invocations. Anthropic's API rejects assistant
@@ -186,13 +195,15 @@ export function buildConversationSteps(
       fallbackModelId,
     }),
     resolvedModelId: step.response?.modelId,
-    usage: step.usage ? {
-      inputTokens: step.usage.inputTokens ?? 0,
-      outputTokens: step.usage.outputTokens ?? 0,
-      totalTokens: step.usage.totalTokens ?? 0,
-      inputTokenDetails: step.usage.inputTokenDetails,
-      outputTokenDetails: step.usage.outputTokenDetails,
-    } : undefined,
+    usage: step.usage
+      ? {
+          inputTokens: step.usage.inputTokens ?? 0,
+          outputTokens: step.usage.outputTokens ?? 0,
+          totalTokens: step.usage.totalTokens ?? 0,
+          inputTokenDetails: step.usage.inputTokenDetails,
+          outputTokenDetails: step.usage.outputTokenDetails,
+        }
+      : undefined,
   }));
 }
 
@@ -212,13 +223,25 @@ export async function persistConversationInputs(
   try {
     let orderIndex = 0;
 
-    await insertMessage(conversationId, "system", orderIndex++, [
-      { type: "text", orderIndex: 0, textValue: systemPrompt },
-    ], systemPrompt, null, null);
+    await insertMessage(
+      conversationId,
+      "system",
+      orderIndex++,
+      [{ type: "text", orderIndex: 0, textValue: systemPrompt }],
+      systemPrompt,
+      null,
+      null,
+    );
 
-    await insertMessage(conversationId, "user", orderIndex++, [
-      { type: "text", orderIndex: 0, textValue: userPrompt },
-    ], userPrompt, null, null);
+    await insertMessage(
+      conversationId,
+      "user",
+      orderIndex++,
+      [{ type: "text", orderIndex: 0, textValue: userPrompt }],
+      userPrompt,
+      null,
+      null,
+    );
 
     logger.info("persistConversationInputs: saved", { conversationId });
     return orderIndex;
@@ -318,9 +341,7 @@ export async function updateConversationTraceUsage(
     // Use cumulative tokens from stepUsages when available (the SDK's
     // tokenUsage is just the *last* step, not the sum of all steps).
     const cumulativeUsage =
-      stepUsages && stepUsages.length > 0
-        ? sumStepUsages(stepUsages)
-        : tokenUsage;
+      stepUsages && stepUsages.length > 0 ? sumStepUsages(stepUsages) : tokenUsage;
 
     try {
       const [trace] = await db
@@ -351,18 +372,17 @@ export async function updateConversationTraceUsage(
           costPricedAt = syncResult.syncedAt;
         } catch (syncErr: any) {
           costPricedAt = new Date();
-          logger.warn("updateConversationTraceUsage: live model sync failed, using latest DB pricing", {
-            conversationId,
-            workspaceId,
-            error: syncErr.message,
-          });
+          logger.warn(
+            "updateConversationTraceUsage: live model sync failed, using latest DB pricing",
+            {
+              conversationId,
+              workspaceId,
+              error: syncErr.message,
+            },
+          );
         }
 
-        const cost = await computeConversationCost(
-          usagesToPrice,
-          costPricedAt,
-          workspaceId,
-        );
+        const cost = await computeConversationCost(usagesToPrice, costPricedAt, workspaceId);
         if (cost > 0) costUsd = cost.toFixed(6);
       }
     } catch (costErr: any) {

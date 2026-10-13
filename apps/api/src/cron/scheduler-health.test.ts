@@ -129,7 +129,10 @@ function sep8to14Jobs(count: number): SchedulerJobSnapshot[] {
   );
 }
 
-function sep8to14Executions(jobs: SchedulerJobSnapshot[], perJob: number): SchedulerExecutionSnapshot[] {
+function sep8to14Executions(
+  jobs: SchedulerJobSnapshot[],
+  perJob: number,
+): SchedulerExecutionSnapshot[] {
   const rows: SchedulerExecutionSnapshot[] = [];
   const classes = [
     { status: "failed", error: "Script hard failure (exit code 127)" },
@@ -159,13 +162,13 @@ describe("classifySchedulerExecution", () => {
     expect(classifySchedulerExecution("running", null)).toBe("running");
     expect(classifySchedulerExecution("failed", "boom")).toBe("failed");
     expect(
-      classifySchedulerExecution(
-        "failed",
-        "Execution interrupted: recovered by stale detection",
-      ),
+      classifySchedulerExecution("failed", "Execution interrupted: recovered by stale detection"),
     ).toBe("interrupted");
     expect(
-      classifySchedulerExecution("failed", `Stale: no completion signal after 59m, ${WATCHDOG_RESET_MARKER}`),
+      classifySchedulerExecution(
+        "failed",
+        `Stale: no completion signal after 59m, ${WATCHDOG_RESET_MARKER}`,
+      ),
     ).toBe("stale-killed");
   });
 });
@@ -378,7 +381,10 @@ describe("scanSchedulerZeroSuccess", () => {
     const classes = [
       { status: "failed", error: "Script hard failure (exit code 127)" },
       { status: "failed", error: "Execution interrupted: recovered by stale detection" },
-      { status: "failed", error: `Stale: no completion signal after 59m, ${WATCHDOG_RESET_MARKER}` },
+      {
+        status: "failed",
+        error: `Stale: no completion signal after 59m, ${WATCHDOG_RESET_MARKER}`,
+      },
     ] as const;
     const executions = snapshots.flatMap((job) =>
       Array.from({ length: 30 }, (_, i) =>
@@ -465,9 +471,9 @@ describe("scanSchedulerZeroSuccess", () => {
 
     queueDbResults(jobs, executions, lastSuccess);
     await scanSchedulerZeroSuccess(OUTAGE_END);
-    expect(parseSchedulerIncident(settingsStore.data[SCHEDULER_ZERO_SUCCESS_SETTING_KEY])?.open).toBe(
-      true,
-    );
+    expect(
+      parseSchedulerIncident(settingsStore.data[SCHEDULER_ZERO_SUCCESS_SETTING_KEY])?.open,
+    ).toBe(true);
 
     sendJobOpsNoticeMock.mockClear();
     const recoveredExecutions = [
@@ -490,18 +496,18 @@ describe("scanSchedulerZeroSuccess", () => {
         logContext: expect.objectContaining({ event: "scheduler_zero_success_recovery" }),
       }),
     );
-    expect(parseSchedulerIncident(settingsStore.data[SCHEDULER_ZERO_SUCCESS_SETTING_KEY])?.open).toBe(
-      false,
-    );
+    expect(
+      parseSchedulerIncident(settingsStore.data[SCHEDULER_ZERO_SUCCESS_SETTING_KEY])?.open,
+    ).toBe(false);
 
     sendJobOpsNoticeMock.mockClear();
     queueDbResults(jobs, executions, lastSuccess);
     const laterOutage = await scanSchedulerZeroSuccess(OUTAGE_END);
     expect(laterOutage.alerted).toBe(1);
     expect(sendJobOpsNoticeMock).toHaveBeenCalledTimes(1);
-    expect(parseSchedulerIncident(settingsStore.data[SCHEDULER_ZERO_SUCCESS_SETTING_KEY])?.open).toBe(
-      true,
-    );
+    expect(
+      parseSchedulerIncident(settingsStore.data[SCHEDULER_ZERO_SUCCESS_SETTING_KEY])?.open,
+    ).toBe(true);
     vi.useRealTimers();
   });
 

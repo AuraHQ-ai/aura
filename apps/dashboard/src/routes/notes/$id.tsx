@@ -24,7 +24,11 @@ interface NoteDetail {
 function NoteDetailPage() {
   const { id } = Route.useParams();
   const queryClient = useQueryClient();
-  const { data: note, isLoading, error } = useQuery({
+  const {
+    data: note,
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ["notes", id],
     queryFn: () => apiGet<NoteDetail>(`/notes/${id}`),
   });
@@ -56,14 +60,17 @@ function NoteDetailPage() {
   }
 
   if (isLoading) return <DetailSkeleton />;
-  if (error) return <div className="text-destructive text-sm">Failed to load note: {error.message}</div>;
+  if (error)
+    return <div className="text-destructive text-sm">Failed to load note: {error.message}</div>;
   if (!note) return null;
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-4">
         <Button variant="ghost" size="icon-sm" asChild>
-          <Link to="/notes"><ArrowLeft className="h-4 w-4" /></Link>
+          <Link to="/notes">
+            <ArrowLeft className="h-4 w-4" />
+          </Link>
         </Button>
         <div className="flex-1">
           {editing ? (
@@ -100,8 +107,17 @@ function NoteDetailPage() {
       {editing && (
         <div className="grid gap-4 md:grid-cols-2">
           <div>
-            <label className="text-sm font-medium text-muted-foreground mb-2 block">Category</label>
-            <Input value={category} onChange={(e) => setCategory(e.target.value)} />
+            <label
+              htmlFor="note-category"
+              className="text-sm font-medium text-muted-foreground mb-2 block"
+            >
+              Category
+            </label>
+            <Input
+              id="note-category"
+              value={category}
+              onChange={(e) => setCategory(e.target.value)}
+            />
           </div>
         </div>
       )}
@@ -116,8 +132,14 @@ function NoteDetailPage() {
       <div>
         {editing ? (
           <>
-            <label className="text-sm font-medium text-muted-foreground mb-2 block">Content</label>
+            <label
+              htmlFor="note-content"
+              className="text-sm font-medium text-muted-foreground mb-2 block"
+            >
+              Content
+            </label>
             <textarea
+              id="note-content"
               value={content}
               onChange={(e) => setContent(e.target.value)}
               className="flex min-h-[calc(100vh-280px)] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm font-mono"

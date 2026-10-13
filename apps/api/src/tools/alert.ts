@@ -58,7 +58,7 @@ export function createAlertTools() {
           .max(ALERT_TEXT_MAX, `Alert text must be ${ALERT_TEXT_MAX} characters or fewer`)
           .describe(
             "The alert headline in mrkdwn (bold, inline code, links supported). Maximum 200 characters. " +
-            "Keep it to the single actionable takeaway; put details in the regular message text.",
+              "Keep it to the single actionable takeaway; put details in the regular message text.",
           ),
         level: alertLevelSchema.describe(
           "Severity level: default, info, warning, error, or success.",

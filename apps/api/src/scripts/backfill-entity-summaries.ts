@@ -1,6 +1,6 @@
 import { config } from "dotenv";
-import { resolve } from "path";
-import { fileURLToPath } from "url";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createProgress, type ProgressTracker } from "../lib/progress.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
@@ -21,13 +21,13 @@ function parseIntFlag(name: string): number | undefined {
 const forceAll = process.argv.includes("--force-all");
 const concurrency = parseIntFlag("concurrency") ?? 5;
 
-const { regenerateStaleSummaries } = await import(
-  "../memory/entity-summaries.js"
-);
+const { regenerateStaleSummaries } = await import("../memory/entity-summaries.js");
 
 async function main() {
   console.log("=== Entity Summary Backfill ===\n");
-  console.log(`  mode:        ${forceAll ? "force-all (regenerate everything)" : "incremental (stale/missing only)"}`);
+  console.log(
+    `  mode:        ${forceAll ? "force-all (regenerate everything)" : "incremental (stale/missing only)"}`,
+  );
   console.log(`  concurrency: ${concurrency}`);
   console.log();
 

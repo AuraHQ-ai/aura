@@ -1,7 +1,12 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { createUIMessageStreamResponse, type UIMessage } from "ai";
 import { eq, and, sql, asc, inArray } from "drizzle-orm";
-import { conversationTraces, conversationMessages, conversationParts, dashboardChatRuns } from "@aura/db/schema";
+import {
+  conversationTraces,
+  conversationMessages,
+  conversationParts,
+  dashboardChatRuns,
+} from "@aura/db/schema";
 import { start, getRun } from "workflow/api";
 import { db } from "../../db/client.js";
 import { getMainModelId } from "../../lib/ai.js";
@@ -89,7 +94,7 @@ dashboardChatApp.openapi(listChatThreadsRoute, async (c) => {
       .limit(50);
 
     const firstTraceIds = threadRows.map((t) => t.firstTraceId).filter(Boolean);
-    let previews: Record<string, string> = {};
+    const previews: Record<string, string> = {};
     if (firstTraceIds.length > 0) {
       const previewRows = await db
         .select({
@@ -180,8 +185,7 @@ async function resolveThreadRuns(knownThreadIds: Set<string>, sessionUserId?: st
   const activeOnlyThreads = runningRows
     .filter(
       (row) =>
-        !knownThreadIds.has(row.threadId) &&
-        runsByThread.get(row.threadId)?.status === "running",
+        !knownThreadIds.has(row.threadId) && runsByThread.get(row.threadId)?.status === "running",
     )
     .map((row) => ({
       threadId: row.threadId,
@@ -284,7 +288,8 @@ dashboardChatApp.openapi(getThreadMessagesRoute, async (c) => {
 
     const partsByMsg: Record<string, typeof allParts> = {};
     for (const part of allParts) {
-      (partsByMsg[part.messageId] ??= []).push(part);
+      partsByMsg[part.messageId] ??= [];
+      partsByMsg[part.messageId].push(part);
     }
 
     const uiMessages: UIMessage[] = [];
@@ -490,15 +495,13 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
       runId: run.runId,
       userId,
       userMessage: pendingUserMessage ?? undefined,
-    }).catch(
-      (error) => {
-        logger.error("Failed to record dashboard chat run", {
-          runId: run.runId,
-          threadId,
-          error: String(error),
-        });
-      },
-    );
+    }).catch((error) => {
+      logger.error("Failed to record dashboard chat run", {
+        runId: run.runId,
+        threadId,
+        error: String(error),
+      });
+    });
 
     logger.info("Dashboard chat workflow started", {
       runId: run.runId,
@@ -515,7 +518,7 @@ dashboardChatApp.openapi(postChatRoute, async (c) => {
     });
   } catch (error) {
     logger.error("Dashboard chat error", {
-      error: error instanceof Error ? error.stack ?? error.message : String(error),
+      error: error instanceof Error ? (error.stack ?? error.message) : String(error),
       name: error instanceof Error ? error.name : undefined,
     });
     return c.json({ error: "Internal server error" }, 500);

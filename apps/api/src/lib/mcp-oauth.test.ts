@@ -84,9 +84,7 @@ describe("MCP OAuth state + PKCE persistence", () => {
     );
 
     const state = await provider.state();
-    expect(state).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
-    );
+    expect(state).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
     expect(row.oauthState).toBe(state);
     expect(await provider.storedState()).toBe(state);
 

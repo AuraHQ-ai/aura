@@ -202,10 +202,12 @@ describe("generateResponse Slack stream handling", () => {
       title: "Weekly Sales",
       chart: {
         type: "line",
-        series: [{
-          name: "Online",
-          data: [{ label: "Week 1", value: 12 }],
-        }],
+        series: [
+          {
+            name: "Online",
+            data: [{ label: "Week 1", value: 12 }],
+          },
+        ],
         axis_config: { categories: ["Week 1"] },
       },
     };
@@ -215,15 +217,17 @@ describe("generateResponse Slack stream handling", () => {
     };
     const slackClient = createSlackClient([streamer]);
 
-    mockAgentStream((async function* () {
-      yield {
-        type: "tool-result",
-        toolCallId: "call-1",
-        toolName: "draw_chart",
-        output: { ok: true, __chart_block: chartBlock },
-      };
-      yield { type: "text-delta", text: "Done." };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield {
+          type: "tool-result",
+          toolCallId: "call-1",
+          toolName: "draw_chart",
+          output: { ok: true, __chart_block: chartBlock },
+        };
+        yield { type: "text-delta", text: "Done." };
+      })(),
+    );
 
     await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
       raw: "Done.",
@@ -231,17 +235,22 @@ describe("generateResponse Slack stream handling", () => {
     });
 
     expect(streamer.append).toHaveBeenCalledWith({
-      chunks: [{
-        type: "blocks",
-        blocks: [chartBlock],
-      }],
+      chunks: [
+        {
+          type: "blocks",
+          blocks: [chartBlock],
+        },
+      ],
     });
 
     // Delivery receipt: the block landed via the stream append path.
-    expect(logger.info).toHaveBeenCalledWith("NativeBlockDelivered", expect.objectContaining({
-      toolCallIds: ["call-1"],
-      path: "stream_append",
-    }));
+    expect(logger.info).toHaveBeenCalledWith(
+      "NativeBlockDelivered",
+      expect.objectContaining({
+        toolCallIds: ["call-1"],
+        path: "stream_append",
+      }),
+    );
   });
 
   it("streams native alert blocks returned by raise_alert inline mode", async () => {
@@ -256,15 +265,17 @@ describe("generateResponse Slack stream handling", () => {
     };
     const slackClient = createSlackClient([streamer]);
 
-    mockAgentStream((async function* () {
-      yield {
-        type: "tool-result",
-        toolCallId: "call-1",
-        toolName: "raise_alert",
-        output: { ok: true, __alert_block: alertBlock },
-      };
-      yield { type: "text-delta", text: "Escalating." };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield {
+          type: "tool-result",
+          toolCallId: "call-1",
+          toolName: "raise_alert",
+          output: { ok: true, __alert_block: alertBlock },
+        };
+        yield { type: "text-delta", text: "Escalating." };
+      })(),
+    );
 
     await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
       raw: "Escalating.",
@@ -272,10 +283,12 @@ describe("generateResponse Slack stream handling", () => {
     });
 
     expect(streamer.append).toHaveBeenCalledWith({
-      chunks: [{
-        type: "blocks",
-        blocks: [alertBlock],
-      }],
+      chunks: [
+        {
+          type: "blocks",
+          blocks: [alertBlock],
+        },
+      ],
     });
   });
 
@@ -298,15 +311,17 @@ describe("generateResponse Slack stream handling", () => {
     };
     const slackClient = createSlackClient([streamer]);
 
-    mockAgentStream((async function* () {
-      yield {
-        type: "tool-result",
-        toolCallId: "call-1",
-        toolName: "draw_cards",
-        output: { ok: true, __card_blocks: cardBlocks },
-      };
-      yield { type: "text-delta", text: "EOD reflection below." };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield {
+          type: "tool-result",
+          toolCallId: "call-1",
+          toolName: "draw_cards",
+          output: { ok: true, __card_blocks: cardBlocks },
+        };
+        yield { type: "text-delta", text: "EOD reflection below." };
+      })(),
+    );
 
     await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
       raw: "EOD reflection below.",
@@ -314,10 +329,12 @@ describe("generateResponse Slack stream handling", () => {
     });
 
     expect(streamer.append).toHaveBeenCalledWith({
-      chunks: [{
-        type: "blocks",
-        blocks: cardBlocks,
-      }],
+      chunks: [
+        {
+          type: "blocks",
+          blocks: cardBlocks,
+        },
+      ],
     });
   });
 
@@ -346,21 +363,21 @@ describe("generateResponse Slack stream handling", () => {
           throw invalidArgumentsError();
         }
       }),
-      stop: vi.fn()
-        .mockRejectedValueOnce(invalidArgumentsError())
-        .mockResolvedValueOnce(undefined),
+      stop: vi.fn().mockRejectedValueOnce(invalidArgumentsError()).mockResolvedValueOnce(undefined),
     };
     const slackClient = createSlackClient([streamer]);
 
-    mockAgentStream((async function* () {
-      yield {
-        type: "tool-result",
-        toolCallId: "call-1",
-        toolName: "draw_cards",
-        output: { ok: true, __card_blocks: cardBlocks },
-      };
-      yield { type: "text-delta", text: "Digest below." };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield {
+          type: "tool-result",
+          toolCallId: "call-1",
+          toolName: "draw_cards",
+          output: { ok: true, __card_blocks: cardBlocks },
+        };
+        yield { type: "text-delta", text: "Digest below." };
+      })(),
+    );
 
     await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
       raw: "Digest below.",
@@ -374,11 +391,13 @@ describe("generateResponse Slack stream handling", () => {
     });
 
     // Both stripped cards are delivered via the chat.postMessage fallback.
-    expect(slackClient.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
-      channel: "C123",
-      text: "Here's a summary:",
-      blocks: cardBlocks,
-    }));
+    expect(slackClient.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "C123",
+        text: "Here's a summary:",
+        blocks: cardBlocks,
+      }),
+    );
   });
 
   it("recovers when streamer.stop() rejects the block payload with invalid_arguments", async () => {
@@ -398,21 +417,21 @@ describe("generateResponse Slack stream handling", () => {
           throw invalidArgumentsError();
         }
       }),
-      stop: vi.fn()
-        .mockRejectedValueOnce(invalidArgumentsError())
-        .mockResolvedValueOnce(undefined),
+      stop: vi.fn().mockRejectedValueOnce(invalidArgumentsError()).mockResolvedValueOnce(undefined),
     };
     const slackClient = createSlackClient([streamer]);
 
-    mockAgentStream((async function* () {
-      yield {
-        type: "tool-result",
-        toolCallId: "call-1",
-        toolName: "draw_table",
-        output: { ok: true, __table_block: tableBlock },
-      };
-      yield { type: "text-delta", text: "Here is the table." };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield {
+          type: "tool-result",
+          toolCallId: "call-1",
+          toolName: "draw_table",
+          output: { ok: true, __table_block: tableBlock },
+        };
+        yield { type: "text-delta", text: "Here is the table." };
+      })(),
+    );
 
     await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
       raw: "Here is the table.",
@@ -427,27 +446,36 @@ describe("generateResponse Slack stream handling", () => {
     expect(streamer.stop.mock.calls[1]).toEqual([]);
 
     // The stripped table block is delivered via the chat.postMessage fallback.
-    expect(slackClient.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
-      channel: "C123",
-      text: "Here's a table:",
-      blocks: [tableBlock],
-    }));
+    expect(slackClient.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "C123",
+        text: "Here's a table:",
+        blocks: [tableBlock],
+      }),
+    );
 
     // The original error is logged instead of rethrown.
-    expect(logError).toHaveBeenCalledWith(expect.objectContaining({
-      errorName: "StreamStopInvalidArguments",
-      errorCode: "invalid_arguments",
-      context: expect.objectContaining({ phase: "stop" }),
-    }));
+    expect(logError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorName: "StreamStopInvalidArguments",
+        errorCode: "invalid_arguments",
+        context: expect.objectContaining({ phase: "stop" }),
+      }),
+    );
 
     // Delivery receipt: the block landed via the postMessage fallback.
-    expect(logger.info).toHaveBeenCalledWith("NativeBlockDelivered", expect.objectContaining({
-      toolCallIds: ["call-1"],
-      path: "post_message_fallback",
-    }));
-    expect(logError).not.toHaveBeenCalledWith(expect.objectContaining({
-      errorName: "NativeBlockDropped",
-    }));
+    expect(logger.info).toHaveBeenCalledWith(
+      "NativeBlockDelivered",
+      expect.objectContaining({
+        toolCallIds: ["call-1"],
+        path: "post_message_fallback",
+      }),
+    );
+    expect(logError).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorName: "NativeBlockDropped",
+      }),
+    );
   });
 
   it("logs NativeBlockDelivered via stop_blocks when the block rides on streamer.stop()", async () => {
@@ -471,15 +499,17 @@ describe("generateResponse Slack stream handling", () => {
     };
     const slackClient = createSlackClient([streamer]);
 
-    mockAgentStream((async function* () {
-      yield {
-        type: "tool-result",
-        toolCallId: "call-1",
-        toolName: "draw_table",
-        output: { ok: true, __table_block: tableBlock },
-      };
-      yield { type: "text-delta", text: "Here is the table." };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield {
+          type: "tool-result",
+          toolCallId: "call-1",
+          toolName: "draw_table",
+          output: { ok: true, __table_block: tableBlock },
+        };
+        yield { type: "text-delta", text: "Here is the table." };
+      })(),
+    );
 
     await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
       raw: "Here is the table.",
@@ -489,13 +519,18 @@ describe("generateResponse Slack stream handling", () => {
     expect(streamer.stop.mock.calls[0][0]).toMatchObject({
       blocks: expect.arrayContaining([tableBlock]),
     });
-    expect(logger.info).toHaveBeenCalledWith("NativeBlockDelivered", expect.objectContaining({
-      toolCallIds: ["call-1"],
-      path: "stop_blocks",
-    }));
-    expect(logError).not.toHaveBeenCalledWith(expect.objectContaining({
-      errorName: "NativeBlockDropped",
-    }));
+    expect(logger.info).toHaveBeenCalledWith(
+      "NativeBlockDelivered",
+      expect.objectContaining({
+        toolCallIds: ["call-1"],
+        path: "stop_blocks",
+      }),
+    );
+    expect(logError).not.toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorName: "NativeBlockDropped",
+      }),
+    );
   });
 
   it("logs NativeBlockDropped when the postMessage fallback for a native block rejects", async () => {
@@ -513,46 +548,45 @@ describe("generateResponse Slack stream handling", () => {
           throw invalidArgumentsError();
         }
       }),
-      stop: vi.fn()
-        .mockRejectedValueOnce(invalidArgumentsError())
-        .mockResolvedValueOnce(undefined),
+      stop: vi.fn().mockRejectedValueOnce(invalidArgumentsError()).mockResolvedValueOnce(undefined),
     };
     const slackClient = createSlackClient([streamer]);
     slackClient.chat.postMessage.mockRejectedValue(new Error("channel_not_found"));
 
-    mockAgentStream((async function* () {
-      yield {
-        type: "tool-result",
-        toolCallId: "call-1",
-        toolName: "draw_table",
-        output: { ok: true, __table_block: tableBlock },
-      };
-      yield { type: "text-delta", text: "Here is the table." };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield {
+          type: "tool-result",
+          toolCallId: "call-1",
+          toolName: "draw_table",
+          output: { ok: true, __table_block: tableBlock },
+        };
+        yield { type: "text-delta", text: "Here is the table." };
+      })(),
+    );
 
     await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
       raw: "Here is the table.",
       alreadyPosted: true,
     });
 
-    expect(logError).toHaveBeenCalledWith(expect.objectContaining({
-      errorName: "NativeBlockDropped",
-      errorCode: "native_block_dropped",
-      context: expect.objectContaining({
-        toolCallIds: ["call-1"],
-        path: "post_message_fallback",
-        error: "channel_not_found",
+    expect(logError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorName: "NativeBlockDropped",
+        errorCode: "native_block_dropped",
+        context: expect.objectContaining({
+          toolCallIds: ["call-1"],
+          path: "post_message_fallback",
+          error: "channel_not_found",
+        }),
       }),
-    }));
+    );
     // The drop is recorded exactly once — no duplicate turn_end event.
-    const droppedCalls = vi.mocked(logError).mock.calls.filter(
-      ([params]) => params.errorName === "NativeBlockDropped",
-    );
+    const droppedCalls = vi
+      .mocked(logError)
+      .mock.calls.filter(([params]) => params.errorName === "NativeBlockDropped");
     expect(droppedCalls).toHaveLength(1);
-    expect(logger.info).not.toHaveBeenCalledWith(
-      "NativeBlockDelivered",
-      expect.anything(),
-    );
+    expect(logger.info).not.toHaveBeenCalledWith("NativeBlockDelivered", expect.anything());
   });
 
   it("splits to a new stream with a tombstone when a tool call exceeds 75 seconds", async () => {
@@ -568,32 +602,36 @@ describe("generateResponse Slack stream handling", () => {
     };
     const slackClient = createSlackClient([firstStream, secondStream]);
 
-    mockAgentStream((async function* () {
-      yield {
-        type: "tool-call",
-        toolCallId: "call-1",
-        toolName: "run_command",
-        input: { command: "sleep 200", timeout_seconds: 200 },
-      };
-      await finishTool.promise;
-      yield {
-        type: "tool-result",
-        toolCallId: "call-1",
-        toolName: "run_command",
-        output: { ok: true, exit_code: 0, stdout: "", stderr: "" },
-      };
-      yield { type: "text-delta", text: "Done." };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield {
+          type: "tool-call",
+          toolCallId: "call-1",
+          toolName: "run_command",
+          input: { command: "sleep 200", timeout_seconds: 200 },
+        };
+        await finishTool.promise;
+        yield {
+          type: "tool-result",
+          toolCallId: "call-1",
+          toolName: "run_command",
+          output: { ok: true, exit_code: 0, stdout: "", stderr: "" },
+        };
+        yield { type: "text-delta", text: "Done." };
+      })(),
+    );
 
     const responsePromise = generateResponse(baseOptions(slackClient));
     await vi.advanceTimersByTimeAsync(0);
 
     expect(firstStream.append).toHaveBeenCalledWith({
-      chunks: [expect.objectContaining({
-        type: "task_update",
-        id: "call-1",
-        status: "in_progress",
-      })],
+      chunks: [
+        expect.objectContaining({
+          type: "task_update",
+          id: "call-1",
+          status: "in_progress",
+        }),
+      ],
     });
 
     await vi.advanceTimersByTimeAsync(75_000);
@@ -628,11 +666,13 @@ describe("generateResponse Slack stream handling", () => {
     // created the continuation stream.
     expect(slackClient.chatStream).toHaveBeenCalledTimes(2);
     expect(secondStream.append).toHaveBeenCalledWith({
-      chunks: [expect.objectContaining({
-        type: "task_update",
-        id: "call-1",
-        status: "complete",
-      })],
+      chunks: [
+        expect.objectContaining({
+          type: "task_update",
+          id: "call-1",
+          status: "complete",
+        }),
+      ],
     });
   });
 
@@ -649,36 +689,38 @@ describe("generateResponse Slack stream handling", () => {
     };
     const slackClient = createSlackClient([firstStream, secondStream]);
 
-    mockAgentStream((async function* () {
-      yield {
-        type: "tool-call",
-        toolCallId: "call-1",
-        toolName: "run_command",
-        input: { command: "echo one" },
-      };
-      yield {
-        type: "tool-result",
-        toolCallId: "call-1",
-        toolName: "run_command",
-        output: { ok: true, exit_code: 0, stdout: "", stderr: "" },
-      };
-      // Wall-clock time passes between short tools — no single tool ever
-      // stays pending past LONG_TOOL_SPLIT_MS, but the stream still ages.
-      await gate.promise;
-      yield {
-        type: "tool-call",
-        toolCallId: "call-2",
-        toolName: "run_command",
-        input: { command: "echo two" },
-      };
-      yield {
-        type: "tool-result",
-        toolCallId: "call-2",
-        toolName: "run_command",
-        output: { ok: true, exit_code: 0, stdout: "", stderr: "" },
-      };
-      yield { type: "text-delta", text: "Done." };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield {
+          type: "tool-call",
+          toolCallId: "call-1",
+          toolName: "run_command",
+          input: { command: "echo one" },
+        };
+        yield {
+          type: "tool-result",
+          toolCallId: "call-1",
+          toolName: "run_command",
+          output: { ok: true, exit_code: 0, stdout: "", stderr: "" },
+        };
+        // Wall-clock time passes between short tools — no single tool ever
+        // stays pending past LONG_TOOL_SPLIT_MS, but the stream still ages.
+        await gate.promise;
+        yield {
+          type: "tool-call",
+          toolCallId: "call-2",
+          toolName: "run_command",
+          input: { command: "echo two" },
+        };
+        yield {
+          type: "tool-result",
+          toolCallId: "call-2",
+          toolName: "run_command",
+          output: { ok: true, exit_code: 0, stdout: "", stderr: "" },
+        };
+        yield { type: "text-delta", text: "Done." };
+      })(),
+    );
 
     const responsePromise = generateResponse(baseOptions(slackClient));
     await vi.advanceTimersByTimeAsync(0);
@@ -697,10 +739,12 @@ describe("generateResponse Slack stream handling", () => {
     expect(slackClient.chatStream).toHaveBeenCalledTimes(2);
     expect(firstStream.stop).toHaveBeenCalled();
     expect(secondStream.append).toHaveBeenCalledWith({
-      chunks: [expect.objectContaining({
-        type: "markdown_text",
-        text: "Done.",
-      })],
+      chunks: [
+        expect.objectContaining({
+          type: "markdown_text",
+          text: "Done.",
+        }),
+      ],
     });
     expect(logger.info).toHaveBeenCalledWith(
       "Slack stream exceeded max age; splitting to a fresh stream",
@@ -718,36 +762,38 @@ describe("generateResponse Slack stream handling", () => {
     };
     const slackClient = createSlackClient([stream]);
 
-    mockAgentStream((async function* () {
-      yield {
-        type: "tool-input-start",
-        toolCallId: "call-1",
-        toolName: "run_command",
-      };
-      yield {
-        type: "tool-input-delta",
-        toolCallId: "call-1",
-        inputTextDelta: "{\"command\":\"echo",
-      };
-      yield {
-        type: "tool-input-delta",
-        toolCallId: "call-1",
-        inputTextDelta: " ok\"}",
-      };
-      yield {
-        type: "tool-call",
-        toolCallId: "call-1",
-        toolName: "run_command",
-        input: { command: "echo ok" },
-      };
-      yield {
-        type: "tool-result",
-        toolCallId: "call-1",
-        toolName: "run_command",
-        output: { ok: true, exit_code: 0, stdout: "ok", stderr: "" },
-      };
-      yield { type: "text-delta", text: "Done." };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield {
+          type: "tool-input-start",
+          toolCallId: "call-1",
+          toolName: "run_command",
+        };
+        yield {
+          type: "tool-input-delta",
+          toolCallId: "call-1",
+          inputTextDelta: '{"command":"echo',
+        };
+        yield {
+          type: "tool-input-delta",
+          toolCallId: "call-1",
+          inputTextDelta: ' ok"}',
+        };
+        yield {
+          type: "tool-call",
+          toolCallId: "call-1",
+          toolName: "run_command",
+          input: { command: "echo ok" },
+        };
+        yield {
+          type: "tool-result",
+          toolCallId: "call-1",
+          toolName: "run_command",
+          output: { ok: true, exit_code: 0, stdout: "ok", stderr: "" },
+        };
+        yield { type: "text-delta", text: "Done." };
+      })(),
+    );
 
     await generateResponse(baseOptions(slackClient));
 
@@ -787,39 +833,43 @@ describe("generateResponse Slack stream handling", () => {
     };
     const slackClient = createSlackClient([stream]);
 
-    mockAgentStream((async function* () {
-      yield {
-        type: "tool-call",
-        toolCallId: "call-1",
-        toolName: "run_command",
-        input: { command: "git pull", label: "pulling latest git" },
-      };
-      yield {
-        type: "tool-result",
-        toolCallId: "call-1",
-        toolName: "run_command",
-        output: { ok: true, exit_code: 0, stdout: "Already up to date.", stderr: "" },
-      };
-      yield { type: "text-delta", text: "Pulled." };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield {
+          type: "tool-call",
+          toolCallId: "call-1",
+          toolName: "run_command",
+          input: { command: "git pull", label: "pulling latest git" },
+        };
+        yield {
+          type: "tool-result",
+          toolCallId: "call-1",
+          toolName: "run_command",
+          output: { ok: true, exit_code: 0, stdout: "Already up to date.", stderr: "" },
+        };
+        yield { type: "text-delta", text: "Pulled." };
+      })(),
+    );
 
     await generateResponse(baseOptions(slackClient));
 
     const updates = taskUpdatesFor(stream, "call-1");
-    expect(updates).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        type: "task_update",
-        id: "call-1",
-        title: "pulling latest git",
-        status: "in_progress",
-      }),
-      expect.objectContaining({
-        type: "task_update",
-        id: "call-1",
-        title: "pulling latest git",
-        status: "complete",
-      }),
-    ]));
+    expect(updates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: "task_update",
+          id: "call-1",
+          title: "pulling latest git",
+          status: "in_progress",
+        }),
+        expect.objectContaining({
+          type: "task_update",
+          id: "call-1",
+          title: "pulling latest git",
+          status: "complete",
+        }),
+      ]),
+    );
     expect(updates.every((chunk: any) => chunk.title === "pulling latest git")).toBe(true);
   });
 
@@ -830,36 +880,40 @@ describe("generateResponse Slack stream handling", () => {
     };
     const slackClient = createSlackClient([stream]);
 
-    mockAgentStream((async function* () {
-      yield {
-        type: "tool-call",
-        toolCallId: "call-1",
-        toolName: "run_command",
-        input: { command: "git pull", label: "pulling latest git" },
-      };
-      yield {
-        type: "tool-error",
-        toolCallId: "call-1",
-        toolName: "run_command",
-        error: new Error("sandbox died"),
-      };
-      yield { type: "text-delta", text: "Failed to pull." };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield {
+          type: "tool-call",
+          toolCallId: "call-1",
+          toolName: "run_command",
+          input: { command: "git pull", label: "pulling latest git" },
+        };
+        yield {
+          type: "tool-error",
+          toolCallId: "call-1",
+          toolName: "run_command",
+          error: new Error("sandbox died"),
+        };
+        yield { type: "text-delta", text: "Failed to pull." };
+      })(),
+    );
 
     await generateResponse(baseOptions(slackClient));
 
     const updates = taskUpdatesFor(stream, "call-1");
-    expect(updates).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        title: "pulling latest git",
-        status: "in_progress",
-      }),
-      expect.objectContaining({
-        title: "pulling latest git",
-        status: "error",
-        output: "sandbox died",
-      }),
-    ]));
+    expect(updates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: "pulling latest git",
+          status: "in_progress",
+        }),
+        expect.objectContaining({
+          title: "pulling latest git",
+          status: "error",
+          output: "sandbox died",
+        }),
+      ]),
+    );
     expect(updates.map((chunk: any) => chunk.title)).not.toContain(
       "Running a command in the sandbox...",
     );
@@ -873,21 +927,23 @@ describe("generateResponse Slack stream handling", () => {
     const slackClient = createSlackClient([stream]);
     const padded = `  ${"z".repeat(72)}  `;
 
-    mockAgentStream((async function* () {
-      yield {
-        type: "tool-call",
-        toolCallId: "call-1",
-        toolName: "run_command",
-        input: { command: "true", label: padded },
-      };
-      yield {
-        type: "tool-result",
-        toolCallId: "call-1",
-        toolName: "run_command",
-        output: { ok: true, exit_code: 0, stdout: "", stderr: "" },
-      };
-      yield { type: "text-delta", text: "Done." };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield {
+          type: "tool-call",
+          toolCallId: "call-1",
+          toolName: "run_command",
+          input: { command: "true", label: padded },
+        };
+        yield {
+          type: "tool-result",
+          toolCallId: "call-1",
+          toolName: "run_command",
+          output: { ok: true, exit_code: 0, stdout: "", stderr: "" },
+        };
+        yield { type: "text-delta", text: "Done." };
+      })(),
+    );
 
     await generateResponse(baseOptions(slackClient));
 
@@ -902,21 +958,25 @@ describe("generateResponse Slack stream handling", () => {
       stop: vi.fn().mockResolvedValue(undefined),
     };
     const slackClient = createSlackClient([stream]);
-    const streamFn = vi.fn().mockResolvedValue(createAgentStreamResult((async function* () {
-      yield {
-        type: "tool-call",
-        toolCallId: "call-1",
-        toolName: "web_search",
-        input: { query: "latest Next.js release notes" },
-      };
-      yield {
-        type: "tool-result",
-        toolCallId: "call-1",
-        toolName: "web_search",
-        output: { ok: true, count: 3 },
-      };
-      yield { type: "text-delta", text: "Found it." };
-    })()));
+    const streamFn = vi.fn().mockResolvedValue(
+      createAgentStreamResult(
+        (async function* () {
+          yield {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "web_search",
+            input: { query: "latest Next.js release notes" },
+          };
+          yield {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "web_search",
+            output: { ok: true, count: 3 },
+          };
+          yield { type: "text-delta", text: "Found it." };
+        })(),
+      ),
+    );
     agentMocks.createInteractiveAgent.mockResolvedValue({
       agent: { stream: streamFn },
       tools: {
@@ -938,41 +998,50 @@ describe("generateResponse Slack stream handling", () => {
     await generateResponse(baseOptions(slackClient));
 
     const updates = taskUpdatesFor(stream, "call-1");
-    expect(updates.every((chunk: any) =>
-      chunk.title === 'searching the web: "latest Next.js release notes"',
-    )).toBe(true);
-    expect(updates).toEqual(expect.arrayContaining([
-      expect.objectContaining({ status: "in_progress" }),
-      expect.objectContaining({ status: "complete" }),
-    ]));
+    expect(
+      updates.every(
+        (chunk: any) => chunk.title === 'searching the web: "latest Next.js release notes"',
+      ),
+    ).toBe(true);
+    expect(updates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ status: "in_progress" }),
+        expect.objectContaining({ status: "complete" }),
+      ]),
+    );
   });
 
   it("inherits the cached label on the stream-failure tombstone", async () => {
     const stream = {
-      append: vi.fn()
+      append: vi
+        .fn()
         .mockResolvedValueOnce(undefined)
-        .mockRejectedValueOnce(Object.assign(new Error("invalid_blocks"), {
-          data: { error: "invalid_blocks" },
-        })),
+        .mockRejectedValueOnce(
+          Object.assign(new Error("invalid_blocks"), {
+            data: { error: "invalid_blocks" },
+          }),
+        ),
       stop: vi.fn().mockResolvedValue(undefined),
     };
     const slackClient = createSlackClient([stream]);
 
-    mockAgentStream((async function* () {
-      yield {
-        type: "tool-call",
-        toolCallId: "call-1",
-        toolName: "run_command",
-        input: { command: "true", label: "pulling latest git" },
-      };
-      yield {
-        type: "tool-result",
-        toolCallId: "call-1",
-        toolName: "run_command",
-        output: { ok: true, exit_code: 0, stdout: "", stderr: "" },
-      };
-      yield { type: "text-delta", text: "Fallback text." };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield {
+          type: "tool-call",
+          toolCallId: "call-1",
+          toolName: "run_command",
+          input: { command: "true", label: "pulling latest git" },
+        };
+        yield {
+          type: "tool-result",
+          toolCallId: "call-1",
+          toolName: "run_command",
+          output: { ok: true, exit_code: 0, stdout: "", stderr: "" },
+        };
+        yield { type: "text-delta", text: "Fallback text." };
+      })(),
+    );
 
     await generateResponse(baseOptions(slackClient));
 
@@ -1027,33 +1096,35 @@ describe("generateResponse Slack stream handling", () => {
     };
     const slackClient = createSlackClient([stream]);
 
-    mockPollerStream((async function* () {
-      yield {
-        type: "tool-call",
-        toolCallId: "launch-1",
-        toolName: "run_command_detached",
-        input: { command: "git pull", label: "pulling latest git" },
-      };
-      yield {
-        type: "tool-result",
-        toolCallId: "launch-1",
-        toolName: "run_command_detached",
-        output: { id: "abcdef12", pid: 99 },
-      };
-      yield {
-        type: "tool-call",
-        toolCallId: "poll-1",
-        toolName: "check_command",
-        input: { id: "abcdef12" },
-      };
-      yield {
-        type: "tool-result",
-        toolCallId: "poll-1",
-        toolName: "check_command",
-        output: { status: "running", runtime_s: 3 },
-      };
-      yield { type: "text-delta", text: "Still running." };
-    })());
+    mockPollerStream(
+      (async function* () {
+        yield {
+          type: "tool-call",
+          toolCallId: "launch-1",
+          toolName: "run_command_detached",
+          input: { command: "git pull", label: "pulling latest git" },
+        };
+        yield {
+          type: "tool-result",
+          toolCallId: "launch-1",
+          toolName: "run_command_detached",
+          output: { id: "abcdef12", pid: 99 },
+        };
+        yield {
+          type: "tool-call",
+          toolCallId: "poll-1",
+          toolName: "check_command",
+          input: { id: "abcdef12" },
+        };
+        yield {
+          type: "tool-result",
+          toolCallId: "poll-1",
+          toolName: "check_command",
+          output: { status: "running", runtime_s: 3 },
+        };
+        yield { type: "text-delta", text: "Still running." };
+      })(),
+    );
 
     await generateResponse(baseOptions(slackClient));
 
@@ -1061,19 +1132,21 @@ describe("generateResponse Slack stream handling", () => {
     expect(launchUpdates.every((chunk: any) => chunk.title === "pulling latest git")).toBe(true);
 
     const pollUpdates = taskUpdatesFor(stream, "poll-1");
-    expect(pollUpdates).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        title: "checking job 'pulling latest git'",
-        status: "in_progress",
-      }),
-      expect.objectContaining({
-        title: "checking job 'pulling latest git'",
-        status: "complete",
-      }),
-    ]));
-    expect(pollUpdates.every((chunk: any) =>
-      chunk.title === "checking job 'pulling latest git'",
-    )).toBe(true);
+    expect(pollUpdates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: "checking job 'pulling latest git'",
+          status: "in_progress",
+        }),
+        expect.objectContaining({
+          title: "checking job 'pulling latest git'",
+          status: "complete",
+        }),
+      ]),
+    );
+    expect(
+      pollUpdates.every((chunk: any) => chunk.title === "checking job 'pulling latest git'"),
+    ).toBe(true);
   });
 
   it("keeps the cached poller title on check_command error and misses to static status", async () => {
@@ -1083,63 +1156,68 @@ describe("generateResponse Slack stream handling", () => {
     };
     const slackClient = createSlackClient([stream]);
 
-    mockPollerStream((async function* () {
-      yield {
-        type: "tool-call",
-        toolCallId: "launch-1",
-        toolName: "dispatch_cursor_agent",
-        input: {
-          label: "fixing stream-age-split bug in respond.ts",
-          issue_description: "Fix the stream-age-split bug in respond.ts when Slack streams exceed the idle timeout.",
-        },
-      };
-      yield {
-        type: "tool-result",
-        toolCallId: "launch-1",
-        toolName: "dispatch_cursor_agent",
-        output: { ok: true, id: "bc-123", agent_id: "bc-123" },
-      };
-      yield {
-        type: "tool-call",
-        toolCallId: "poll-hit",
-        toolName: "check_cursor_agent",
-        input: { agent_id: "bc-123" },
-      };
-      yield {
-        type: "tool-error",
-        toolCallId: "poll-hit",
-        toolName: "check_cursor_agent",
-        error: new Error("agent API down"),
-      };
-      yield {
-        type: "tool-call",
-        toolCallId: "poll-miss",
-        toolName: "check_command",
-        input: { id: "deadbeef" },
-      };
-      yield {
-        type: "tool-result",
-        toolCallId: "poll-miss",
-        toolName: "check_command",
-        output: { status: "not_found", runtime_s: 0 },
-      };
-      yield { type: "text-delta", text: "Done." };
-    })());
+    mockPollerStream(
+      (async function* () {
+        yield {
+          type: "tool-call",
+          toolCallId: "launch-1",
+          toolName: "dispatch_cursor_agent",
+          input: {
+            label: "fixing stream-age-split bug in respond.ts",
+            issue_description:
+              "Fix the stream-age-split bug in respond.ts when Slack streams exceed the idle timeout.",
+          },
+        };
+        yield {
+          type: "tool-result",
+          toolCallId: "launch-1",
+          toolName: "dispatch_cursor_agent",
+          output: { ok: true, id: "bc-123", agent_id: "bc-123" },
+        };
+        yield {
+          type: "tool-call",
+          toolCallId: "poll-hit",
+          toolName: "check_cursor_agent",
+          input: { agent_id: "bc-123" },
+        };
+        yield {
+          type: "tool-error",
+          toolCallId: "poll-hit",
+          toolName: "check_cursor_agent",
+          error: new Error("agent API down"),
+        };
+        yield {
+          type: "tool-call",
+          toolCallId: "poll-miss",
+          toolName: "check_command",
+          input: { id: "deadbeef" },
+        };
+        yield {
+          type: "tool-result",
+          toolCallId: "poll-miss",
+          toolName: "check_command",
+          output: { status: "not_found", runtime_s: 0 },
+        };
+        yield { type: "text-delta", text: "Done." };
+      })(),
+    );
 
     await generateResponse(baseOptions(slackClient));
 
     const hitUpdates = taskUpdatesFor(stream, "poll-hit");
-    expect(hitUpdates).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        title: "checking agent 'fixing stream-age-split bug in respond.ts'",
-        status: "in_progress",
-      }),
-      expect.objectContaining({
-        title: "checking agent 'fixing stream-age-split bug in respond.ts'",
-        status: "error",
-        output: "agent API down",
-      }),
-    ]));
+    expect(hitUpdates).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: "checking agent 'fixing stream-age-split bug in respond.ts'",
+          status: "in_progress",
+        }),
+        expect.objectContaining({
+          title: "checking agent 'fixing stream-age-split bug in respond.ts'",
+          status: "error",
+          output: "agent API down",
+        }),
+      ]),
+    );
 
     const missUpdates = taskUpdatesFor(stream, "poll-miss");
     expect(missUpdates.every((chunk: any) => chunk.title === "Checking command...")).toBe(true);
@@ -1152,52 +1230,58 @@ describe("generateResponse Slack stream handling", () => {
     };
     const slackClient = createSlackClient([stream]);
 
-    mockPollerStream((async function* () {
-      yield {
-        type: "tool-call",
-        toolCallId: "q1",
-        toolName: "bq_execute_query",
-        input: {
-          sql: "SELECT 1",
-          label: "counting Stripe MRR for churned ES customers",
-        },
-      };
-      yield {
-        type: "tool-result",
-        toolCallId: "q1",
-        toolName: "bq_execute_query",
-        output: { ok: true, total_rows: 1 },
-      };
-      yield {
-        type: "tool-call",
-        toolCallId: "q2",
-        toolName: "bq_execute_query",
-        input: {
-          sql: "SELECT 2",
-          label: "counting Stripe MRR for churned ES customers",
-        },
-      };
-      yield {
-        type: "tool-error",
-        toolCallId: "q2",
-        toolName: "bq_execute_query",
-        error: new Error("quota exceeded"),
-      };
-      yield { type: "text-delta", text: "Done." };
-    })());
+    mockPollerStream(
+      (async function* () {
+        yield {
+          type: "tool-call",
+          toolCallId: "q1",
+          toolName: "bq_execute_query",
+          input: {
+            sql: "SELECT 1",
+            label: "counting Stripe MRR for churned ES customers",
+          },
+        };
+        yield {
+          type: "tool-result",
+          toolCallId: "q1",
+          toolName: "bq_execute_query",
+          output: { ok: true, total_rows: 1 },
+        };
+        yield {
+          type: "tool-call",
+          toolCallId: "q2",
+          toolName: "bq_execute_query",
+          input: {
+            sql: "SELECT 2",
+            label: "counting Stripe MRR for churned ES customers",
+          },
+        };
+        yield {
+          type: "tool-error",
+          toolCallId: "q2",
+          toolName: "bq_execute_query",
+          error: new Error("quota exceeded"),
+        };
+        yield { type: "text-delta", text: "Done." };
+      })(),
+    );
 
     await generateResponse(baseOptions(slackClient));
 
-    expect(taskUpdatesFor(stream, "q1").every((chunk: any) =>
-      chunk.title === "counting Stripe MRR for churned ES customers",
-    )).toBe(true);
-    expect(taskUpdatesFor(stream, "q2")).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        title: "counting Stripe MRR for churned ES customers",
-        status: "error",
-        output: "quota exceeded",
-      }),
-    ]));
+    expect(
+      taskUpdatesFor(stream, "q1").every(
+        (chunk: any) => chunk.title === "counting Stripe MRR for churned ES customers",
+      ),
+    ).toBe(true);
+    expect(taskUpdatesFor(stream, "q2")).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          title: "counting Stripe MRR for churned ES customers",
+          status: "error",
+          output: "quota exceeded",
+        }),
+      ]),
+    );
   });
 
   it("terminates an optimistic tool card if the stream errors before tool-call", async () => {
@@ -1207,23 +1291,27 @@ describe("generateResponse Slack stream handling", () => {
     };
     const slackClient = createSlackClient([stream]);
 
-    mockAgentStream((async function* () {
-      yield {
-        type: "tool-input-start",
-        toolCallId: "call-1",
-        toolName: "run_command",
-      };
-      throw new Error("tool input failed");
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield {
+          type: "tool-input-start",
+          toolCallId: "call-1",
+          toolName: "run_command",
+        };
+        throw new Error("tool input failed");
+      })(),
+    );
 
     await expect(generateResponse(baseOptions(slackClient))).rejects.toThrow("tool input failed");
 
     expect(stream.append).toHaveBeenCalledWith({
-      chunks: [expect.objectContaining({
-        type: "task_update",
-        id: "call-1",
-        status: "in_progress",
-      })],
+      chunks: [
+        expect.objectContaining({
+          type: "task_update",
+          id: "call-1",
+          status: "in_progress",
+        }),
+      ],
     });
     expect(stream.stop).toHaveBeenCalledWith({
       chunks: expect.arrayContaining([
@@ -1239,30 +1327,35 @@ describe("generateResponse Slack stream handling", () => {
 
   it("stops a failed stream with a continuation tombstone before postMessage fallback", async () => {
     const stream = {
-      append: vi.fn()
+      append: vi
+        .fn()
         .mockResolvedValueOnce(undefined)
-        .mockRejectedValueOnce(Object.assign(new Error("invalid_blocks"), {
-          data: { error: "invalid_blocks" },
-        })),
+        .mockRejectedValueOnce(
+          Object.assign(new Error("invalid_blocks"), {
+            data: { error: "invalid_blocks" },
+          }),
+        ),
       stop: vi.fn().mockResolvedValue(undefined),
     };
     const slackClient = createSlackClient([stream]);
 
-    mockAgentStream((async function* () {
-      yield {
-        type: "tool-call",
-        toolCallId: "call-1",
-        toolName: "run_command",
-        input: { command: "true" },
-      };
-      yield {
-        type: "tool-result",
-        toolCallId: "call-1",
-        toolName: "run_command",
-        output: { ok: true, exit_code: 0, stdout: "", stderr: "" },
-      };
-      yield { type: "text-delta", text: "Fallback text." };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield {
+          type: "tool-call",
+          toolCallId: "call-1",
+          toolName: "run_command",
+          input: { command: "true" },
+        };
+        yield {
+          type: "tool-result",
+          toolCallId: "call-1",
+          toolName: "run_command",
+          output: { ok: true, exit_code: 0, stdout: "", stderr: "" },
+        };
+        yield { type: "text-delta", text: "Fallback text." };
+      })(),
+    );
 
     await generateResponse(baseOptions(slackClient));
 
@@ -1280,31 +1373,37 @@ describe("generateResponse Slack stream handling", () => {
         }),
       ]),
     });
-    expect(slackClient.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
-      channel: "C123",
-      thread_ts: "1710000000.000000",
-      text: expect.stringContaining("Fallback text."),
-    }));
+    expect(slackClient.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "C123",
+        thread_ts: "1710000000.000000",
+        text: expect.stringContaining("Fallback text."),
+      }),
+    );
   });
 
   it("logs message_not_in_streaming_state as recovered when postMessage fallback succeeds", async () => {
     const stream = {
-      append: vi.fn().mockRejectedValueOnce(Object.assign(new Error("message_not_in_streaming_state"), {
-        data: { error: "message_not_in_streaming_state" },
-      })),
+      append: vi.fn().mockRejectedValueOnce(
+        Object.assign(new Error("message_not_in_streaming_state"), {
+          data: { error: "message_not_in_streaming_state" },
+        }),
+      ),
       stop: vi.fn().mockResolvedValue(undefined),
     };
     const slackClient = createSlackClient([stream]);
 
-    mockAgentStream((async function* () {
-      yield { type: "text-delta", text: "Recovered fallback text." };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield { type: "text-delta", text: "Recovered fallback text." };
+      })(),
+    );
 
     await generateResponse(baseOptions(slackClient));
 
-    const mnisLogs = vi.mocked(logError).mock.calls.filter(
-      ([entry]) => entry.errorCode === "message_not_in_streaming_state",
-    );
+    const mnisLogs = vi
+      .mocked(logError)
+      .mock.calls.filter(([entry]) => entry.errorCode === "message_not_in_streaming_state");
     expect(mnisLogs).toHaveLength(1);
     expect(mnisLogs[0]?.[0]).toMatchObject({
       errorName: "MessageNotInStreamingState",
@@ -1329,61 +1428,70 @@ describe("generateResponse Slack stream handling", () => {
         }),
       ]),
     });
-    expect(slackClient.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
-      channel: "C123",
-      thread_ts: "1710000000.000000",
-      text: expect.stringContaining("Recovered fallback text."),
-    }));
+    expect(slackClient.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "C123",
+        thread_ts: "1710000000.000000",
+        text: expect.stringContaining("Recovered fallback text."),
+      }),
+    );
   });
 
   it("posts an interruption stub when the stream dies with an empty unsent buffer", async () => {
     const stream = {
-      append: vi.fn()
+      append: vi
+        .fn()
         .mockResolvedValueOnce(undefined) // intro text streams fine
-        .mockRejectedValueOnce(Object.assign(new Error("message_not_in_streaming_state"), {
-          data: { error: "message_not_in_streaming_state" },
-        })),
+        .mockRejectedValueOnce(
+          Object.assign(new Error("message_not_in_streaming_state"), {
+            data: { error: "message_not_in_streaming_state" },
+          }),
+        ),
       stop: vi.fn().mockResolvedValue(undefined),
     };
     const slackClient = createSlackClient([stream]);
 
-    mockAgentStream((async function* () {
-      yield { type: "text-delta", text: "Intro." };
-      yield {
-        type: "tool-call",
-        toolCallId: "call-1",
-        toolName: "run_command",
-        input: { command: "true" },
-      };
-      yield {
-        type: "tool-result",
-        toolCallId: "call-1",
-        toolName: "run_command",
-        output: { ok: true, exit_code: 0, stdout: "ok", stderr: "" },
-      };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield { type: "text-delta", text: "Intro." };
+        yield {
+          type: "tool-call",
+          toolCallId: "call-1",
+          toolName: "run_command",
+          input: { command: "true" },
+        };
+        yield {
+          type: "tool-result",
+          toolCallId: "call-1",
+          toolName: "run_command",
+          output: { ok: true, exit_code: 0, stdout: "ok", stderr: "" },
+        };
+      })(),
+    );
 
     await generateResponse(baseOptions(slackClient));
 
     // Everything visible already streamed before the freeze and the post-tool
     // tail is empty — the fallback must post a stub, not an empty block list.
-    expect(slackClient.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
-      channel: "C123",
-      thread_ts: "1710000000.000000",
-      text: "_Turn interrupted after 1 tool call — rerun?_",
-      blocks: expect.arrayContaining([
-        expect.objectContaining({
-          type: "section",
-          text: expect.objectContaining({
-            text: "_Turn interrupted after 1 tool call — rerun?_",
+    expect(slackClient.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "C123",
+        thread_ts: "1710000000.000000",
+        text: "_Turn interrupted after 1 tool call — rerun?_",
+        blocks: expect.arrayContaining([
+          expect.objectContaining({
+            type: "section",
+            text: expect.objectContaining({
+              text: "_Turn interrupted after 1 tool call — rerun?_",
+            }),
           }),
-        }),
-      ]),
-    }));
-
-    const mnisLogs = vi.mocked(logError).mock.calls.filter(
-      ([entry]) => entry.errorCode === "message_not_in_streaming_state",
+        ]),
+      }),
     );
+
+    const mnisLogs = vi
+      .mocked(logError)
+      .mock.calls.filter(([entry]) => entry.errorCode === "message_not_in_streaming_state");
     expect(mnisLogs).toHaveLength(1);
     expect(mnisLogs[0]?.[0]).toMatchObject({
       errorName: "MessageNotInStreamingState",
@@ -1393,31 +1501,37 @@ describe("generateResponse Slack stream handling", () => {
 
   it("does not record an error event when channel_type_not_supported fallback succeeds", async () => {
     const stream = {
-      append: vi.fn().mockRejectedValueOnce(Object.assign(new Error("channel_type_not_supported"), {
-        data: { error: "channel_type_not_supported" },
-      })),
+      append: vi.fn().mockRejectedValueOnce(
+        Object.assign(new Error("channel_type_not_supported"), {
+          data: { error: "channel_type_not_supported" },
+        }),
+      ),
       stop: vi.fn().mockResolvedValue(undefined),
     };
     const slackClient = createSlackClient([stream]);
 
-    mockAgentStream((async function* () {
-      yield { type: "text-delta", text: "Fallback delivered." };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield { type: "text-delta", text: "Fallback delivered." };
+      })(),
+    );
 
     await generateResponse({
       ...baseOptions(slackClient),
       channelId: "C_UNSUPPORTED_995",
     });
 
-    expect(slackClient.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
-      channel: "C_UNSUPPORTED_995",
-      thread_ts: "1710000000.000000",
-      text: expect.stringContaining("Fallback delivered."),
-    }));
-
-    const channelTypeLogs = vi.mocked(logError).mock.calls.filter(
-      ([entry]) => entry.errorCode === "channel_type_not_supported",
+    expect(slackClient.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "C_UNSUPPORTED_995",
+        thread_ts: "1710000000.000000",
+        text: expect.stringContaining("Fallback delivered."),
+      }),
     );
+
+    const channelTypeLogs = vi
+      .mocked(logError)
+      .mock.calls.filter(([entry]) => entry.errorCode === "channel_type_not_supported");
     expect(channelTypeLogs).toHaveLength(0);
   });
 
@@ -1428,14 +1542,16 @@ describe("generateResponse Slack stream handling", () => {
     };
     const slackClient = createSlackClient([stream]);
 
-    mockAgentStream((async function* () {
-      yield {
-        type: "tool-error",
-        toolCallId: "call-1",
-        toolName: "run_command",
-        error: new Error("sandbox died"),
-      };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield {
+          type: "tool-error",
+          toolCallId: "call-1",
+          toolName: "run_command",
+          error: new Error("sandbox died"),
+        };
+      })(),
+    );
 
     await generateResponse(baseOptions(slackClient));
 
@@ -1460,16 +1576,20 @@ describe("generateResponse Slack stream handling", () => {
     });
     expect(unexpectedStreamLogs).toHaveLength(0);
     expect(stream.stop).toHaveBeenCalledWith({
-      chunks: [expect.objectContaining({
-        type: "markdown_text",
-        text: expect.stringContaining("no output generated"),
-      })],
+      chunks: [
+        expect.objectContaining({
+          type: "markdown_text",
+          text: expect.stringContaining("no output generated"),
+        }),
+      ],
     });
-    expect(slackClient.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
-      channel: "C123",
-      thread_ts: "1710000000.000000",
-      text: "_I ran the tools but didn't get usable output back. Can you tell me what to retry?_",
-    }));
+    expect(slackClient.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        channel: "C123",
+        thread_ts: "1710000000.000000",
+        text: "_I ran the tools but didn't get usable output back. Can you tell me what to retry?_",
+      }),
+    );
   });
 
   it("recovers output from final result.text when streamed text deltas are missing", async () => {
@@ -1479,58 +1599,8 @@ describe("generateResponse Slack stream handling", () => {
     };
     const slackClient = createSlackClient([stream]);
 
-    mockAgentStream((async function* () {
-      yield {
-        type: "tool-call",
-        toolCallId: "call-1",
-        toolName: "run_command",
-        input: { command: "true" },
-      };
-      yield {
-        type: "tool-result",
-        toolCallId: "call-1",
-        toolName: "run_command",
-        output: { ok: true, exit_code: 0, stdout: "ok", stderr: "" },
-      };
-    })(), { text: "Recovered summary." });
-
-    await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
-      raw: "Recovered summary.",
-      alreadyPosted: true,
-    });
-
-    expect(stream.append).toHaveBeenCalledWith({
-      chunks: [expect.objectContaining({
-        type: "markdown_text",
-        text: "Recovered summary.",
-      })],
-    });
-    expect(vi.mocked(logError).mock.calls.some(
-      ([entry]) => entry.errorCode === "empty_completion_after_tools",
-    )).toBe(false);
-    expect(vi.mocked(logError).mock.calls.some(
-      ([entry]) => entry.errorCode === "empty_completion_relaunched",
-    )).toBe(false);
-  });
-
-  it("relaunches once with a synthetic user message after useful tool results produce no text", async () => {
-    const stream = {
-      append: vi.fn().mockResolvedValue(undefined),
-      stop: vi.fn().mockResolvedValue(undefined),
-    };
-    const slackClient = createSlackClient([stream]);
-    const responseMessages = [
-      {
-        role: "assistant",
-        content: [{ type: "tool-call", toolCallId: "call-1", toolName: "run_command", input: { command: "true" } }],
-      },
-      {
-        role: "tool",
-        content: [{ type: "tool-result", toolCallId: "call-1", toolName: "run_command", output: { ok: true } }],
-      },
-    ];
-    const streamMock = mockAgentStreams([
-      createAgentStreamResult((async function* () {
+    mockAgentStream(
+      (async function* () {
         yield {
           type: "tool-call",
           toolCallId: "call-1",
@@ -1543,10 +1613,88 @@ describe("generateResponse Slack stream handling", () => {
           toolName: "run_command",
           output: { ok: true, exit_code: 0, stdout: "ok", stderr: "" },
         };
-      })(), { responseMessages }),
-      createAgentStreamResult((async function* () {
-        yield { type: "text-delta", text: "The command succeeded." };
-      })()),
+      })(),
+      { text: "Recovered summary." },
+    );
+
+    await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
+      raw: "Recovered summary.",
+      alreadyPosted: true,
+    });
+
+    expect(stream.append).toHaveBeenCalledWith({
+      chunks: [
+        expect.objectContaining({
+          type: "markdown_text",
+          text: "Recovered summary.",
+        }),
+      ],
+    });
+    expect(
+      vi
+        .mocked(logError)
+        .mock.calls.some(([entry]) => entry.errorCode === "empty_completion_after_tools"),
+    ).toBe(false);
+    expect(
+      vi
+        .mocked(logError)
+        .mock.calls.some(([entry]) => entry.errorCode === "empty_completion_relaunched"),
+    ).toBe(false);
+  });
+
+  it("relaunches once with a synthetic user message after useful tool results produce no text", async () => {
+    const stream = {
+      append: vi.fn().mockResolvedValue(undefined),
+      stop: vi.fn().mockResolvedValue(undefined),
+    };
+    const slackClient = createSlackClient([stream]);
+    const responseMessages = [
+      {
+        role: "assistant",
+        content: [
+          {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "run_command",
+            input: { command: "true" },
+          },
+        ],
+      },
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "run_command",
+            output: { ok: true },
+          },
+        ],
+      },
+    ];
+    const streamMock = mockAgentStreams([
+      createAgentStreamResult(
+        (async function* () {
+          yield {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "run_command",
+            input: { command: "true" },
+          };
+          yield {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "run_command",
+            output: { ok: true, exit_code: 0, stdout: "ok", stderr: "" },
+          };
+        })(),
+        { responseMessages },
+      ),
+      createAgentStreamResult(
+        (async function* () {
+          yield { type: "text-delta", text: "The command succeeded." };
+        })(),
+      ),
     ]);
 
     await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
@@ -1559,12 +1707,15 @@ describe("generateResponse Slack stream handling", () => {
       messages: [
         { role: "user", content: "run a slow command" },
         ...responseMessages,
-        { role: "user", content: "(continue - you ended without responding. Summarize what you found.)" },
+        {
+          role: "user",
+          content: "(continue - you ended without responding. Summarize what you found.)",
+        },
       ],
     });
-    const relaunchLogs = vi.mocked(logError).mock.calls.filter(
-      ([entry]) => entry.errorCode === "empty_completion_relaunched",
-    );
+    const relaunchLogs = vi
+      .mocked(logError)
+      .mock.calls.filter(([entry]) => entry.errorCode === "empty_completion_relaunched");
     expect(relaunchLogs).toHaveLength(1);
     expect(relaunchLogs[0]?.[0]).toMatchObject({
       errorName: "EmptyCompletionRelaunched",
@@ -1586,20 +1737,22 @@ describe("generateResponse Slack stream handling", () => {
     };
     const slackClient = createSlackClient([stream]);
     const streamMock = mockAgentStreams([
-      createAgentStreamResult((async function* () {
-        yield {
-          type: "tool-call",
-          toolCallId: "call-1",
-          toolName: "run_command_detached",
-          input: { command: "pnpm test" },
-        };
-        yield {
-          type: "tool-result",
-          toolCallId: "call-1",
-          toolName: "run_command_detached",
-          output: { id: "abcdef12", pid: 4321, started_at: "2026-05-28T08:00:00.000Z" },
-        };
-      })()),
+      createAgentStreamResult(
+        (async function* () {
+          yield {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "run_command_detached",
+            input: { command: "pnpm test" },
+          };
+          yield {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "run_command_detached",
+            output: { id: "abcdef12", pid: 4321, started_at: "2026-05-28T08:00:00.000Z" },
+          };
+        })(),
+      ),
     ]);
 
     await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
@@ -1608,17 +1761,23 @@ describe("generateResponse Slack stream handling", () => {
     });
 
     expect(streamMock).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(logError).mock.calls.some(
-      ([entry]) => entry.errorCode === "empty_completion_relaunched",
-    )).toBe(false);
-    expect(vi.mocked(logError).mock.calls.some(
-      ([entry]) => entry.errorCode === "empty_completion_after_tools",
-    )).toBe(false);
+    expect(
+      vi
+        .mocked(logError)
+        .mock.calls.some(([entry]) => entry.errorCode === "empty_completion_relaunched"),
+    ).toBe(false);
+    expect(
+      vi
+        .mocked(logError)
+        .mock.calls.some(([entry]) => entry.errorCode === "empty_completion_after_tools"),
+    ).toBe(false);
     expect(stream.append).toHaveBeenCalledWith({
-      chunks: [expect.objectContaining({
-        type: "markdown_text",
-        text: "Started the detached command. I'll continue when it finishes.",
-      })],
+      chunks: [
+        expect.objectContaining({
+          type: "markdown_text",
+          text: "Started the detached command. I'll continue when it finishes.",
+        }),
+      ],
     });
   });
 
@@ -1629,38 +1788,48 @@ describe("generateResponse Slack stream handling", () => {
     };
     const slackClient = createSlackClient([stream]);
     const streamMock = mockAgentStreams([
-      createAgentStreamResult((async function* () {
-        yield {
-          type: "tool-call",
-          toolCallId: "call-1",
-          toolName: "run_command",
-          input: { command: "true" },
-        };
-        yield {
-          type: "tool-result",
-          toolCallId: "call-1",
-          toolName: "run_command",
-          output: { ok: true, exit_code: 0, stdout: "ok", stderr: "" },
-        };
-      })()),
-      createAgentStreamResult((async function* () {
-        // Empty second attempt.
-      })()),
+      createAgentStreamResult(
+        (async function* () {
+          yield {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "run_command",
+            input: { command: "true" },
+          };
+          yield {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "run_command",
+            output: { ok: true, exit_code: 0, stdout: "ok", stderr: "" },
+          };
+        })(),
+      ),
+      createAgentStreamResult(
+        (async function* () {
+          // Empty second attempt.
+        })(),
+      ),
     ]);
 
     await generateResponse(baseOptions(slackClient));
 
     expect(streamMock).toHaveBeenCalledTimes(2);
     const logErrorMock = vi.mocked(logError);
-    expect(logErrorMock.mock.calls.filter(
-      ([entry]) => entry.errorCode === "empty_completion_relaunched",
-    )).toHaveLength(1);
-    expect(logErrorMock.mock.calls.filter(
-      ([entry]) => entry.errorCode === "empty_completion_after_tools",
-    )).toHaveLength(1);
-    expect(slackClient.chat.postMessage).toHaveBeenCalledWith(expect.objectContaining({
-      text: "_I ran the tools but didn't get usable output back. Can you tell me what to retry?_",
-    }));
+    expect(
+      logErrorMock.mock.calls.filter(
+        ([entry]) => entry.errorCode === "empty_completion_relaunched",
+      ),
+    ).toHaveLength(1);
+    expect(
+      logErrorMock.mock.calls.filter(
+        ([entry]) => entry.errorCode === "empty_completion_after_tools",
+      ),
+    ).toHaveLength(1);
+    expect(slackClient.chat.postMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        text: "_I ran the tools but didn't get usable output back. Can you tell me what to retry?_",
+      }),
+    );
   });
 
   it("logs a supersede observability row but never relaunches or logs empty completions when superseded", async () => {
@@ -1673,21 +1842,25 @@ describe("generateResponse Slack stream handling", () => {
       new Error("Invocation test-invocation was superseded by a newer message"),
       { name: "InvocationSupersededError", invocationId: "test-invocation" },
     );
-    const streamMock = vi.fn().mockImplementation(async (callOptions: any) => createAgentStreamResult((async function* () {
-      yield {
-        type: "tool-call",
-        toolCallId: "call-1",
-        toolName: "run_command",
-        input: { command: "true" },
-      };
-      yield {
-        type: "tool-result",
-        toolCallId: "call-1",
-        toolName: "run_command",
-        output: { ok: true, exit_code: 0, stdout: "ok", stderr: "" },
-      };
-      callOptions.onError?.({ error: supersededError });
-    })()));
+    const streamMock = vi.fn().mockImplementation(async (callOptions: any) =>
+      createAgentStreamResult(
+        (async function* () {
+          yield {
+            type: "tool-call",
+            toolCallId: "call-1",
+            toolName: "run_command",
+            input: { command: "true" },
+          };
+          yield {
+            type: "tool-result",
+            toolCallId: "call-1",
+            toolName: "run_command",
+            output: { ok: true, exit_code: 0, stdout: "ok", stderr: "" },
+          };
+          callOptions.onError?.({ error: supersededError });
+        })(),
+      ),
+    );
     agentMocks.createInteractiveAgent.mockResolvedValue({
       agent: { stream: streamMock },
       tools: {
@@ -1706,15 +1879,21 @@ describe("generateResponse Slack stream handling", () => {
     });
 
     expect(streamMock).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(logError).mock.calls.some(
-      ([entry]) => entry.errorCode === "empty_completion_relaunched",
-    )).toBe(false);
-    expect(vi.mocked(logError).mock.calls.some(
-      ([entry]) => entry.errorCode === "empty_completion_after_tools",
-    )).toBe(false);
-    expect(vi.mocked(logError).mock.calls.some(
-      ([entry]) => entry.errorCode === "stream_on_error_callback",
-    )).toBe(false);
+    expect(
+      vi
+        .mocked(logError)
+        .mock.calls.some(([entry]) => entry.errorCode === "empty_completion_relaunched"),
+    ).toBe(false);
+    expect(
+      vi
+        .mocked(logError)
+        .mock.calls.some(([entry]) => entry.errorCode === "empty_completion_after_tools"),
+    ).toBe(false);
+    expect(
+      vi
+        .mocked(logError)
+        .mock.calls.some(([entry]) => entry.errorCode === "stream_on_error_callback"),
+    ).toBe(false);
     expect(vi.mocked(logger.info)).toHaveBeenCalledWith(
       "Stream onError ignored — invocation superseded",
       expect.objectContaining({
@@ -1724,9 +1903,9 @@ describe("generateResponse Slack stream handling", () => {
 
     // Issue #1121: supersede recovery is preserved, but the event itself is
     // now always visible in error_events with the abort reason.
-    const supersededLogs = vi.mocked(logError).mock.calls.filter(
-      ([entry]) => entry.errorCode === "superseded_while_streaming",
-    );
+    const supersededLogs = vi
+      .mocked(logError)
+      .mock.calls.filter(([entry]) => entry.errorCode === "superseded_while_streaming");
     expect(supersededLogs).toHaveLength(1);
     expect(supersededLogs[0]?.[0]).toMatchObject({
       errorName: "InvocationSupersededDuringStream",
@@ -1741,30 +1920,35 @@ describe("generateResponse Slack stream handling", () => {
     // newer_message has no native Slack indicator — the markdown note is
     // still appended on the stream close (issue #1355 removes it only for
     // "stopped", where Slack renders its own grey "(stopped)").
-    expect(stream.stop).toHaveBeenCalledWith(expect.objectContaining({
-      chunks: expect.arrayContaining([
-        expect.objectContaining({
-          type: "markdown_text",
-          text: expect.stringContaining("_[interrupted — new message received]_"),
-        }),
-      ]),
-    }));
+    expect(stream.stop).toHaveBeenCalledWith(
+      expect.objectContaining({
+        chunks: expect.arrayContaining([
+          expect.objectContaining({
+            type: "markdown_text",
+            text: expect.stringContaining("_[interrupted — new message received]_"),
+          }),
+        ]),
+      }),
+    );
   });
 
   it("skips the postMessage fallback stub when Slack already halted the bubble with its native stopped indicator (issue #1355)", async () => {
     const streamer = {
       // Slack refuses every append once the user pressed Stop.
-      append: vi.fn().mockRejectedValue(Object.assign(
-        new Error("An API error occurred: stopped_by_user"),
-        { data: { ok: false, error: "stopped_by_user" } },
-      )),
+      append: vi.fn().mockRejectedValue(
+        Object.assign(new Error("An API error occurred: stopped_by_user"), {
+          data: { ok: false, error: "stopped_by_user" },
+        }),
+      ),
       stop: vi.fn().mockResolvedValue(undefined),
     };
     const slackClient = createSlackClient([streamer]);
 
-    mockAgentStream((async function* () {
-      yield { type: "text-delta", text: "Partial answer the user stopped." };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield { type: "text-delta", text: "Partial answer the user stopped." };
+      })(),
+    );
 
     const result = await generateResponse(baseOptions(slackClient));
 
@@ -1797,22 +1981,26 @@ describe("generateResponse Slack stream handling", () => {
       // A model call that starts a tool and then hangs until the abort
       // signal fires — simulating a 120s sandbox command in flight.
       const streamMock = vi.fn().mockImplementation(async (callOptions: any) =>
-        createAgentStreamResult((async function* () {
-          yield { type: "text-delta", text: "Kicking off a slow command." };
-          yield {
-            type: "tool-call",
-            toolCallId: "call-1",
-            toolName: "run_command",
-            input: { command: "sleep 120" },
-          };
-          await new Promise<never>((_, reject) => {
-            callOptions.abortSignal.addEventListener("abort", () =>
-              reject(Object.assign(new Error("This operation was aborted"), {
-                name: "AbortError",
-              })),
-            );
-          });
-        })()),
+        createAgentStreamResult(
+          (async function* () {
+            yield { type: "text-delta", text: "Kicking off a slow command." };
+            yield {
+              type: "tool-call",
+              toolCallId: "call-1",
+              toolName: "run_command",
+              input: { command: "sleep 120" },
+            };
+            await new Promise<never>((_, reject) => {
+              callOptions.abortSignal.addEventListener("abort", () =>
+                reject(
+                  Object.assign(new Error("This operation was aborted"), {
+                    name: "AbortError",
+                  }),
+                ),
+              );
+            });
+          })(),
+        ),
       );
       agentMocks.createInteractiveAgent.mockResolvedValue({
         agent: { stream: streamMock },
@@ -1851,16 +2039,18 @@ describe("generateResponse Slack stream handling", () => {
 
       // The abort resolved to the superseded outcome — never a raw abort
       // tombstone or a generic stream error.
-      const supersededLogs = vi.mocked(logError).mock.calls.filter(
-        ([entry]) => entry.errorCode === "superseded_while_streaming",
-      );
+      const supersededLogs = vi
+        .mocked(logError)
+        .mock.calls.filter(([entry]) => entry.errorCode === "superseded_while_streaming");
       expect(supersededLogs).toHaveLength(1);
       expect(supersededLogs[0]?.[0]).toMatchObject({
         context: expect.objectContaining({ abortReason: "superseded" }),
       });
-      expect(vi.mocked(logError).mock.calls.some(
-        ([entry]) => entry.errorCode === "stream_aborted_by_watchdog",
-      )).toBe(false);
+      expect(
+        vi
+          .mocked(logError)
+          .mock.calls.some(([entry]) => entry.errorCode === "stream_aborted_by_watchdog"),
+      ).toBe(false);
 
       // …but NOTHING delivered to Slack carries our own `_[stopped]_`: Slack
       // renders the native grey "(stopped)" indicator on the halted bubble
@@ -1894,22 +2084,24 @@ describe("generateResponse Slack stream handling", () => {
     };
     const slackClient = createSlackClient([firstStream, secondStream]);
 
-    mockAgentStream((async function* () {
-      yield { type: "text-delta", text: "Starting the job.\n" };
-      yield {
-        type: "tool-call",
-        toolCallId: "call-1",
-        toolName: "run_command",
-        input: { command: "sleep 200", timeout_seconds: 200 },
-      };
-      await finishTool.promise;
-      yield {
-        type: "tool-error",
-        toolCallId: "call-1",
-        toolName: "run_command",
-        error: new Error("sandbox died"),
-      };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield { type: "text-delta", text: "Starting the job.\n" };
+        yield {
+          type: "tool-call",
+          toolCallId: "call-1",
+          toolName: "run_command",
+          input: { command: "sleep 200", timeout_seconds: 200 },
+        };
+        await finishTool.promise;
+        yield {
+          type: "tool-error",
+          toolCallId: "call-1",
+          toolName: "run_command",
+          error: new Error("sandbox died"),
+        };
+      })(),
+    );
 
     const responsePromise = generateResponse(baseOptions(slackClient));
     await vi.advanceTimersByTimeAsync(0);
@@ -1950,10 +2142,12 @@ describe("generateResponse Slack stream handling", () => {
     });
     expect(aggregateLogs).toHaveLength(0);
     expect(secondStream.append).toHaveBeenCalledWith({
-      chunks: [expect.objectContaining({
-        type: "markdown_text",
-        text: expect.stringContaining("no output generated in continuation"),
-      })],
+      chunks: [
+        expect.objectContaining({
+          type: "markdown_text",
+          text: expect.stringContaining("no output generated in continuation"),
+        }),
+      ],
     });
   });
 
@@ -1978,7 +2172,9 @@ describe("generateResponse Slack stream handling", () => {
                 reject(abortError);
                 return;
               }
-              options.abortSignal.addEventListener("abort", () => reject(abortError), { once: true });
+              options.abortSignal.addEventListener("abort", () => reject(abortError), {
+                once: true,
+              });
             });
           })(),
           usage: Promise.resolve({ inputTokens: 1, outputTokens: 0 }),
@@ -2001,9 +2197,9 @@ describe("generateResponse Slack stream handling", () => {
 
     await responseExpectation;
 
-    const inactivityLogs = vi.mocked(logError).mock.calls.filter(
-      ([entry]) => entry.errorCode === "stream_inactivity_abort",
-    );
+    const inactivityLogs = vi
+      .mocked(logError)
+      .mock.calls.filter(([entry]) => entry.errorCode === "stream_inactivity_abort");
     expect(inactivityLogs).toHaveLength(1);
     expect(inactivityLogs[0]?.[0]).toMatchObject({
       errorName: "StreamInactivityAbort",
@@ -2014,9 +2210,9 @@ describe("generateResponse Slack stream handling", () => {
       }),
     });
 
-    const abortLogs = vi.mocked(logError).mock.calls.filter(
-      ([entry]) => entry.errorCode === "stream_aborted_by_watchdog",
-    );
+    const abortLogs = vi
+      .mocked(logError)
+      .mock.calls.filter(([entry]) => entry.errorCode === "stream_aborted_by_watchdog");
     expect(abortLogs).toHaveLength(1);
     expect(abortLogs[0]?.[0]).toMatchObject({
       errorName: "StreamAborted",
@@ -2062,9 +2258,11 @@ describe("generateResponse supersede check at final delivery (issue #1342)", () 
     };
     const slackClient = createSlackClient([stream]);
 
-    mockAgentStream((async function* () {
-      yield { type: "text-delta", text: "Old answer that must not be posted." };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield { type: "text-delta", text: "Old answer that must not be posted." };
+      })(),
+    );
 
     // A follow-up message claimed the lock while the final step was streaming,
     // so by the time final delivery runs this invocation is no longer current.
@@ -2107,9 +2305,9 @@ describe("generateResponse supersede check at final delivery (issue #1342)", () 
         deliveryPath: "stream_stop",
       }),
     );
-    const supersedeLogs = vi.mocked(logError).mock.calls.filter(
-      ([entry]) => entry.errorCode === "superseded_at_final_delivery",
-    );
+    const supersedeLogs = vi
+      .mocked(logError)
+      .mock.calls.filter(([entry]) => entry.errorCode === "superseded_at_final_delivery");
     expect(supersedeLogs).toHaveLength(1);
     expect(supersedeLogs[0]?.[0]).toMatchObject({
       errorName: "InvocationSupersededAtFinalDelivery",
@@ -2123,16 +2321,20 @@ describe("generateResponse supersede check at final delivery (issue #1342)", () 
 
   it("skips the postMessage fallback when superseded right before delivery", async () => {
     const stream = {
-      append: vi.fn().mockRejectedValueOnce(Object.assign(new Error("boom"), {
-        data: { error: "some_unexpected_error" },
-      })),
+      append: vi.fn().mockRejectedValueOnce(
+        Object.assign(new Error("boom"), {
+          data: { error: "some_unexpected_error" },
+        }),
+      ),
       stop: vi.fn().mockResolvedValue(undefined),
     };
     const slackClient = createSlackClient([stream]);
 
-    mockAgentStream((async function* () {
-      yield { type: "text-delta", text: "Fallback answer that must not be posted." };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield { type: "text-delta", text: "Fallback answer that must not be posted." };
+      })(),
+    );
 
     invocationLockMocks.isInvocationCurrent.mockResolvedValue(false);
 
@@ -2145,9 +2347,9 @@ describe("generateResponse supersede check at final delivery (issue #1342)", () 
     // The fallback text is never posted — no postMessage with real content.
     expect(slackClient.chat.postMessage).not.toHaveBeenCalled();
 
-    const supersedeLogs = vi.mocked(logError).mock.calls.filter(
-      ([entry]) => entry.errorCode === "superseded_at_final_delivery",
-    );
+    const supersedeLogs = vi
+      .mocked(logError)
+      .mock.calls.filter(([entry]) => entry.errorCode === "superseded_at_final_delivery");
     expect(supersedeLogs).toHaveLength(1);
     expect(supersedeLogs[0]?.[0]).toMatchObject({
       errorName: "InvocationSupersededAtFinalDelivery",
@@ -2166,27 +2368,31 @@ describe("generateResponse supersede check at final delivery (issue #1342)", () 
     };
     const slackClient = createSlackClient([stream]);
 
-    mockAgentStream((async function* () {
-      yield { type: "text-delta", text: "Current answer." };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield { type: "text-delta", text: "Current answer." };
+      })(),
+    );
 
-    await expect(generateResponse({
-      ...baseOptions(slackClient),
-      invocationId: "inv-1342-current",
-    })).resolves.toMatchObject({
+    await expect(
+      generateResponse({
+        ...baseOptions(slackClient),
+        invocationId: "inv-1342-current",
+      }),
+    ).resolves.toMatchObject({
       raw: "Current answer.",
       alreadyPosted: true,
     });
 
     // Happy-path finalize still carries the feedback block.
-    expect(stream.stop).toHaveBeenCalledWith(expect.objectContaining({
-      blocks: expect.arrayContaining([
-        expect.objectContaining({ type: "context_actions" }),
-      ]),
-    }));
-    const supersedeLogs = vi.mocked(logError).mock.calls.filter(
-      ([entry]) => entry.errorCode === "superseded_at_final_delivery",
+    expect(stream.stop).toHaveBeenCalledWith(
+      expect.objectContaining({
+        blocks: expect.arrayContaining([expect.objectContaining({ type: "context_actions" })]),
+      }),
     );
+    const supersedeLogs = vi
+      .mocked(logError)
+      .mock.calls.filter(([entry]) => entry.errorCode === "superseded_at_final_delivery");
     expect(supersedeLogs).toHaveLength(0);
   });
 });
@@ -2210,16 +2416,20 @@ describe("generateResponse turn markers (stream-death watchdog, issue #1109)", (
     };
     const slackClient = createSlackClient([stream]);
 
-    mockAgentStream((async function* () {
-      yield { type: "text-delta", text: "All done." };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield { type: "text-delta", text: "All done." };
+      })(),
+    );
 
-    await expect(generateResponse({
-      ...baseOptions(slackClient),
-      invocationId: "inv-clean-1",
-      messageTs: "1710000001.000100",
-      context: { userId: "U123", workspaceId: "ws-1" },
-    })).resolves.toMatchObject({
+    await expect(
+      generateResponse({
+        ...baseOptions(slackClient),
+        invocationId: "inv-clean-1",
+        messageTs: "1710000001.000100",
+        context: { userId: "U123", workspaceId: "ws-1" },
+      }),
+    ).resolves.toMatchObject({
       raw: "All done.",
       alreadyPosted: true,
     });
@@ -2252,9 +2462,11 @@ describe("generateResponse turn markers (stream-death watchdog, issue #1109)", (
       agent: {
         stream: vi.fn().mockImplementation(async () => {
           order.push("stream");
-          return createAgentStreamResult((async function* () {
-            yield { type: "text-delta", text: "ok" };
-          })());
+          return createAgentStreamResult(
+            (async function* () {
+              yield { type: "text-delta", text: "ok" };
+            })(),
+          );
         }),
       },
       tools: {},
@@ -2275,19 +2487,23 @@ describe("generateResponse turn markers (stream-death watchdog, issue #1109)", (
     };
     const slackClient = createSlackClient([stream]);
 
-    mockAgentStream((async function* () {
-      yield {
-        type: "tool-input-start",
-        toolCallId: "call-1",
-        toolName: "run_command",
-      };
-      throw new Error("tool input failed");
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield {
+          type: "tool-input-start",
+          toolCallId: "call-1",
+          toolName: "run_command",
+        };
+        throw new Error("tool input failed");
+      })(),
+    );
 
-    await expect(generateResponse({
-      ...baseOptions(slackClient),
-      invocationId: "inv-fail-1",
-    })).rejects.toThrow("tool input failed");
+    await expect(
+      generateResponse({
+        ...baseOptions(slackClient),
+        invocationId: "inv-fail-1",
+      }),
+    ).rejects.toThrow("tool input failed");
 
     // The error propagates to the pipeline catch (which posts a graceful
     // message), but the marker MUST already be terminal so the watchdog
@@ -2306,19 +2522,26 @@ describe("generateResponse turn markers (stream-death watchdog, issue #1109)", (
 
     agentMocks.createInteractiveAgent.mockResolvedValue({
       agent: {
-        stream: vi.fn().mockResolvedValue(createAgentStreamResult((async function* () {
-          throw new InvocationSupersededError("inv-superseded-1");
-        })())),
+        stream: vi.fn().mockResolvedValue(
+          createAgentStreamResult(
+            // biome-ignore lint/correctness/useYield: a stream that fails before emitting anything.
+            (async function* () {
+              throw new InvocationSupersededError("inv-superseded-1");
+            })(),
+          ),
+        ),
       },
       tools: {},
       modelId: "test-model",
       getStepModelIds: () => ["test-model"],
     });
 
-    await expect(generateResponse({
-      ...baseOptions(slackClient),
-      invocationId: "inv-superseded-1",
-    })).resolves.toMatchObject({ interrupted: true });
+    await expect(
+      generateResponse({
+        ...baseOptions(slackClient),
+        invocationId: "inv-superseded-1",
+      }),
+    ).resolves.toMatchObject({ interrupted: true });
 
     expect(turnMarkerMocks.finishTurnMarker).toHaveBeenCalledTimes(1);
     expect(turnMarkerMocks.finishTurnMarker).toHaveBeenCalledWith("inv-superseded-1", "completed");
@@ -2327,15 +2550,19 @@ describe("generateResponse turn markers (stream-death watchdog, issue #1109)", (
   it("does not track markers for headless turns", async () => {
     const slackClient = createSlackClient([]);
 
-    mockAgentStream((async function* () {
-      yield { type: "text-delta", text: "Headless output." };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield { type: "text-delta", text: "Headless output." };
+      })(),
+    );
 
-    await expect(generateResponse({
-      ...baseOptions(slackClient),
-      invocationId: "inv-headless-1",
-      isHeadless: true,
-    })).resolves.toMatchObject({
+    await expect(
+      generateResponse({
+        ...baseOptions(slackClient),
+        invocationId: "inv-headless-1",
+        isHeadless: true,
+      }),
+    ).resolves.toMatchObject({
       raw: "Headless output.",
       alreadyPosted: true,
     });
@@ -2380,7 +2607,11 @@ describe("generateResponse duplicate final message suppression (issue #1343)", (
         type: "tool-result",
         toolCallId: "call-post-1",
         toolName: "send_thread_reply",
-        output: { ok: true, message: "Reply sent in thread in #bugs", timestamp: "1710000009.000000" },
+        output: {
+          ok: true,
+          message: "Reply sent in thread in #bugs",
+          timestamp: "1710000009.000000",
+        },
       };
       yield { type: "text-delta", text: finalText };
     })();
@@ -2408,11 +2639,13 @@ describe("generateResponse duplicate final message suppression (issue #1343)", (
     expect(appendedPayloads).not.toContain("Posted in-thread");
     expect(slackClient.chat.postMessage).not.toHaveBeenCalled();
 
-    expect(logError).toHaveBeenCalledWith(expect.objectContaining({
-      errorName: "DuplicateFinalMessageSuppressed",
-      errorCode: "duplicate_final_message_suppressed",
-      channelId: "C123",
-    }));
+    expect(logError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorName: "DuplicateFinalMessageSuppressed",
+        errorCode: "duplicate_final_message_suppressed",
+        channelId: "C123",
+      }),
+    );
   });
 
   it("still delivers a final message that does NOT duplicate the tool post", async () => {
@@ -2436,9 +2669,9 @@ describe("generateResponse duplicate final message suppression (issue #1343)", (
     expect(appendedPayloads).toContain("opened issue #1344");
     expect(streamer.stop).toHaveBeenCalledTimes(1);
 
-    const suppressionLogs = vi.mocked(logError).mock.calls.filter(
-      ([entry]) => entry.errorCode === "duplicate_final_message_suppressed",
-    );
+    const suppressionLogs = vi
+      .mocked(logError)
+      .mock.calls.filter(([entry]) => entry.errorCode === "duplicate_final_message_suppressed");
     expect(suppressionLogs).toHaveLength(0);
   });
 
@@ -2449,21 +2682,27 @@ describe("generateResponse duplicate final message suppression (issue #1343)", (
     };
     const slackClient = createSlackClient([streamer]);
 
-    mockAgentStream((async function* () {
-      yield {
-        type: "tool-call",
-        toolCallId: "call-post-2",
-        toolName: "send_thread_reply",
-        input: { channel: "C0OTHER99", thread_ts: "1700000000.000042", message: "elsewhere" },
-      };
-      yield {
-        type: "tool-result",
-        toolCallId: "call-post-2",
-        toolName: "send_thread_reply",
-        output: { ok: true, message: "Reply sent in thread in #other", timestamp: "1700000001.000000" },
-      };
-      yield { type: "text-delta", text: "Cross-posted the fix to #other as requested." };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield {
+          type: "tool-call",
+          toolCallId: "call-post-2",
+          toolName: "send_thread_reply",
+          input: { channel: "C0OTHER99", thread_ts: "1700000000.000042", message: "elsewhere" },
+        };
+        yield {
+          type: "tool-result",
+          toolCallId: "call-post-2",
+          toolName: "send_thread_reply",
+          output: {
+            ok: true,
+            message: "Reply sent in thread in #other",
+            timestamp: "1700000001.000000",
+          },
+        };
+        yield { type: "text-delta", text: "Cross-posted the fix to #other as requested." };
+      })(),
+    );
 
     await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
       raw: "Cross-posted the fix to #other as requested.",
@@ -2471,10 +2710,12 @@ describe("generateResponse duplicate final message suppression (issue #1343)", (
     });
 
     expect(streamer.append).toHaveBeenCalledWith({
-      chunks: [expect.objectContaining({
-        type: "markdown_text",
-        text: "Cross-posted the fix to #other as requested.",
-      })],
+      chunks: [
+        expect.objectContaining({
+          type: "markdown_text",
+          text: "Cross-posted the fix to #other as requested.",
+        }),
+      ],
     });
   });
 
@@ -2491,9 +2732,11 @@ describe("generateResponse duplicate final message suppression (issue #1343)", (
 
     // The only undelivered content was the duplicate — no fallback post.
     expect(slackClient.chat.postMessage).not.toHaveBeenCalled();
-    expect(logError).toHaveBeenCalledWith(expect.objectContaining({
-      errorCode: "duplicate_final_message_suppressed",
-    }));
+    expect(logError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorCode: "duplicate_final_message_suppressed",
+      }),
+    );
   });
 });
 
@@ -2517,12 +2760,14 @@ describe("generateResponse deferred stream creation (issue #1012)", () => {
     const slackClient = createSlackClient([streamer]);
 
     let chatStreamCallsBeforeFirstDelta = -1;
-    mockAgentStream((async function* () {
-      // Simulates the post-tool reasoning phase: generation has started but
-      // no content exists yet — there must be no stream (no empty bubble).
-      chatStreamCallsBeforeFirstDelta = slackClient.chatStream.mock.calls.length;
-      yield { type: "text-delta", text: "Here is the answer." };
-    })());
+    mockAgentStream(
+      (async function* () {
+        // Simulates the post-tool reasoning phase: generation has started but
+        // no content exists yet — there must be no stream (no empty bubble).
+        chatStreamCallsBeforeFirstDelta = slackClient.chatStream.mock.calls.length;
+        yield { type: "text-delta", text: "Here is the answer." };
+      })(),
+    );
 
     await expect(generateResponse(baseOptions(slackClient))).resolves.toMatchObject({
       raw: "Here is the answer.",
@@ -2532,10 +2777,12 @@ describe("generateResponse deferred stream creation (issue #1012)", () => {
     expect(chatStreamCallsBeforeFirstDelta).toBe(0);
     expect(slackClient.chatStream).toHaveBeenCalledTimes(1);
     expect(streamer.append).toHaveBeenCalledWith({
-      chunks: [expect.objectContaining({
-        type: "markdown_text",
-        text: "Here is the answer.",
-      })],
+      chunks: [
+        expect.objectContaining({
+          type: "markdown_text",
+          text: "Here is the answer.",
+        }),
+      ],
     });
     expect(streamer.stop).toHaveBeenCalledTimes(1);
   });
@@ -2573,22 +2820,24 @@ describe("generateResponse deferred stream creation (issue #1012)", () => {
     };
     const slackClient = createSlackClient([firstStream, secondStream]);
 
-    mockAgentStream((async function* () {
-      yield {
-        type: "tool-call",
-        toolCallId: "call-1",
-        toolName: "run_command",
-        input: { command: "sleep 300", timeout_seconds: 300 },
-      };
-      await finishTool.promise;
-      yield {
-        type: "tool-result",
-        toolCallId: "call-1",
-        toolName: "run_command",
-        output: { ok: true, exit_code: 0, stdout: "", stderr: "" },
-      };
-      yield { type: "text-delta", text: "Done." };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield {
+          type: "tool-call",
+          toolCallId: "call-1",
+          toolName: "run_command",
+          input: { command: "sleep 300", timeout_seconds: 300 },
+        };
+        await finishTool.promise;
+        yield {
+          type: "tool-result",
+          toolCallId: "call-1",
+          toolName: "run_command",
+          output: { ok: true, exit_code: 0, stdout: "", stderr: "" },
+        };
+        yield { type: "text-delta", text: "Done." };
+      })(),
+    );
 
     const responsePromise = generateResponse(baseOptions(slackClient));
     await vi.advanceTimersByTimeAsync(0);
@@ -2613,11 +2862,13 @@ describe("generateResponse deferred stream creation (issue #1012)", () => {
     // Real content (the tool result card) finally created the second stream.
     expect(slackClient.chatStream).toHaveBeenCalledTimes(2);
     expect(secondStream.append).toHaveBeenCalledWith({
-      chunks: [expect.objectContaining({
-        type: "task_update",
-        id: "call-1",
-        status: "complete",
-      })],
+      chunks: [
+        expect.objectContaining({
+          type: "task_update",
+          id: "call-1",
+          status: "complete",
+        }),
+      ],
     });
   });
 
@@ -2630,15 +2881,17 @@ describe("generateResponse deferred stream creation (issue #1012)", () => {
     const glmLeak =
       "<tool_call>run_command<arg_key>command</arg_key><arg_value>cat /tmp/lf_traces.json</arg_value></tool_call>";
 
-    mockAgentStream((async function* () {
-      yield { type: "text-delta", text: `I'll check the traces.\n${glmLeak}` };
-      yield {
-        type: "tool-call",
-        toolCallId: "call-xml",
-        toolName: glmLeak,
-        input: {},
-      };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield { type: "text-delta", text: `I'll check the traces.\n${glmLeak}` };
+        yield {
+          type: "tool-call",
+          toolCallId: "call-xml",
+          toolName: glmLeak,
+          input: {},
+        };
+      })(),
+    );
 
     const result = await generateResponse(baseOptions(slackClient));
 
@@ -2657,9 +2910,11 @@ describe("generateResponse deferred stream creation (issue #1012)", () => {
     expect(markdown).not.toContain("<arg_key>");
     expect(posted.some((chunk: any) => chunk.type === "task_update")).toBe(false);
 
-    expect(vi.mocked(logError).mock.calls.some(
-      ([params]) => params.errorCode === "tool_call_markup_leaked",
-    )).toBe(true);
+    expect(
+      vi
+        .mocked(logError)
+        .mock.calls.some(([params]) => params.errorCode === "tool_call_markup_leaked"),
+    ).toBe(true);
   });
 
   it("strips bare tool-name fragments like _history from Slack text (issue #1524)", async () => {
@@ -2669,12 +2924,14 @@ describe("generateResponse deferred stream creation (issue #1012)", () => {
     };
     const slackClient = createSlackClient([streamer]);
 
-    mockAgentStream((async function* () {
-      yield { type: "text-delta", text: "I'll look at the channel.\n" };
-      yield { type: "text-delta", text: "_history" };
-      yield { type: "text-delta", text: "\nread_channel" };
-      yield { type: "text-delta", text: "_history\nThat's the latest." };
-    })());
+    mockAgentStream(
+      (async function* () {
+        yield { type: "text-delta", text: "I'll look at the channel.\n" };
+        yield { type: "text-delta", text: "_history" };
+        yield { type: "text-delta", text: "\nread_channel" };
+        yield { type: "text-delta", text: "_history\nThat's the latest." };
+      })(),
+    );
 
     const result = await generateResponse(baseOptions(slackClient));
 
@@ -2701,17 +2958,19 @@ describe("generateResponse deferred stream creation (issue #1012)", () => {
     };
     const slackClient = createSlackClient([streamer]);
 
-    mockAgentStream((async function* () {
-      for (let i = 0; i < 5; i++) {
-        yield {
-          type: "tool-error",
-          toolCallId: `fail-${i}`,
-          toolName: "archive_emails",
-          error: new Error("nope"),
-        };
-      }
-      yield { type: "text-delta", text: "should never reach Slack" };
-    })());
+    mockAgentStream(
+      (async function* () {
+        for (let i = 0; i < 5; i++) {
+          yield {
+            type: "tool-error",
+            toolCallId: `fail-${i}`,
+            toolName: "archive_emails",
+            error: new Error("nope"),
+          };
+        }
+        yield { type: "text-delta", text: "should never reach Slack" };
+      })(),
+    );
 
     const result = await generateResponse(baseOptions(slackClient));
 
@@ -2720,9 +2979,9 @@ describe("generateResponse deferred stream creation (issue #1012)", () => {
     expect(result.raw).toContain("5 tools in a row failed");
     expect(result.raw).not.toContain("should never reach Slack");
 
-    const thrashLogs = vi.mocked(logError).mock.calls.filter(
-      ([params]) => params.errorCode === "tool_thrash_breaker",
-    );
+    const thrashLogs = vi
+      .mocked(logError)
+      .mock.calls.filter(([params]) => params.errorCode === "tool_thrash_breaker");
     expect(thrashLogs).toHaveLength(1);
     expect(thrashLogs[0][0]).toMatchObject({
       errorName: "ToolThrashBreaker",
@@ -2748,17 +3007,19 @@ describe("generateResponse deferred stream creation (issue #1012)", () => {
     };
     const slackClient = createSlackClient([streamer]);
 
-    mockAgentStream((async function* () {
-      for (let i = 0; i < 41; i++) {
-        yield {
-          type: "tool-call",
-          toolCallId: `cap-${i}`,
-          toolName: "read_canvas",
-          input: {},
-        };
-      }
-      yield { type: "text-delta", text: "should never reach Slack" };
-    })());
+    mockAgentStream(
+      (async function* () {
+        for (let i = 0; i < 41; i++) {
+          yield {
+            type: "tool-call",
+            toolCallId: `cap-${i}`,
+            toolName: "read_canvas",
+            input: {},
+          };
+        }
+        yield { type: "text-delta", text: "should never reach Slack" };
+      })(),
+    );
 
     const result = await generateResponse(baseOptions(slackClient));
 
@@ -2766,9 +3027,9 @@ describe("generateResponse deferred stream creation (issue #1012)", () => {
     expect(result.raw).toContain("41 tools without wrapping up");
     expect(result.raw).not.toContain("should never reach Slack");
 
-    const thrashLogs = vi.mocked(logError).mock.calls.filter(
-      ([params]) => params.errorCode === "tool_thrash_breaker",
-    );
+    const thrashLogs = vi
+      .mocked(logError)
+      .mock.calls.filter(([params]) => params.errorCode === "tool_thrash_breaker");
     expect(thrashLogs).toHaveLength(1);
     expect(thrashLogs[0][0]).toMatchObject({
       context: expect.objectContaining({

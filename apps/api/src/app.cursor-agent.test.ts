@@ -222,9 +222,7 @@ describe("Cursor agent webhook", () => {
       expect.anything(),
       expect.objectContaining({
         channel: "DADMIN",
-        text: expect.stringContaining(
-          "<https://github.com/AuraHQ-ai/aura/pull/1037|Fix webhook>",
-        ),
+        text: expect.stringContaining("<https://github.com/AuraHQ-ai/aura/pull/1037|Fix webhook>"),
       }),
     );
     expect(mocks.recordErrorMock).not.toHaveBeenCalled();

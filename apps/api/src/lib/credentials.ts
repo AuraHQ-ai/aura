@@ -25,10 +25,7 @@ export function encryptCredential(plaintext: string): string {
 
   const iv = crypto.randomBytes(12);
   const cipher = crypto.createCipheriv(ALGORITHM, key, iv);
-  const encrypted = Buffer.concat([
-    cipher.update(plaintext, "utf8"),
-    cipher.final(),
-  ]);
+  const encrypted = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
   const authTag = cipher.getAuthTag();
 
   return `${iv.toString("hex")}:${authTag.toString("hex")}:${encrypted.toString("hex")}`;
@@ -43,11 +40,7 @@ export function decryptCredential(ciphertext: string): string {
     throw new Error("Invalid ciphertext format");
   }
 
-  const decipher = crypto.createDecipheriv(
-    ALGORITHM,
-    key,
-    Buffer.from(ivHex, "hex"),
-  );
+  const decipher = crypto.createDecipheriv(ALGORITHM, key, Buffer.from(ivHex, "hex"));
   decipher.setAuthTag(Buffer.from(authTagHex, "hex"));
   const decrypted = Buffer.concat([
     decipher.update(Buffer.from(encryptedHex, "hex")),
@@ -80,11 +73,7 @@ export async function getCredential(key: string): Promise<string | null> {
   return null;
 }
 
-export async function setCredential(
-  key: string,
-  value: string,
-  updatedBy?: string,
-): Promise<void> {
+export async function setCredential(key: string, value: string, updatedBy?: string): Promise<void> {
   const encrypted = encryptCredential(value);
   await setSetting(`${DB_PREFIX}${key}`, encrypted, updatedBy);
   logger.info("Credential stored", { key, updatedBy });

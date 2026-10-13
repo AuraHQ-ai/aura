@@ -24,20 +24,27 @@ interface ErrorDetail {
 
 function ErrorDetailPage() {
   const { id } = Route.useParams();
-  const { data: err, isLoading, error } = useQuery({
+  const {
+    data: err,
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ["errors", id],
     queryFn: () => apiGet<ErrorDetail>(`/errors/${id}`),
   });
 
   if (isLoading) return <DetailSkeleton />;
-  if (error) return <div className="text-destructive text-sm">Failed to load error: {error.message}</div>;
+  if (error)
+    return <div className="text-destructive text-sm">Failed to load error: {error.message}</div>;
   if (!err) return null;
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon-sm" asChild>
-          <Link to="/errors"><ArrowLeft className="h-4 w-4" /></Link>
+          <Link to="/errors">
+            <ArrowLeft className="h-4 w-4" />
+          </Link>
         </Button>
         <div>
           <h1 className="text-base font-semibold">{err.errorName}</h1>
@@ -52,7 +59,9 @@ function ErrorDetailPage() {
       </div>
 
       <Card>
-        <CardHeader><CardTitle className="text-sm">Error Message</CardTitle></CardHeader>
+        <CardHeader>
+          <CardTitle className="text-sm">Error Message</CardTitle>
+        </CardHeader>
         <CardContent>
           <p className="text-sm">{err.errorMessage}</p>
         </CardContent>
@@ -60,7 +69,9 @@ function ErrorDetailPage() {
 
       {err.stackTrace && (
         <Card>
-          <CardHeader><CardTitle className="text-sm">Stack Trace</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle className="text-sm">Stack Trace</CardTitle>
+          </CardHeader>
           <CardContent>
             <pre className="whitespace-pre-wrap text-xs font-mono bg-muted rounded-md p-3 overflow-auto max-h-[400px]">
               {err.stackTrace}
@@ -71,7 +82,9 @@ function ErrorDetailPage() {
 
       {err.context && (
         <Card>
-          <CardHeader><CardTitle className="text-sm">Context</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle className="text-sm">Context</CardTitle>
+          </CardHeader>
           <CardContent>
             <pre className="whitespace-pre-wrap text-xs font-mono bg-muted rounded-md p-3 overflow-auto max-h-[400px]">
               {JSON.stringify(err.context, null, 2)}
@@ -83,9 +96,15 @@ function ErrorDetailPage() {
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {err.userId && (
           <Card>
-            <CardHeader><CardTitle className="text-sm">User</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle className="text-sm">User</CardTitle>
+            </CardHeader>
             <CardContent>
-              <Link to="/users/$slackUserId" params={{ slackUserId: err.userId }} className="font-mono text-sm hover:underline">
+              <Link
+                to="/users/$slackUserId"
+                params={{ slackUserId: err.userId }}
+                className="font-mono text-sm hover:underline"
+              >
                 {err.userId}
               </Link>
             </CardContent>
@@ -93,14 +112,22 @@ function ErrorDetailPage() {
         )}
         {err.channelId && (
           <Card>
-            <CardHeader><CardTitle className="text-sm">Channel</CardTitle></CardHeader>
-            <CardContent><span className="font-mono text-sm">{err.channelId}</span></CardContent>
+            <CardHeader>
+              <CardTitle className="text-sm">Channel</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <span className="font-mono text-sm">{err.channelId}</span>
+            </CardContent>
           </Card>
         )}
         {err.channelType && (
           <Card>
-            <CardHeader><CardTitle className="text-sm">Channel Type</CardTitle></CardHeader>
-            <CardContent><Badge variant="outline">{err.channelType}</Badge></CardContent>
+            <CardHeader>
+              <CardTitle className="text-sm">Channel Type</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Badge variant="outline">{err.channelType}</Badge>
+            </CardContent>
           </Card>
         )}
       </div>

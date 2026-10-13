@@ -5,9 +5,7 @@ import type { ScheduleContext } from "@aura/db/schema";
  * Resolve a user display name / username / Slack ID to a Slack user ID.
  * Tries: raw Slack ID → Slack API user list → DB userProfiles fallback.
  */
-export async function resolveSlackUserId(
-  userName: string,
-): Promise<string | null> {
+export async function resolveSlackUserId(userName: string): Promise<string | null> {
   const trimmed = userName.replace(/^@/, "").trim();
 
   if (/^U[A-Z0-9]{6,}$/.test(trimmed)) {
@@ -103,7 +101,6 @@ export async function resolveEffectiveUserId(
   }
   return {
     userId: undefined,
-    error:
-      "No user context available. Unable to determine whose Google token to use.",
+    error: "No user context available. Unable to determine whose Google token to use.",
   };
 }

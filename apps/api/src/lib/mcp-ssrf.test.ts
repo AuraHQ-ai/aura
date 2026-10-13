@@ -18,32 +18,20 @@ describe("assertPublicHttpsUrl", () => {
   });
 
   it("rejects http, file, and unparseable URLs", async () => {
-    await expect(assertPublicHttpsUrl("http://example.com/mcp")).rejects.toThrow(
-      /must use https/,
-    );
-    await expect(assertPublicHttpsUrl("file:///etc/passwd")).rejects.toThrow(
-      /must use https/,
-    );
+    await expect(assertPublicHttpsUrl("http://example.com/mcp")).rejects.toThrow(/must use https/);
+    await expect(assertPublicHttpsUrl("file:///etc/passwd")).rejects.toThrow(/must use https/);
     await expect(assertPublicHttpsUrl("not a url")).rejects.toThrow(/Invalid MCP URL/);
   });
 
   it("rejects localhost, loopback, and link-local hostnames without DNS", async () => {
-    await expect(assertPublicHttpsUrl("https://localhost/mcp")).rejects.toThrow(
-      McpSsrfError,
-    );
-    await expect(assertPublicHttpsUrl("https://127.0.0.1/mcp")).rejects.toThrow(
-      /private/,
-    );
-    await expect(assertPublicHttpsUrl("https://169.254.169.254/latest")).rejects.toThrow(
-      /private/,
-    );
+    await expect(assertPublicHttpsUrl("https://localhost/mcp")).rejects.toThrow(McpSsrfError);
+    await expect(assertPublicHttpsUrl("https://127.0.0.1/mcp")).rejects.toThrow(/private/);
+    await expect(assertPublicHttpsUrl("https://169.254.169.254/latest")).rejects.toThrow(/private/);
   });
 
   it("rejects a public hostname that resolves to a private address", async () => {
     lookupMock.mockResolvedValue({ address: "10.1.2.3", family: 4 });
-    await expect(assertPublicHttpsUrl("https://evil.example/mcp")).rejects.toThrow(
-      /private/,
-    );
+    await expect(assertPublicHttpsUrl("https://evil.example/mcp")).rejects.toThrow(/private/);
   });
 
   it("allows a public https URL", async () => {
@@ -67,7 +55,9 @@ describe("assertPublicHttpsUrlFollowingRedirects", () => {
 
     const fetchFn = vi.fn(async () => ({
       status: 302,
-      headers: { get: (name: string) => (name === "location" ? "https://169.254.169.254/meta" : null) },
+      headers: {
+        get: (name: string) => (name === "location" ? "https://169.254.169.254/meta" : null),
+      },
     }));
 
     await expect(
@@ -82,7 +72,9 @@ describe("assertPublicHttpsUrlFollowingRedirects", () => {
       .fn()
       .mockResolvedValueOnce({
         status: 301,
-        headers: { get: (name: string) => (name === "location" ? "https://mcp.example.com/v2" : null) },
+        headers: {
+          get: (name: string) => (name === "location" ? "https://mcp.example.com/v2" : null),
+        },
       })
       .mockResolvedValueOnce({
         status: 200,

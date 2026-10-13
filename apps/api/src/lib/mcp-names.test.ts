@@ -11,9 +11,7 @@ import {
 
 describe("MCP tool namespacing", () => {
   it("builds mcp__<slug>__<tool> names", () => {
-    expect(namespaceMcpTool("stripe", "list_customers")).toBe(
-      "mcp__stripe__list_customers",
-    );
+    expect(namespaceMcpTool("stripe", "list_customers")).toBe("mcp__stripe__list_customers");
     expect(namespaceMcpTool("linear", "create-issue")).toBe("mcp__linear__create-issue");
   });
 

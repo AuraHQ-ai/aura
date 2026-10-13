@@ -13,7 +13,8 @@ function UnauthorizedPage() {
         </CardHeader>
         <CardContent className="text-center space-y-4">
           <p className="text-sm text-muted-foreground">
-            You don&apos;t have permission to access this dashboard. Please sign in with a valid Slack account.
+            You don&apos;t have permission to access this dashboard. Please sign in with a valid
+            Slack account.
           </p>
           <Button asChild>
             <Link to="/">Go Home</Link>

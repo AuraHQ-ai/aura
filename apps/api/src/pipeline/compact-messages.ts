@@ -37,10 +37,7 @@ export interface CompactionResult {
 }
 
 /** Compresses a large evicted tool result into a structured summary. */
-export type SummarizeToolResultFn = (input: {
-  toolName: string;
-  text: string;
-}) => Promise<string>;
+export type SummarizeToolResultFn = (input: { toolName: string; text: string }) => Promise<string>;
 
 export interface CompactionOptions {
   /**
@@ -78,11 +75,7 @@ function buildTruncatedStub(toolName: string, originalText: string): string {
   return `[Compacted] ${toolName}: ${truncated}... [Full result available in conversation trace]`;
 }
 
-function buildSummaryStub(
-  toolName: string,
-  originalText: string,
-  summary: string,
-): string {
+function buildSummaryStub(toolName: string, originalText: string, summary: string): string {
   const elided = originalText.length - summary.length;
   return (
     `[Summarized] ${toolName}: the following is an AI-generated summary of a ` +
@@ -191,15 +184,11 @@ export async function compactMessages(
 
         const { toolCallId, toolName } = part;
         pending.push(
-          options
-            .summarize!({ toolName, text: originalText })
+          options.summarize!({ toolName, text: originalText })
             .then((summary) => {
               // Cost guard: a "summary" that is not meaningfully smaller than
               // the original saves nothing — fall back to truncation.
-              if (
-                summary.trim().length > 0 &&
-                summary.length < originalText.length / 2
-              ) {
+              if (summary.trim().length > 0 && summary.length < originalText.length / 2) {
                 summaryCache.set(toolCallId, summary.trim());
               }
             })

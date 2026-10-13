@@ -51,9 +51,7 @@ function ErrorsPage() {
       if (resolvedFilter !== "all") params.set("resolved", resolvedFilter);
       params.set("page", String(page));
       params.set("limit", String(PAGE_SIZE));
-      return apiGet<{ items: ErrorEntry[]; total: number }>(
-        `/errors?${params}`,
-      );
+      return apiGet<{ items: ErrorEntry[]; total: number }>(`/errors?${params}`);
     },
     placeholderData: keepPreviousData,
   });
@@ -74,11 +72,7 @@ function ErrorsPage() {
   }
 
   if (error && !data)
-    return (
-      <div className="text-destructive text-sm">
-        Failed to load errors: {error.message}
-      </div>
-    );
+    return <div className="text-destructive text-sm">Failed to load errors: {error.message}</div>;
 
   const errors = data?.items ?? [];
   const total = data?.total ?? 0;
@@ -87,9 +81,7 @@ function ErrorsPage() {
     <div className="flex flex-col gap-4 flex-1 min-h-0">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold tracking-tight">Errors</h1>
-        <span className="text-sm text-muted-foreground">
-          {isLoading ? "…" : `${total} total`}
-        </span>
+        <span className="text-sm text-muted-foreground">{isLoading ? "…" : `${total} total`}</span>
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
@@ -132,7 +124,12 @@ function ErrorsPage() {
         )}
       </div>
 
-      <div className={cn("flex-1 min-h-0 rounded-xl border overflow-auto transition-opacity", isFetching && !isLoading && "opacity-50")}>
+      <div
+        className={cn(
+          "flex-1 min-h-0 rounded-xl border overflow-auto transition-opacity",
+          isFetching && !isLoading && "opacity-50",
+        )}
+      >
         <Table className="min-w-[700px]">
           <TableHeader>
             <TableRow>
@@ -149,10 +146,7 @@ function ErrorsPage() {
               <TableRowsSkeleton columns={6} />
             ) : errors.length === 0 ? (
               <TableRow>
-                <TableCell
-                  colSpan={6}
-                  className="text-center text-muted-foreground py-8"
-                >
+                <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                   No errors found
                 </TableCell>
               </TableRow>
@@ -176,19 +170,13 @@ function ErrorsPage() {
                     </Link>
                   </TableCell>
                   <TableCell>
-                    {err.errorCode ? (
-                      <Badge variant="outline">{err.errorCode}</Badge>
-                    ) : (
-                      "—"
-                    )}
+                    {err.errorCode ? <Badge variant="outline">{err.errorCode}</Badge> : "—"}
                   </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {truncate(err.errorMessage, 80)}
                   </TableCell>
                   <TableCell>
-                    <Badge
-                      variant={err.resolved ? "success" : "destructive"}
-                    >
+                    <Badge variant={err.resolved ? "success" : "destructive"}>
                       {err.resolved ? "Resolved" : "Open"}
                     </Badge>
                   </TableCell>

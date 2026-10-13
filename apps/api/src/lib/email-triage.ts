@@ -49,13 +49,9 @@ interface EmailRow {
 }
 
 function reconstructThread(emails: EmailRow[]): string {
-  const sorted = [...emails].sort(
-    (a, b) => a.date.getTime() - b.date.getTime(),
-  );
+  const sorted = [...emails].sort((a, b) => a.date.getTime() - b.date.getTime());
 
-  const participants = [
-    ...new Set(sorted.map((e) => e.fromEmail)),
-  ].join(", ");
+  const participants = [...new Set(sorted.map((e) => e.fromEmail))].join(", ");
 
   const subject = sorted[0]?.subject || "(no subject)";
 
@@ -66,12 +62,7 @@ function reconstructThread(emails: EmailRow[]): string {
     return `[${ts}] ${e.fromEmail} (${direction}):\n${body}`;
   });
 
-  return [
-    `Thread: ${subject}`,
-    `Participants: ${participants}`,
-    "",
-    ...messages,
-  ].join("\n");
+  return [`Thread: ${subject}`, `Participants: ${participants}`, "", ...messages].join("\n");
 }
 
 // ── Prompt ──────────────────────────────────────────────────────────────────
@@ -99,9 +90,7 @@ ${threadText}`;
  * Only processes threads that have NULL thread_state or where new emails
  * arrived since the last computation.
  */
-export async function computeThreadStates(
-  userId: string,
-): Promise<ThreadStateSummary> {
+export async function computeThreadStates(userId: string): Promise<ThreadStateSummary> {
   const summary: ThreadStateSummary = {
     processed: 0,
     errors: 0,
@@ -168,12 +157,7 @@ export async function computeThreadStates(
       threadStateUpdatedAt: emailsRaw.threadStateUpdatedAt,
     })
     .from(emailsRaw)
-    .where(
-      and(
-        eq(emailsRaw.userId, userId),
-        inArray(emailsRaw.gmailThreadId, threadIdsBatch),
-      ),
-    );
+    .where(and(eq(emailsRaw.userId, userId), inArray(emailsRaw.gmailThreadId, threadIdsBatch)));
 
   const threadMap = new Map<string, EmailRow[]>();
   for (const email of fullEmails) {
@@ -182,10 +166,9 @@ export async function computeThreadStates(
     threadMap.set(email.gmailThreadId, list);
   }
 
-  const threadsToProcess = threadIdsBatch.map((id) => [
-    id,
-    threadMap.get(id) || [],
-  ] as [string, EmailRow[]]);
+  const threadsToProcess = threadIdsBatch.map(
+    (id) => [id, threadMap.get(id) || []] as [string, EmailRow[]],
+  );
 
   const userName = deriveUserName(fullEmails);
 
@@ -201,8 +184,7 @@ export async function computeThreadStates(
   const DB_BATCH_SIZE = 20;
   const batch = threadsToProcess;
 
-  const pendingUpdates: { threadId: string; state: string; reason: string }[] =
-    [];
+  const pendingUpdates: { threadId: string; state: string; reason: string }[] = [];
 
   const flushUpdates = async () => {
     if (pendingUpdates.length === 0) return;
@@ -210,9 +192,7 @@ export async function computeThreadStates(
     const updateBatch = [...pendingUpdates];
     pendingUpdates.length = 0;
 
-    const valueFragments = updateBatch.map(
-      (u) => sql`(${u.threadId}, ${u.state}, ${u.reason})`,
-    );
+    const valueFragments = updateBatch.map((u) => sql`(${u.threadId}, ${u.state}, ${u.reason})`);
 
     const valuesList = sql.join(valueFragments, sql`, `);
 
@@ -264,8 +244,7 @@ export async function computeThreadStates(
       });
 
       summary.processed++;
-      summary.breakdown[object.state] =
-        (summary.breakdown[object.state] || 0) + 1;
+      summary.breakdown[object.state] = (summary.breakdown[object.state] || 0) + 1;
     } catch (err) {
       const errStr = String(err);
       logger.error("Thread state computation failed", {
@@ -306,9 +285,7 @@ export async function computeThreadStates(
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 function deriveUserName(emails: EmailRow[]): string {
-  const outbound = emails.find(
-    (e) => e.direction === "outbound" && e.fromName,
-  );
+  const outbound = emails.find((e) => e.direction === "outbound" && e.fromName);
   if (outbound?.fromName) return outbound.fromName;
 
   const anyOutbound = emails.find((e) => e.direction === "outbound");

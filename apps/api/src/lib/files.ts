@@ -4,12 +4,7 @@ import { transcribeAudio } from "./audio.js";
 /** Max file size to download (20MB) */
 export const MAX_FILE_SIZE = 20 * 1024 * 1024;
 
-const IMAGE_MIME_TYPES = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/gif",
-  "image/webp",
-]);
+const IMAGE_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/gif", "image/webp"]);
 
 const AUDIO_MIME_TYPES = new Set([
   "audio/webm",
@@ -33,9 +28,7 @@ const DOC_MIME_TYPES = new Set([
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 ]);
 
-const GATEWAY_SUPPORTED_FILE_TYPES = new Set([
-  "application/pdf",
-]);
+const GATEWAY_SUPPORTED_FILE_TYPES = new Set(["application/pdf"]);
 
 const TEXT_MIME_TYPES = new Set([
   "application/json",
@@ -101,10 +94,7 @@ export function getEventFiles(
 /**
  * Download a file from Slack's private URL using the bot token.
  */
-export async function downloadSlackFile(
-  url: string,
-  botToken: string,
-): Promise<Uint8Array> {
+export async function downloadSlackFile(url: string, botToken: string): Promise<Uint8Array> {
   const response = await fetch(url, {
     headers: { Authorization: `Bearer ${botToken}` },
     signal: AbortSignal.timeout(30_000),

@@ -1,9 +1,6 @@
 import { experimental_evaluate as evaluate } from "ai";
 import type { SlackThreadMessage } from "./slack-context.js";
-import {
-  finishGenerationObservation,
-  startGenerationObservation,
-} from "../lib/langfuse.js";
+import { finishGenerationObservation, startGenerationObservation } from "../lib/langfuse.js";
 
 /**
  * Jev (typesafe-ai/jev) powered should-respond gate.
@@ -32,12 +29,10 @@ export const JEV_THRESHOLDS: Record<GateTier, number> = {
 };
 
 const TIER_BAR: Record<GateTier, string> = {
-  participant:
-    "Aura already sent messages in this thread. Lean true when in doubt.",
+  participant: "Aura already sent messages in this thread. Lean true when in doubt.",
   recently_active:
     "Aura was recently active in the channel but is not part of this conversation. Lean false when in doubt.",
-  cold:
-    "Aura is passively observing. Bar is HIGH: true only for bugs/outages, urgent issues, or explicit questions Aura can answer with data.",
+  cold: "Aura is passively observing. Bar is HIGH: true only for bugs/outages, urgent issues, or explicit questions Aura can answer with data.",
 };
 
 export interface JevGateMessage {
@@ -105,9 +100,12 @@ export function buildJevRequest(input: JevGateInput) {
 }
 
 /** Compact view of the Jev request for Langfuse generation input. */
-export function summarizeJevGateInput(
-  req: ReturnType<typeof buildJevRequest>,
-): { tier: GateTier; now: string; latest: string; recent: string[] } {
+export function summarizeJevGateInput(req: ReturnType<typeof buildJevRequest>): {
+  tier: GateTier;
+  now: string;
+  latest: string;
+  recent: string[];
+} {
   const latest = req.state.latest_message;
   return {
     tier: req.state.tier,
@@ -131,7 +129,9 @@ export interface JevGateResult {
 /** Throws if Jev errors or returns no probability, so callers can fall back. */
 export async function jevShouldRespond(
   input: JevGateInput,
-  opts?: { telemetry?: { isEnabled: boolean; functionId?: string; metadata?: Record<string, any> } },
+  opts?: {
+    telemetry?: { isEnabled: boolean; functionId?: string; metadata?: Record<string, any> };
+  },
 ): Promise<JevGateResult> {
   const req = buildJevRequest(input);
   let observation = null;

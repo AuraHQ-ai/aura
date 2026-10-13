@@ -1,8 +1,6 @@
 export const MCP_SERVER_TIMEOUT_MS = 5_000;
 
-export type IsolatedResult<T> =
-  | { ok: true; value: T }
-  | { ok: false; error: string };
+export type IsolatedResult<T> = { ok: true; value: T } | { ok: false; error: string };
 
 export async function settleWithTimeout<T>(
   work: () => Promise<T>,

@@ -45,9 +45,7 @@ export interface RebuildArgs {
   prod: boolean;
 }
 
-export type ParseResult =
-  | { ok: true; args: RebuildArgs }
-  | { ok: false; error: string };
+export type ParseResult = { ok: true; args: RebuildArgs } | { ok: false; error: string };
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const SLACK_USER_RE = /^[UW][A-Z0-9]+$/;
@@ -90,7 +88,10 @@ export function parseRebuildArgs(argv: string[]): ParseResult {
   if (channel && !SLACK_CHANNEL_RE.test(channel)) {
     return fail(`--channel must be a Slack channel ID (e.g. C0123ABC), got "${channel}"`);
   }
-  for (const [name, value] of [["since", since], ["until", until]] as const) {
+  for (const [name, value] of [
+    ["since", since],
+    ["until", until],
+  ] as const) {
     if (value && !ISO_DATE_RE.test(value)) {
       return fail(`--${name} must be an ISO date (YYYY-MM-DD), got "${value}"`);
     }

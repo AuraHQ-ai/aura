@@ -46,9 +46,7 @@ function isToolCallPart(
   );
 }
 
-function isProviderExecutedToolCall(
-  part: { providerExecuted?: boolean },
-): boolean {
+function isProviderExecutedToolCall(part: { providerExecuted?: boolean }): boolean {
   return part.providerExecuted === true;
 }
 
@@ -71,8 +69,10 @@ function isToolResultPart(part: unknown): part is { type: "tool-result"; toolCal
 
 /** Position ordering: earlier message wins; within a message, earlier part wins. */
 function isBefore(a: ToolPartRef, b: ToolPartRef): boolean {
-  return a.messageIndex < b.messageIndex ||
-    (a.messageIndex === b.messageIndex && a.partIndex < b.partIndex);
+  return (
+    a.messageIndex < b.messageIndex ||
+    (a.messageIndex === b.messageIndex && a.partIndex < b.partIndex)
+  );
 }
 
 /**
@@ -88,8 +88,7 @@ function normalizeToolCallId(raw: string, taken: Set<string>): string {
 
   for (let n = 2; ; n++) {
     const suffix = `_${n}`;
-    const candidate =
-      base.slice(0, MAX_TOOL_CALL_ID_LENGTH - suffix.length) + suffix;
+    const candidate = base.slice(0, MAX_TOOL_CALL_ID_LENGTH - suffix.length) + suffix;
     if (!taken.has(candidate)) return candidate;
   }
 }
@@ -114,9 +113,7 @@ function normalizeToolCallId(raw: string, taken: Set<string>): string {
  * Pure transform: callers decide how to log the report. Returns the original
  * array untouched (same reference) when nothing needed fixing.
  */
-export function sanitizeToolCallIds(
-  messages: Array<ModelMessage>,
-): SanitizeToolCallIdsResult {
+export function sanitizeToolCallIds(messages: Array<ModelMessage>): SanitizeToolCallIdsResult {
   // ── Pass 1: collect ids and build the rename map ──────────────────────────
   const allRawIds = new Set<string>();
   for (const message of messages) {
@@ -129,9 +126,7 @@ export function sanitizeToolCallIds(
   }
 
   const renameMap = new Map<string, string>();
-  const taken = new Set<string>(
-    [...allRawIds].filter((id) => TOOL_CALL_ID_PATTERN.test(id)),
-  );
+  const taken = new Set<string>([...allRawIds].filter((id) => TOOL_CALL_ID_PATTERN.test(id)));
   for (const raw of allRawIds) {
     if (TOOL_CALL_ID_PATTERN.test(raw)) continue;
     const sanitized = normalizeToolCallId(raw, taken);
@@ -187,9 +182,7 @@ export function sanitizeToolCallIds(
 
       if (isToolCallPart(part)) {
         const id = mapId(part.toolCallId);
-        const resultsAfter = (toolResultPositions.get(id) ?? []).some(
-          (pos) => isBefore(here, pos),
-        );
+        const resultsAfter = (toolResultPositions.get(id) ?? []).some((pos) => isBefore(here, pos));
         // Only a COMPLETED turn requires pairing: the final message of the
         // array may legitimately still be waiting for its results.
         // Provider-executed calls are owned by the provider (Bedrock
@@ -266,9 +259,8 @@ export function sanitizeToolCallIds(
         return;
       }
 
-      const projectedTailRole = later.length > 0
-        ? later[later.length - 1]!.role
-        : result.at(-1)?.role;
+      const projectedTailRole =
+        later.length > 0 ? later[later.length - 1]!.role : result.at(-1)?.role;
 
       // Discarding would leave the array ending on assistant where the
       // original ended on user/tool. Empty content is also rejected —
@@ -317,10 +309,7 @@ export function sanitizeToolCallIds(
   // when the input did not end on assistant. Re-append the original
   // trailing user/tool message if drops produced that shape.
   const originalTail = messages[lastMessageIndex];
-  if (
-    originalTail &&
-    isAssistantPrefillTail(result.at(-1)?.role, originalTail.role)
-  ) {
+  if (originalTail && isAssistantPrefillTail(result.at(-1)?.role, originalTail.role)) {
     result.push(originalTail);
   }
 

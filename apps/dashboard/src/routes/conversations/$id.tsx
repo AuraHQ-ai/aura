@@ -5,10 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DetailSkeleton } from "@/components/page-skeleton";
-import {
-  UnifiedTimeline,
-  type ConversationMessageWithParts,
-} from "@/components/unified-timeline";
+import { UnifiedTimeline, type ConversationMessageWithParts } from "@/components/unified-timeline";
 import { formatDate } from "@/lib/utils";
 import { ArrowLeft, ExternalLink } from "lucide-react";
 
@@ -46,13 +43,7 @@ export interface ConversationData {
   jobId: string | null;
 }
 
-function ConversationMetadataCards({
-  trace,
-  jobName,
-}: {
-  trace: Trace;
-  jobName: string | null;
-}) {
+function ConversationMetadataCards({ trace, jobName }: { trace: Trace; jobName: string | null }) {
   const tokenUsage = trace.tokenUsage;
   const costUsd = trace.costUsd;
 
@@ -113,33 +104,26 @@ function ConversationMetadataCards({
         <CardContent>
           {tokenUsage ? (
             <div className="text-sm space-y-0.5">
-              <div>
-                In: {tokenUsage.inputTokens?.toLocaleString() ?? "—"}
-              </div>
+              <div>In: {tokenUsage.inputTokens?.toLocaleString() ?? "—"}</div>
               {tokenUsage.inputTokenDetails && (
                 <div className="text-xs text-muted-foreground pl-2">
                   {tokenUsage.inputTokenDetails.cacheReadTokens != null && (
                     <span>
-                      cache read:{" "}
-                      {tokenUsage.inputTokenDetails.cacheReadTokens.toLocaleString()}{" "}
+                      cache read: {tokenUsage.inputTokenDetails.cacheReadTokens.toLocaleString()}{" "}
                     </span>
                   )}
                   {tokenUsage.inputTokenDetails.cacheWriteTokens != null && (
                     <span>
-                      write:{" "}
-                      {tokenUsage.inputTokenDetails.cacheWriteTokens.toLocaleString()}
+                      write: {tokenUsage.inputTokenDetails.cacheWriteTokens.toLocaleString()}
                     </span>
                   )}
                 </div>
               )}
-              <div>
-                Out: {tokenUsage.outputTokens?.toLocaleString() ?? "—"}
-              </div>
+              <div>Out: {tokenUsage.outputTokens?.toLocaleString() ?? "—"}</div>
               {tokenUsage.outputTokenDetails?.reasoningTokens != null &&
                 tokenUsage.outputTokenDetails.reasoningTokens > 0 && (
                   <div className="text-xs text-muted-foreground pl-2">
-                    reasoning:{" "}
-                    {tokenUsage.outputTokenDetails.reasoningTokens.toLocaleString()}
+                    reasoning: {tokenUsage.outputTokenDetails.reasoningTokens.toLocaleString()}
                   </div>
                 )}
               <div className="text-muted-foreground">
@@ -175,19 +159,11 @@ export function ConversationDetailView({
           </Button>
         )}
         <div className="min-w-0 flex-1">
-          {!embedded && (
-            <h1 className="text-base font-semibold">Conversation Detail</h1>
-          )}
-          <p className="text-xs text-muted-foreground font-mono truncate">
-            {trace.id}
-          </p>
+          {!embedded && <h1 className="text-base font-semibold">Conversation Detail</h1>}
+          <p className="text-xs text-muted-foreground font-mono truncate">{trace.id}</p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          <Badge
-            variant={
-              trace.sourceType === "interactive" ? "default" : "secondary"
-            }
-          >
+          <Badge variant={trace.sourceType === "interactive" ? "default" : "secondary"}>
             {trace.sourceType === "job_execution" ? "job" : "interactive"}
           </Badge>
           {trace.sourceType === "job_execution" && jobId && (
@@ -218,9 +194,7 @@ function ConversationDetailPage() {
   if (isLoading) return <DetailSkeleton />;
   if (error)
     return (
-      <div className="text-destructive text-sm">
-        Failed to load conversation: {error.message}
-      </div>
+      <div className="text-destructive text-sm">Failed to load conversation: {error.message}</div>
     );
   if (!data) return null;
 

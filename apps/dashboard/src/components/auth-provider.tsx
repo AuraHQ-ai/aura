@@ -70,9 +70,5 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setSession(null);
   }, []);
 
-  return (
-    <AuthContext value={{ session, loading, login, logout }}>
-      {children}
-    </AuthContext>
-  );
+  return <AuthContext value={{ session, loading, login, logout }}>{children}</AuthContext>;
 }

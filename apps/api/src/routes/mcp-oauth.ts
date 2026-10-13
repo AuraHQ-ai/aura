@@ -41,20 +41,10 @@ export function createMcpOAuthApp(slackClient?: WebClient) {
     const iss = c.req.query("iss");
 
     if (error) {
-      return c.html(
-        htmlPage(
-          "MCP authorization failed",
-          errorDescription || error,
-          false,
-        ),
-        400,
-      );
+      return c.html(htmlPage("MCP authorization failed", errorDescription || error, false), 400);
     }
     if (!code || !state) {
-      return c.html(
-        htmlPage("MCP authorization failed", "Missing code or state.", false),
-        400,
-      );
+      return c.html(htmlPage("MCP authorization failed", "Missing code or state.", false), 400);
     }
 
     const connection = await findConnectionByStateAny(state);

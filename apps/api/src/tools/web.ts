@@ -45,7 +45,9 @@ export function createWebTools() {
       inputSchema: z.object({
         query: z
           .string()
-          .describe("The search query, e.g. 'latest Next.js release notes' or 'how to configure pgvector indexes'"),
+          .describe(
+            "The search query, e.g. 'latest Next.js release notes' or 'how to configure pgvector indexes'",
+          ),
         max_results: z
           .number()
           .min(1)
@@ -106,7 +108,8 @@ export function createWebTools() {
           return `searching the web: "${display}"`;
         },
         detail: (input) => input.query,
-        output: (result) => "ok" in result && result.ok ? `${result.count ?? 0} results` : result.error,
+        output: (result) =>
+          "ok" in result && result.ok ? `${result.count ?? 0} results` : result.error,
         sources: (result) => {
           if (!("ok" in result) || !result.ok || !Array.isArray(result.results)) return undefined;
           return result.results.slice(0, 3).map((r) => ({
@@ -122,10 +125,7 @@ export function createWebTools() {
       description:
         "Fetch a URL and extract its readable text content. Use when someone pastes a link and asks 'what does this say?' or 'can you read this?', or to check if a site is up. For simple text extraction, prefer this over browse. If TAVILY_API_KEY is configured, uses Tavily extract for cleaner results; otherwise falls back to basic HTML stripping.",
       inputSchema: z.object({
-        url: z
-          .string()
-          .url()
-          .describe("The URL to fetch and read"),
+        url: z.string().url().describe("The URL to fetch and read"),
       }),
       execute: async ({ url }) => {
         try {
@@ -149,7 +149,10 @@ export function createWebTools() {
                 // Size is enforced by defineTool's default result cap, which
                 // truncates with a visible marker instead of a silent cut.
                 const content = result.rawContent || "";
-                logger.info("read_url tool called (tavily)", { url, contentLength: content.length });
+                logger.info("read_url tool called (tavily)", {
+                  url,
+                  contentLength: content.length,
+                });
                 return {
                   ok: true as const,
                   url,
@@ -169,7 +172,8 @@ export function createWebTools() {
             response = await fetch(currentUrl, {
               headers: {
                 "User-Agent": BROWSER_UA,
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+                Accept:
+                  "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
                 "Accept-Language": "en-US,en;q=0.9",
                 "Accept-Encoding": "gzip, deflate, br",
                 "Cache-Control": "no-cache",
@@ -195,9 +199,10 @@ export function createWebTools() {
           }
 
           if (!response.ok) {
-            const hint = response.status === 403
-              ? ". This may be Cloudflare bot protection — try using the `browse` tool instead, which uses a real browser."
-              : "";
+            const hint =
+              response.status === 403
+                ? ". This may be Cloudflare bot protection — try using the `browse` tool instead, which uses a real browser."
+                : "";
             return {
               ok: false as const,
               error: `HTTP ${response.status} ${response.statusText}${hint}`,
@@ -210,9 +215,7 @@ export function createWebTools() {
 
           // Size is enforced by defineTool's default result cap, which
           // truncates with a visible marker instead of a silent cut.
-          const content: string = contentType.includes("text/html")
-            ? stripHtml(rawBody)
-            : rawBody;
+          const content: string = contentType.includes("text/html") ? stripHtml(rawBody) : rawBody;
 
           logger.info("read_url tool called (fetch)", { url, contentLength: content.length });
 

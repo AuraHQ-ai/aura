@@ -4,7 +4,10 @@ const state = vi.hoisted(() => ({ setArg: undefined as any, rows: [] as any[] })
 
 vi.mock("../db/client.js", () => {
   const q: any = {
-    set: vi.fn((s: any) => { state.setArg = s; return q; }),
+    set: vi.fn((s: any) => {
+      state.setArg = s;
+      return q;
+    }),
     where: vi.fn(() => q),
     returning: vi.fn(() => Promise.resolve(state.rows)),
   };
@@ -18,7 +21,10 @@ import { selfHealTerminalRecurringJobs } from "./recurring-self-heal.js";
 
 describe("selfHealTerminalRecurringJobs", () => {
   it("resets terminal recurring jobs to pending and returns the count", async () => {
-    state.rows = [{ id: "a", name: "hacker-news-scan" }, { id: "b", name: "x" }];
+    state.rows = [
+      { id: "a", name: "hacker-news-scan" },
+      { id: "b", name: "x" },
+    ];
     await expect(selfHealTerminalRecurringJobs()).resolves.toBe(2);
     expect(state.setArg).toMatchObject({ status: "pending", executeAt: null });
   });

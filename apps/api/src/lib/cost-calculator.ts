@@ -48,10 +48,7 @@ async function lookupPricing(
         eq(modelPricing.workspaceId, workspaceId),
         eq(modelPricing.modelId, modelId),
         lte(modelPricing.effectiveFrom, asOfDate),
-        or(
-          isNull(modelPricing.effectiveUntil),
-          gte(modelPricing.effectiveUntil, asOfDate),
-        ),
+        or(isNull(modelPricing.effectiveUntil), gte(modelPricing.effectiveUntil, asOfDate)),
       ),
     );
 
@@ -59,10 +56,7 @@ async function lookupPricing(
   return rows;
 }
 
-function getPrice(
-  rows: PricingRow[],
-  tokenType: string,
-): number {
+function getPrice(rows: PricingRow[], tokenType: string): number {
   const row = rows.find((r) => r.tokenType === tokenType);
   return row ? parseFloat(row.pricePerMillion) : 0;
 }
@@ -70,10 +64,7 @@ function getPrice(
 /**
  * Compute cost for a single step's usage given its pricing rows.
  */
-function computeStepCost(
-  usage: DetailedTokenUsage,
-  pricing: PricingRow[],
-): number {
+function computeStepCost(usage: DetailedTokenUsage, pricing: PricingRow[]): number {
   if (pricing.length === 0) return 0;
 
   const inputPrice = getPrice(pricing, "input");
@@ -86,13 +77,13 @@ function computeStepCost(
   const id = usage.inputTokenDetails;
   if (
     id &&
-    (id.noCacheTokens != null ||
-      id.cacheReadTokens != null ||
-      id.cacheWriteTokens != null)
+    (id.noCacheTokens != null || id.cacheReadTokens != null || id.cacheWriteTokens != null)
   ) {
     const cacheReadTokens = id.cacheReadTokens ?? 0;
     const cacheWriteTokens = id.cacheWriteTokens ?? 0;
-    const noCacheTokens = id.noCacheTokens ?? Math.max(0, (usage.inputTokens ?? 0) - cacheReadTokens - cacheWriteTokens);
+    const noCacheTokens =
+      id.noCacheTokens ??
+      Math.max(0, (usage.inputTokens ?? 0) - cacheReadTokens - cacheWriteTokens);
     inputCost =
       (noCacheTokens * inputPrice +
         cacheReadTokens * cacheReadPrice +
@@ -107,9 +98,7 @@ function computeStepCost(
   if (od && (od.textTokens != null || od.reasoningTokens != null)) {
     const textTokens = od.textTokens ?? 0;
     const reasoningTokens = od.reasoningTokens ?? 0;
-    outputCost =
-      (textTokens * outputPrice + reasoningTokens * reasoningPrice) /
-      1_000_000;
+    outputCost = (textTokens * outputPrice + reasoningTokens * reasoningPrice) / 1_000_000;
   } else {
     outputCost = ((usage.outputTokens ?? 0) * outputPrice) / 1_000_000;
   }

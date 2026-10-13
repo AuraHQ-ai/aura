@@ -1,7 +1,14 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, keepPreviousData } from "@tanstack/react-query";
 import { apiGet } from "@/lib/api";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { TableRowsSkeleton } from "@/components/page-skeleton";
@@ -54,7 +61,8 @@ function EntitiesPage() {
     placeholderData: keepPreviousData,
   });
 
-  if (error && !data) return <div className="text-destructive text-sm">Failed to load entities: {error.message}</div>;
+  if (error && !data)
+    return <div className="text-destructive text-sm">Failed to load entities: {error.message}</div>;
 
   const entities = data?.items ?? [];
   const total = data?.total ?? 0;
@@ -63,9 +71,7 @@ function EntitiesPage() {
     <div className="flex flex-col gap-4 flex-1 min-h-0">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold tracking-tight">Memories</h1>
-        <span className="text-sm text-muted-foreground">
-          {isLoading ? "…" : `${total} total`}
-        </span>
+        <span className="text-sm text-muted-foreground">{isLoading ? "…" : `${total} total`}</span>
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
@@ -75,7 +81,13 @@ function EntitiesPage() {
             { to: "/memories/entities", label: "Entities", icon: <Network /> },
           ]}
         />
-        <form onSubmit={(e) => { e.preventDefault(); setParams({ search: searchInput || undefined, page: undefined }); }} className="relative flex-1 max-w-sm">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            setParams({ search: searchInput || undefined, page: undefined });
+          }}
+          className="relative flex-1 max-w-sm"
+        >
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder="Search entities..."
@@ -91,12 +103,19 @@ function EntitiesPage() {
         >
           <option value="">All types</option>
           {ENTITY_TYPES.map((t) => (
-            <option key={t} value={t}>{t}</option>
+            <option key={t} value={t}>
+              {t}
+            </option>
           ))}
         </select>
       </div>
 
-      <div className={cn("flex-1 min-h-0 rounded-xl border overflow-auto transition-opacity", isFetching && !isLoading && "opacity-50")}>
+      <div
+        className={cn(
+          "flex-1 min-h-0 rounded-xl border overflow-auto transition-opacity",
+          isFetching && !isLoading && "opacity-50",
+        )}
+      >
         <Table className="min-w-[700px]">
           <TableHeader>
             <TableRow>
@@ -113,26 +132,42 @@ function EntitiesPage() {
               <TableRowsSkeleton columns={6} />
             ) : entities.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={6} className="text-center text-muted-foreground py-8">No entities found</TableCell>
+                <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                  No entities found
+                </TableCell>
               </TableRow>
             ) : (
               entities.map((entity) => (
                 <TableRow key={entity.id}>
                   <TableCell className="font-medium">
-                    <Link to="/memories/entities/$id" params={{ id: entity.id }} className="hover:underline">
+                    <Link
+                      to="/memories/entities/$id"
+                      params={{ id: entity.id }}
+                      className="hover:underline"
+                    >
                       {entity.canonicalName}
                     </Link>
                     {entity.slackUserId && (
-                      <span className="ml-1.5 text-xs text-muted-foreground font-mono">{entity.slackUserId}</span>
+                      <span className="ml-1.5 text-xs text-muted-foreground font-mono">
+                        {entity.slackUserId}
+                      </span>
                     )}
                   </TableCell>
-                  <TableCell><Badge variant="secondary">{entity.type}</Badge></TableCell>
+                  <TableCell>
+                    <Badge variant="secondary">{entity.type}</Badge>
+                  </TableCell>
                   <TableCell className="text-sm text-muted-foreground">
                     {entity.summary ? truncate(entity.summary, 90) : "—"}
                   </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{entity.memoryCount}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{entity.aliasCount}</TableCell>
-                  <TableCell className="text-muted-foreground text-sm">{formatDate(entity.updatedAt)}</TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {entity.memoryCount}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {entity.aliasCount}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground text-sm">
+                    {formatDate(entity.updatedAt)}
+                  </TableCell>
                 </TableRow>
               ))
             )}
@@ -140,7 +175,12 @@ function EntitiesPage() {
         </Table>
       </div>
 
-      <Pagination total={total} pageSize={PAGE_SIZE} page={page ?? 1} onPageChange={(p) => setParams({ page: p > 1 ? p : undefined })} />
+      <Pagination
+        total={total}
+        pageSize={PAGE_SIZE}
+        page={page ?? 1}
+        onPageChange={(p) => setParams({ page: p > 1 ? p : undefined })}
+      />
     </div>
   );
 }
@@ -150,6 +190,11 @@ export const Route = createFileRoute("/memories/entities")({
   validateSearch: (raw: Record<string, unknown>) => ({
     search: typeof raw.search === "string" ? raw.search : undefined,
     type: typeof raw.type === "string" ? raw.type : undefined,
-    page: typeof raw.page === "number" ? raw.page : typeof raw.page === "string" ? Number(raw.page) || undefined : undefined,
+    page:
+      typeof raw.page === "number"
+        ? raw.page
+        : typeof raw.page === "string"
+          ? Number(raw.page) || undefined
+          : undefined,
   }),
 });

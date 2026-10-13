@@ -36,10 +36,10 @@
  * migration missing from the ledger EXECUTES, whatever its timestamp.
  */
 
-import { createHash } from "crypto";
-import { readFileSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { neon } from "@neondatabase/serverless";
 import { planMigrations, LEGACY_BACKFILL_HASHES } from "./migrator.js";
 
@@ -83,14 +83,14 @@ try {
   `);
 
   // ── 2. Read journal ────────────────────────────────────────────────────────
-  const journal = JSON.parse(
-    readFileSync(join(DRIZZLE_DIR, "meta", "_journal.json"), "utf-8")
-  ) as { entries: Array<{ idx: number; when: number; tag: string }> };
+  const journal = JSON.parse(readFileSync(join(DRIZZLE_DIR, "meta", "_journal.json"), "utf-8")) as {
+    entries: Array<{ idx: number; when: number; tag: string }>;
+  };
 
   // ── 3. Compute SHA-256 of each full SQL file ───────────────────────────────
   //       Drizzle hashes the full file: crypto.createHash("sha256").update(content).digest("hex")
   //       We do the same so existing ledger rows continue to match.
-  const entriesWithHashes = journal.entries.map(entry => {
+  const entriesWithHashes = journal.entries.map((entry) => {
     const content = readFileSync(join(DRIZZLE_DIR, `${entry.tag}.sql`), "utf-8");
     const hash = createHash("sha256").update(content).digest("hex");
     return { tag: entry.tag, when: entry.when, hash };
@@ -100,7 +100,7 @@ try {
   const ledgerRows = (await sql`
     SELECT hash, created_at FROM drizzle.__drizzle_migrations
   `) as { hash: string; created_at: string | null }[];
-  const existingHashes = new Set(ledgerRows.map(r => r.hash));
+  const existingHashes = new Set(ledgerRows.map((r) => r.hash));
 
   // ── 5. Plan (pure, testable — see migrator.ts + migrator.test.ts) ─────────
   //       Timestamps do NOT decide execution.  A migration runs iff its hash is
@@ -123,7 +123,7 @@ try {
         `[WARN] legacy reconciliation: ${item.tag} (when=${item.when}) is missing ` +
           `from the ledger but is in the closed LEGACY_BACKFILL_HASHES set — its ` +
           `schema was verified present in prod on 2026-08-17. ` +
-          `Inserting ledger row WITHOUT executing SQL. This should happen exactly once.`
+          `Inserting ledger row WITHOUT executing SQL. This should happen exactly once.`,
       );
       await sql`
         INSERT INTO drizzle.__drizzle_migrations (hash, created_at)
@@ -138,8 +138,8 @@ try {
     const content = readFileSync(join(DRIZZLE_DIR, `${item.tag}.sql`), "utf-8");
     const statements = content
       .split("--> statement-breakpoint")
-      .map(s => s.trim())
-      .filter(s => s.length > 0);
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
 
     for (const stmt of statements) {
       await exec(stmt);
@@ -153,14 +153,14 @@ try {
   }
 
   // ── 7. Summary ────────────────────────────────────────────────────────────
-  const skipped = plan.filter(p => p.action === "skip").length;
+  const skipped = plan.filter((p) => p.action === "skip").length;
   if (backfilled > 0) {
     console.log(
-      `Legacy backfill complete: ${backfilled} ledger row(s) inserted without SQL execution.`
+      `Legacy backfill complete: ${backfilled} ledger row(s) inserted without SQL execution.`,
     );
   }
   console.log(
-    `Migrations complete. Applied=${applied} Backfilled=${backfilled} Skipped=${skipped}`
+    `Migrations complete. Applied=${applied} Backfilled=${backfilled} Skipped=${skipped}`,
   );
 } catch (error) {
   console.error("Migration failed:", error);

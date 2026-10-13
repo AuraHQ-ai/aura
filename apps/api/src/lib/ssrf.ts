@@ -16,9 +16,7 @@ export async function isPrivateUrl(url: string): Promise<boolean> {
   }
 
   const bare =
-    hostname.startsWith("[") && hostname.endsWith("]")
-      ? hostname.slice(1, -1)
-      : hostname;
+    hostname.startsWith("[") && hostname.endsWith("]") ? hostname.slice(1, -1) : hostname;
 
   if (
     bare === "localhost" ||
@@ -39,19 +37,14 @@ export async function isPrivateUrl(url: string): Promise<boolean> {
   }
 
   if (family === 6) {
-    const v4Mapped = address.match(
-      /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i,
-    );
+    const v4Mapped = address.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i);
     if (v4Mapped) {
       address = v4Mapped[1];
     } else {
       if (address === "::1") return true;
       const firstWord = parseInt(address.split(":")[0], 16);
       if (firstWord >= 0xfe80 && firstWord <= 0xfebf) return true;
-      if (
-        address.toLowerCase().startsWith("fc") ||
-        address.toLowerCase().startsWith("fd")
-      ) {
+      if (address.toLowerCase().startsWith("fc") || address.toLowerCase().startsWith("fd")) {
         return true;
       }
       return false;

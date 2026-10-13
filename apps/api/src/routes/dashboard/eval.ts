@@ -67,10 +67,7 @@ dashboardEvalApp.openapi(funnelRoute, async (c) => {
         costUsd: sql<number>`coalesce(sum(${conversationTraces.costUsd}::numeric), 0)::float`,
       })
       .from(evalResponseScores)
-      .innerJoin(
-        conversationTraces,
-        eq(evalResponseScores.traceId, conversationTraces.id),
-      )
+      .innerJoin(conversationTraces, eq(evalResponseScores.traceId, conversationTraces.id))
       .where(
         sql`${evalResponseScores.verdict} IN ('failed', 'partial') AND ${evalResponseScores.failureClass} <> 'none'`,
       )
@@ -88,7 +85,9 @@ dashboardEvalApp.openapi(funnelRoute, async (c) => {
         sql`${evalResponseScores.servingIntent} IS NOT NULL AND ${evalResponseScores.scorable}`,
       )
       .groupBy(evalResponseScores.servingIntent)
-      .orderBy(sql`count(*) filter (where ${evalResponseScores.verdict} = 'failed') desc, count(*) desc`)
+      .orderBy(
+        sql`count(*) filter (where ${evalResponseScores.verdict} = 'failed') desc, count(*) desc`,
+      )
       .limit(25);
 
     const byUser = await db
@@ -99,15 +98,12 @@ dashboardEvalApp.openapi(funnelRoute, async (c) => {
         costUsd: sql<number>`coalesce(sum(${conversationTraces.costUsd}::numeric), 0)::float`,
       })
       .from(evalResponseScores)
-      .innerJoin(
-        conversationTraces,
-        eq(evalResponseScores.traceId, conversationTraces.id),
-      )
-      .where(
-        sql`${conversationTraces.userId} IS NOT NULL AND ${evalResponseScores.scorable}`,
-      )
+      .innerJoin(conversationTraces, eq(evalResponseScores.traceId, conversationTraces.id))
+      .where(sql`${conversationTraces.userId} IS NOT NULL AND ${evalResponseScores.scorable}`)
       .groupBy(conversationTraces.userId)
-      .orderBy(sql`count(*) filter (where ${evalResponseScores.verdict} = 'failed') desc, count(*) desc`)
+      .orderBy(
+        sql`count(*) filter (where ${evalResponseScores.verdict} = 'failed') desc, count(*) desc`,
+      )
       .limit(25);
 
     const userIds = byUser.map((r) => r.userId).filter(Boolean) as string[];
@@ -117,9 +113,7 @@ dashboardEvalApp.openapi(funnelRoute, async (c) => {
         .select({ slackUserId: users.slackUserId, displayName: users.displayName })
         .from(users)
         .where(sql`${users.slackUserId} IN ${userIds}`);
-      userNames = Object.fromEntries(
-        profileRows.map((r) => [r.slackUserId, r.displayName]),
-      );
+      userNames = Object.fromEntries(profileRows.map((r) => [r.slackUserId, r.displayName]));
     }
 
     return c.json(
@@ -129,7 +123,7 @@ dashboardEvalApp.openapi(funnelRoute, async (c) => {
         byIntent,
         byUser: byUser.map((r) => ({
           ...r,
-          resolvedName: r.userId ? userNames[r.userId] ?? null : null,
+          resolvedName: r.userId ? (userNames[r.userId] ?? null) : null,
         })),
       } as any,
       200,
@@ -146,8 +140,7 @@ const benchCandidatesRoute = createRoute({
   method: "get",
   path: "/bench-candidates",
   tags: ["Eval"],
-  summary:
-    "Ratified failed responses as bench-case candidates, deduped by failure class",
+  summary: "Ratified failed responses as bench-case candidates, deduped by failure class",
   responses: {
     200: {
       content: { "application/json": { schema: z.any() } },
@@ -263,15 +256,13 @@ dashboardEvalApp.openapi(listScoresRoute, async (c) => {
     }
     if (scorable === "true") conditions.push(eq(evalResponseScores.scorable, true));
     if (scorable === "false") conditions.push(eq(evalResponseScores.scorable, false));
-    if (ratified === "true")
-      conditions.push(sql`${evalResponseScores.ratifiedBy} IS NOT NULL`);
-    if (ratified === "false")
-      conditions.push(sql`${evalResponseScores.ratifiedBy} IS NULL`);
+    if (ratified === "true") conditions.push(sql`${evalResponseScores.ratifiedBy} IS NOT NULL`);
+    if (ratified === "false") conditions.push(sql`${evalResponseScores.ratifiedBy} IS NULL`);
     if (userId) conditions.push(eq(conversationTraces.userId, userId));
     if (threadTs) conditions.push(eq(evalResponseScores.threadTs, threadTs));
     if (search) {
       conditions.push(
-        sql`(${evalResponseScores.servingIntent} ILIKE ${"%" + search + "%"} OR ${evalResponseScores.note} ILIKE ${"%" + search + "%"})`,
+        sql`(${evalResponseScores.servingIntent} ILIKE ${`%${search}%`} OR ${evalResponseScores.note} ILIKE ${`%${search}%`})`,
       );
     }
     const where = conditions.length > 0 ? and(...conditions) : undefined;
@@ -279,10 +270,7 @@ dashboardEvalApp.openapi(listScoresRoute, async (c) => {
     const [{ value: total }] = await db
       .select({ value: sql<number>`count(*)::int` })
       .from(evalResponseScores)
-      .innerJoin(
-        conversationTraces,
-        eq(evalResponseScores.traceId, conversationTraces.id),
-      )
+      .innerJoin(conversationTraces, eq(evalResponseScores.traceId, conversationTraces.id))
       .where(where);
 
     const rows = await db
@@ -295,27 +283,20 @@ dashboardEvalApp.openapi(listScoresRoute, async (c) => {
         traceCreatedAt: conversationTraces.createdAt,
       })
       .from(evalResponseScores)
-      .innerJoin(
-        conversationTraces,
-        eq(evalResponseScores.traceId, conversationTraces.id),
-      )
+      .innerJoin(conversationTraces, eq(evalResponseScores.traceId, conversationTraces.id))
       .where(where)
       .orderBy(desc(conversationTraces.createdAt), desc(evalResponseScores.createdAt))
       .limit(limit)
       .offset(offset);
 
-    const userIds = [
-      ...new Set(rows.map((r) => r.traceUserId).filter(Boolean)),
-    ] as string[];
+    const userIds = [...new Set(rows.map((r) => r.traceUserId).filter(Boolean))] as string[];
     let userNames: Record<string, string> = {};
     if (userIds.length > 0) {
       const profileRows = await db
         .select({ slackUserId: users.slackUserId, displayName: users.displayName })
         .from(users)
         .where(sql`${users.slackUserId} IN ${userIds}`);
-      userNames = Object.fromEntries(
-        profileRows.map((r) => [r.slackUserId, r.displayName]),
-      );
+      userNames = Object.fromEntries(profileRows.map((r) => [r.slackUserId, r.displayName]));
     }
 
     const items = rows.map((row) => ({
@@ -325,7 +306,7 @@ dashboardEvalApp.openapi(listScoresRoute, async (c) => {
       modelId: row.traceModelId,
       costUsd: row.traceCostUsd,
       respondedAt: row.traceCreatedAt,
-      resolvedName: row.traceUserId ? userNames[row.traceUserId] ?? null : null,
+      resolvedName: row.traceUserId ? (userNames[row.traceUserId] ?? null) : null,
     }));
 
     return c.json({ items, total } as any, 200);
@@ -372,10 +353,7 @@ dashboardEvalApp.openapi(getScoreRoute, async (c) => {
         traceCreatedAt: conversationTraces.createdAt,
       })
       .from(evalResponseScores)
-      .innerJoin(
-        conversationTraces,
-        eq(evalResponseScores.traceId, conversationTraces.id),
-      )
+      .innerJoin(conversationTraces, eq(evalResponseScores.traceId, conversationTraces.id))
       .where(eq(evalResponseScores.id, id));
 
     if (!row) return c.json({ error: "Not found" }, 404);

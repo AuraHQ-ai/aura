@@ -185,9 +185,7 @@ async function isRecurringJobDue(job: typeof jobs.$inferSelect): Promise<boolean
   // which every trigger stamps (issue #1238). jobs.lastExecutedAt remains the
   // cron-tick dedup anchor above — only the frequency gates moved.
   const lastScheduledAt =
-    config.minIntervalHours || config.cooldownHours
-      ? await lastScheduledExecutionAt(job.id)
-      : null;
+    config.minIntervalHours || config.cooldownHours ? await lastScheduledExecutionAt(job.id) : null;
 
   if (config.minIntervalHours && lastScheduledAt) {
     const minIntervalMs = config.minIntervalHours * 60 * 60 * 1000;
@@ -198,8 +196,7 @@ async function isRecurringJobDue(job: typeof jobs.$inferSelect): Promise<boolean
   // a manual dispatch or recovery run reasonably consumes the daily cap.
   if (config.maxPerDay) {
     const todayStr = now.toISOString().slice(0, 10);
-    const executionsToday =
-      job.lastExecutionDate === todayStr ? job.todayExecutions : 0;
+    const executionsToday = job.lastExecutionDate === todayStr ? job.todayExecutions : 0;
     if (executionsToday >= config.maxPerDay) return false;
   }
 
@@ -227,9 +224,7 @@ async function isRecurringJobDue(job: typeof jobs.$inferSelect): Promise<boolean
  * Off-schedule pickups run as "recovery" so they don't consume the
  * minIntervalHours/cooldownHours budget in isRecurringJobDue().
  */
-function classifyRecurringPickupTrigger(
-  job: typeof jobs.$inferSelect,
-): "heartbeat" | "recovery" {
+function classifyRecurringPickupTrigger(job: typeof jobs.$inferSelect): "heartbeat" | "recovery" {
   if (!job.executeAt) return "heartbeat";
   if (!job.cronSchedule) {
     // Frequency-only recurring jobs never get an on-schedule executeAt;
@@ -245,8 +240,7 @@ function classifyRecurringPickupTrigger(
       tz: job.timezone || undefined,
     });
     const nearestTick = cron.prev().toDate();
-    const alignedWithTick =
-      Math.abs(nearestTick.getTime() - job.executeAt.getTime()) <= 1000;
+    const alignedWithTick = Math.abs(nearestTick.getTime() - job.executeAt.getTime()) <= 1000;
     return alignedWithTick ? "heartbeat" : "recovery";
   } catch {
     return "recovery";
@@ -260,7 +254,9 @@ type OrphanSweepResult = {
   dequeuedWithoutExecution: number;
 };
 
-async function notifySupervisorRetriesExhausted(job: Pick<typeof jobs.$inferSelect, "id" | "name" | "requestedBy">): Promise<void> {
+async function notifySupervisorRetriesExhausted(
+  job: Pick<typeof jobs.$inferSelect, "id" | "name" | "requestedBy">,
+): Promise<void> {
   // Internal ops notice — routed to the ops channel / founder DM, never the
   // end user's DM when an ops destination is configured.
   const result = await sendJobOpsNotice({
@@ -678,7 +674,6 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
             timezone: job.timezone,
             executeAt: executeAt.toISOString(),
           });
-
         } catch (error: any) {
           await db
             .update(jobs)
@@ -712,10 +707,7 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       }
     }
 
-    const allStaleIds = [
-      ...staleRunning.map((j) => j.id),
-      ...staleExhausted.map((j) => j.id),
-    ];
+    const allStaleIds = [...staleRunning.map((j) => j.id), ...staleExhausted.map((j) => j.id)];
 
     let interruptedExecutions: Array<{ id: string; jobId: string | null }> = [];
 
@@ -727,12 +719,7 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
           finishedAt: new Date(),
           error: "Execution interrupted: recovered by stale detection",
         })
-        .where(
-          and(
-            inArray(jobExecutions.jobId, allStaleIds),
-            eq(jobExecutions.status, "running"),
-          ),
-        )
+        .where(and(inArray(jobExecutions.jobId, allStaleIds), eq(jobExecutions.status, "running")))
         .returning({ id: jobExecutions.id, jobId: jobExecutions.jobId });
     }
 
@@ -892,10 +879,10 @@ heartbeatApp.get("/api/cron/heartbeat", async (c) => {
       // Dispatch failed — fall back to inline execution if budget still allows.
       const elapsedAfterDispatch = Date.now() - sweepStart;
       if (elapsedAfterDispatch > INLINE_EXECUTION_BUDGET_MS) {
-        logger.warn(
-          "Heartbeat: fan-out failed and budget exhausted, deferring job to next sweep",
-          { jobName: job.name, elapsedMs: elapsedAfterDispatch },
-        );
+        logger.warn("Heartbeat: fan-out failed and budget exhausted, deferring job to next sweep", {
+          jobName: job.name,
+          elapsedMs: elapsedAfterDispatch,
+        });
         deferred++;
         continue;
       }

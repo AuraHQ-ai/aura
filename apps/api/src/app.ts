@@ -53,12 +53,10 @@ import { errorEvents, notes, feedback, stopEvents } from "@aura/db/schema";
 
 const signingSecret = process.env.SLACK_SIGNING_SECRET || "";
 const botToken = process.env.SLACK_BOT_TOKEN || "";
-let botUserId = ""; // resolved lazily from settings
+const botUserId = ""; // resolved lazily from settings
 
 if (!signingSecret || !botToken) {
-  logger.warn(
-    "SLACK_SIGNING_SECRET or SLACK_BOT_TOKEN not set — Slack handlers will not work",
-  );
+  logger.warn("SLACK_SIGNING_SECRET or SLACK_BOT_TOKEN not set — Slack handlers will not work");
 }
 
 const slackClient = new WebClient(botToken);
@@ -94,7 +92,8 @@ function logProcessLevelError(
 ): void {
   try {
     const ctx = executionContext.getStore() ?? latestInFlightContext ?? undefined;
-    const write = db.insert(errorEvents)
+    const write = db
+      .insert(errorEvents)
       .values({
         errorName,
         errorMessage: stringifyUnhandledReason(reason) || errorName,
@@ -180,11 +179,7 @@ app.route("/api/mcp/oauth", createMcpOAuthApp(slackClient));
 
 // ── Slack Signature Verification ────────────────────────────────────────────
 
-function verifySlackSignature(
-  body: string,
-  timestamp: string,
-  signature: string,
-): boolean {
+function verifySlackSignature(body: string, timestamp: string, signature: string): boolean {
   if (!signingSecret) return false;
 
   // Reject requests older than 5 minutes (replay attack protection)
@@ -192,18 +187,10 @@ function verifySlackSignature(
   if (parseInt(timestamp) < fiveMinutesAgo) return false;
 
   const sigBasestring = `v0:${timestamp}:${body}`;
-  const mySignature =
-    "v0=" +
-    crypto
-      .createHmac("sha256", signingSecret)
-      .update(sigBasestring, "utf8")
-      .digest("hex");
+  const mySignature = `v0=${crypto.createHmac("sha256", signingSecret).update(sigBasestring, "utf8").digest("hex")}`;
 
   try {
-    return crypto.timingSafeEqual(
-      Buffer.from(mySignature, "utf8"),
-      Buffer.from(signature, "utf8"),
-    );
+    return crypto.timingSafeEqual(Buffer.from(mySignature, "utf8"), Buffer.from(signature, "utf8"));
   } catch {
     return false;
   }
@@ -371,12 +358,7 @@ app.post("/api/slack/events", async (c) => {
           // Assign to the outer `displaced` (declared `boolean | null` above)
           // so the post-try receipt can distinguish "stopInvocation threw"
           // (null) from "ran, displaced nothing" (false).
-          const stopResult = await stopInvocation(
-            channelId,
-            threadTs,
-            eventTs,
-            workspaceId,
-          );
+          const stopResult = await stopInvocation(channelId, threadTs, eventTs, workspaceId);
           displaced = stopResult.displaced;
           const stopId = stopResult.stopId;
           // Append-only stop receipt (issue #1359) — the durable audit trail
@@ -463,17 +445,14 @@ app.post("/api/slack/events", async (c) => {
       const contextPromise = (async () => {
         // The event itself carries no `user` field in the documented payload;
         // fall back to the event wrapper's authorization.
-        const userId: string | undefined =
-          event.user || body.authorizations?.[0]?.user_id;
+        const userId: string | undefined = event.user || body.authorizations?.[0]?.user_id;
         if (!userId) {
           logger.warn("app_context_changed without resolvable user", { event });
           return;
         }
         try {
           const { upsertAppContext } = await import("./lib/app-context.js");
-          const entities = Array.isArray(event.context?.entities)
-            ? event.context.entities
-            : [];
+          const entities = Array.isArray(event.context?.entities) ? event.context.entities : [];
           await upsertAppContext({
             workspaceId: process.env.DEFAULT_WORKSPACE_ID || "default",
             userId,
@@ -509,11 +488,9 @@ app.post("/api/slack/events", async (c) => {
         waitUntil(bootstrapPromise);
       }
 
-      const homePromise = publishHomeTab(slackClient, event.user).catch(
-        (err) => {
-          recordError("app_home", err, { userId: event.user });
-        },
-      );
+      const homePromise = publishHomeTab(slackClient, event.user).catch((err) => {
+        recordError("app_home", err, { userId: event.user });
+      });
       waitUntil(homePromise);
       return c.json({ ok: true });
     }
@@ -537,26 +514,28 @@ app.post("/api/slack/events", async (c) => {
       workspaceId: process.env.DEFAULT_WORKSPACE_ID || "default",
     };
     latestInFlightContext = eventExecutionContext;
-    const pipelinePromise = executionContext.run(
-      eventExecutionContext,
-      async () =>
+    const pipelinePromise = executionContext
+      .run(eventExecutionContext, async () =>
         runPipeline({
           event,
           client: slackClient,
-          botUserId: botUserId || await getConfig("aura_bot_user_id"),
+          botUserId: botUserId || (await getConfig("aura_bot_user_id")),
           teamId: body.team_id,
         }),
-    ).catch((err) => {
-      recordError("pipeline", err, {
-        eventType: event.type,
-        channel: event.channel,
-      });
-    }).finally(() => {
-      if (latestInFlightContext === eventExecutionContext) {
-        latestInFlightContext = null;
-      }
-    // Flush Langfuse spans for this turn before the keep-alive window closes.
-    }).finally(() => flushLangfuse());
+      )
+      .catch((err) => {
+        recordError("pipeline", err, {
+          eventType: event.type,
+          channel: event.channel,
+        });
+      })
+      .finally(() => {
+        if (latestInFlightContext === eventExecutionContext) {
+          latestInFlightContext = null;
+        }
+        // Flush Langfuse spans for this turn before the keep-alive window closes.
+      })
+      .finally(() => flushLangfuse());
 
     // Keep the function alive after the response is sent so the
     // pipeline can finish (LLM call, Slack reply, memory extraction).
@@ -615,15 +594,23 @@ app.post("/api/slack/interactions", async (c) => {
         if (messageTs && channelId && userId) {
           const feedbackPromise = (async () => {
             try {
-              await db.insert(feedback).values({
-                messageTs,
-                channelId,
-                userId,
-                value: action.value,
-              }).onConflictDoUpdate({
-                target: [feedback.workspaceId, feedback.messageTs, feedback.channelId, feedback.userId],
-                set: { value: sql`excluded.value` },
-              });
+              await db
+                .insert(feedback)
+                .values({
+                  messageTs,
+                  channelId,
+                  userId,
+                  value: action.value,
+                })
+                .onConflictDoUpdate({
+                  target: [
+                    feedback.workspaceId,
+                    feedback.messageTs,
+                    feedback.channelId,
+                    feedback.userId,
+                  ],
+                  set: { value: sql`excluded.value` },
+                });
 
               if (action.value === "negative") {
                 const threadTs = payload.message?.thread_ts || messageTs;
@@ -676,8 +663,8 @@ app.post("/api/slack/interactions", async (c) => {
 
       if (action.action_id === TOOLS_REPO_SAVE_ACTION) {
         const newValue =
-          payload.view?.state?.values?.tools_repo_input_block?.tools_repo_value
-            ?.value?.trim() ?? "";
+          payload.view?.state?.values?.tools_repo_input_block?.tools_repo_value?.value?.trim() ??
+          "";
 
         const savePromise = (async () => {
           try {
@@ -708,10 +695,7 @@ app.post("/api/slack/interactions", async (c) => {
 
       // ── User API Credential actions ──────────────────────────────────
       if (action.action_id === "api_credential_add" && payload.trigger_id) {
-        const addPromise = openAddCredentialModal(
-          slackClient,
-          payload.trigger_id,
-        ).catch((err) => {
+        const addPromise = openAddCredentialModal(slackClient, payload.trigger_id).catch((err) => {
           recordError("interactions.api_credential_add_modal", err, { userId });
         });
         waitUntil(addPromise);
@@ -730,25 +714,30 @@ app.post("/api/slack/interactions", async (c) => {
             nameBlock.element.initial_value = currentName;
           }
         }
-        const updatePromise = slackClient.views.update({
-          view_id: payload.view.id,
-          hash: payload.view.hash,
-          view: {
-            type: "modal",
-            callback_id: "api_credential_add_submit",
-            title: { type: "plain_text", text: "Add API Credential" },
-            submit: { type: "plain_text", text: "Save" },
-            close: { type: "plain_text", text: "Cancel" },
-            blocks,
-          },
-        }).catch((err: unknown) => {
-          recordError("interactions.cred_type_switch", err, { userId, selectedType });
-        });
+        const updatePromise = slackClient.views
+          .update({
+            view_id: payload.view.id,
+            hash: payload.view.hash,
+            view: {
+              type: "modal",
+              callback_id: "api_credential_add_submit",
+              title: { type: "plain_text", text: "Add API Credential" },
+              submit: { type: "plain_text", text: "Save" },
+              close: { type: "plain_text", text: "Cancel" },
+              blocks,
+            },
+          })
+          .catch((err: unknown) => {
+            recordError("interactions.cred_type_switch", err, { userId, selectedType });
+          });
         waitUntil(updatePromise);
       }
 
       // Overflow menu actions (Update/Share/Delete)
-      if (action.action_id?.startsWith("api_credential_overflow_") && action.selected_option?.value) {
+      if (
+        action.action_id?.startsWith("api_credential_overflow_") &&
+        action.selected_option?.value
+      ) {
         const selectedValue = action.selected_option.value as string;
 
         if (selectedValue.startsWith("api_credential_update_")) {
@@ -856,7 +845,6 @@ app.post("/api/slack/interactions", async (c) => {
         })();
         waitUntil(denyPromise);
       }
-
     }
   }
 
@@ -866,9 +854,7 @@ app.post("/api/slack/interactions", async (c) => {
 
     if (callbackId === "credential_submit" && userId && (await hasRole(userId, "admin"))) {
       const credentialKey = payload.view?.private_metadata;
-      const newValue =
-        payload.view?.state?.values?.credential_input_block?.credential_value
-          ?.value;
+      const newValue = payload.view?.state?.values?.credential_input_block?.credential_value?.value;
 
       if (credentialKey && newValue) {
         const savePromise = (async () => {
@@ -890,14 +876,17 @@ app.post("/api/slack/interactions", async (c) => {
     if (callbackId === "api_credential_add_submit" && userId) {
       const name = payload.view?.state?.values?.cred_name_block?.cred_name?.value;
       const expiryStr = payload.view?.state?.values?.cred_expiry_block?.cred_expiry?.selected_date;
-      const credType = (payload.view?.state?.values?.cred_type_block?.cred_type?.selected_option?.value || "token") as "token" | "oauth_client";
+      const credType = (payload.view?.state?.values?.cred_type_block?.cred_type?.selected_option
+        ?.value || "token") as "token" | "oauth_client";
 
       let value: string | undefined;
       let tokenUrl: string | undefined;
       if (credType === "oauth_client") {
         const clientId = payload.view?.state?.values?.cred_client_id_block?.cred_client_id?.value;
-        const clientSecret = payload.view?.state?.values?.cred_client_secret_block?.cred_client_secret?.value;
-        tokenUrl = payload.view?.state?.values?.cred_token_url_block?.cred_token_url?.value || undefined;
+        const clientSecret =
+          payload.view?.state?.values?.cred_client_secret_block?.cred_client_secret?.value;
+        tokenUrl =
+          payload.view?.state?.values?.cred_token_url_block?.cred_token_url?.value || undefined;
         if (clientId && clientSecret) {
           value = JSON.stringify({ client_id: clientId, client_secret: clientSecret });
         }
@@ -906,7 +895,6 @@ app.post("/api/slack/interactions", async (c) => {
       }
 
       if (name && value) {
-
         const expiresAt = expiryStr ? new Date(expiryStr) : undefined;
         const addPromise = (async () => {
           try {
@@ -941,7 +929,13 @@ app.post("/api/slack/interactions", async (c) => {
               return;
             }
 
-            await storeApiCredential(cred.owner_id, cred.name, value, cred.expires_at ?? undefined, (cred.type as "token" | "oauth_client") ?? "token");
+            await storeApiCredential(
+              cred.owner_id,
+              cred.name,
+              value,
+              cred.expires_at ?? undefined,
+              (cred.type as "token" | "oauth_client") ?? "token",
+            );
             await publishHomeTab(slackClient, userId);
           } catch (err) {
             recordError("interactions.api_credential_update", err, { userId, credentialId });
@@ -954,12 +948,19 @@ app.post("/api/slack/interactions", async (c) => {
     if (callbackId === "api_credential_share_submit" && userId) {
       const credentialId = payload.view?.private_metadata;
       const granteeId = payload.view?.state?.values?.share_users_block?.share_user?.selected_user;
-      const permission = payload.view?.state?.values?.share_permission_block?.share_permission?.selected_option?.value;
+      const permission =
+        payload.view?.state?.values?.share_permission_block?.share_permission?.selected_option
+          ?.value;
 
       if (credentialId && granteeId && permission) {
         const sharePromise = (async () => {
           try {
-            await grantApiCredentialAccess(credentialId, userId, granteeId, permission as "read" | "write" | "admin");
+            await grantApiCredentialAccess(
+              credentialId,
+              userId,
+              granteeId,
+              permission as "read" | "write" | "admin",
+            );
             await publishHomeTab(slackClient, userId);
           } catch (err) {
             recordError("interactions.api_credential_share", err, { userId, credentialId });
@@ -991,7 +992,7 @@ app.get("/api/oauth/google/auth-url", async (c) => {
     }
   }
 
-  const resolvedUserId = userId || await getConfig("aura_bot_user_id", "aura");
+  const resolvedUserId = userId || (await getConfig("aura_bot_user_id", "aura"));
   const url = generateAuthUrlForUser(resolvedUserId);
   if (!url) return c.json({ error: "Gmail OAuth not configured" }, 500);
 
@@ -1027,7 +1028,11 @@ app.get("/api/oauth/google/callback", async (c) => {
 
   const { exchangeCodeForTokens, saveUserRefreshToken } = await import("./lib/gmail.js");
   const result = await exchangeCodeForTokens(code);
-  if (!result.refreshToken) return c.json({ error: "Token exchange failed", detail: result.error || "No refresh token returned" }, 500);
+  if (!result.refreshToken)
+    return c.json(
+      { error: "Token exchange failed", detail: result.error || "No refresh token returned" },
+      500,
+    );
 
   // Always save to oauth_tokens table, keyed by (user_id, provider)
   try {
@@ -1038,11 +1043,17 @@ app.get("/api/oauth/google/callback", async (c) => {
       message: `Gmail connected for ${userId}! Refresh token saved. Active immediately — no redeploy needed.`,
     });
   } catch (saveError: any) {
-    logger.error("Failed to save refresh token to oauth_tokens", { userId, error: saveError.message });
-    return c.json({
-      success: false,
-      error: `Failed to save token: ${saveError.message}`,
-    }, 500);
+    logger.error("Failed to save refresh token to oauth_tokens", {
+      userId,
+      error: saveError.message,
+    });
+    return c.json(
+      {
+        success: false,
+        error: `Failed to save token: ${saveError.message}`,
+      },
+      500,
+    );
   }
 });
 
@@ -1056,22 +1067,14 @@ app.route("/api/webhook/github", createGitHubWebhookApp());
 
 // ── Cursor Agent Webhook ───────────────────────────────────────────────────
 
-function verifyCursorWebhookSignature(
-  rawBody: string,
-  signature: string,
-): boolean {
+function verifyCursorWebhookSignature(rawBody: string, signature: string): boolean {
   const secret = process.env.CURSOR_WEBHOOK_SECRET;
   if (!secret || !signature) return false;
 
-  const expected =
-    "sha256=" +
-    crypto.createHmac("sha256", secret).update(rawBody, "utf8").digest("hex");
+  const expected = `sha256=${crypto.createHmac("sha256", secret).update(rawBody, "utf8").digest("hex")}`;
 
   try {
-    return crypto.timingSafeEqual(
-      Buffer.from(expected, "utf8"),
-      Buffer.from(signature, "utf8"),
-    );
+    return crypto.timingSafeEqual(Buffer.from(expected, "utf8"), Buffer.from(signature, "utf8"));
   } catch {
     return false;
   }
@@ -1101,8 +1104,7 @@ app.post("/api/webhook/cursor-agent", async (c) => {
   const agentId: string = payload.id || payload.agentId || "";
   const status: string = payload.status || payload.event || "";
   const prUrl: string = payload.target?.prUrl || payload.prUrl || "";
-  const branchName: string =
-    payload.target?.branchName || payload.branchName || "";
+  const branchName: string = payload.target?.branchName || payload.branchName || "";
   const summary: string = payload.summary || "";
   const webhookId = c.req.header("x-webhook-id") || "";
 
@@ -1117,8 +1119,9 @@ app.post("/api/webhook/cursor-agent", async (c) => {
   // "completed" both mean done) and redelivers on uncertain delivery. Without
   // a claim here, every delivery re-runs processWebhook() and re-posts to
   // Slack — three identical DMs for one agent. Issue #1408.
-  const { cursorWebhookLockKey, claimCursorWebhook, releaseCursorWebhookClaim } =
-    await import("./lib/cursor-webhook-dedup.js");
+  const { cursorWebhookLockKey, claimCursorWebhook, releaseCursorWebhookClaim } = await import(
+    "./lib/cursor-webhook-dedup.js"
+  );
   const lockKey = cursorWebhookLockKey(agentId, status, webhookId);
   const claimed = await claimCursorWebhook(lockKey);
 
@@ -1148,17 +1151,13 @@ app.post("/api/webhook/cursor-agent", async (c) => {
 
         if (trackingRows[0]?.content) {
           const content = trackingRows[0].content;
-          const requesterMatch = content.match(
-            /\*\*Requester\*\*:\s*(\S+)/,
-          );
+          const requesterMatch = content.match(/\*\*Requester\*\*:\s*(\S+)/);
           const channelMatch = content.match(/\*\*Channel\*\*:\s*(\S+)/);
           const threadMatch = content.match(/\*\*Thread\*\*:\s*(\S+)/);
           const repoMatch = content.match(/\*\*Repo\*\*:\s*(\S+)/);
-          if (requesterMatch && requesterMatch[1] !== "unknown")
-            requester = requesterMatch[1];
+          if (requesterMatch && requesterMatch[1] !== "unknown") requester = requesterMatch[1];
           if (channelMatch) channelId = channelMatch[1];
-          if (threadMatch && threadMatch[1] !== "none")
-            threadTs = threadMatch[1];
+          if (threadMatch && threadMatch[1] !== "none") threadTs = threadMatch[1];
           if (repoMatch) repo = repoMatch[1];
         }
       }
@@ -1175,19 +1174,14 @@ app.post("/api/webhook/cursor-agent", async (c) => {
       }
 
       const isFinished =
-        status.toLowerCase() === "finished" ||
-        status.toLowerCase() === "completed";
-      const isError =
-        status.toLowerCase() === "error" ||
-        status.toLowerCase() === "failed";
+        status.toLowerCase() === "finished" || status.toLowerCase() === "completed";
+      const isError = status.toLowerCase() === "error" || status.toLowerCase() === "failed";
 
       let resolvedPrUrl = prUrl;
       if (isFinished && !resolvedPrUrl && branchName) {
         try {
           const { getCredential } = await import("./lib/credentials.js");
-          const { resolveCursorAgentPrUrl } = await import(
-            "./lib/cursor-agent.js"
-          );
+          const { resolveCursorAgentPrUrl } = await import("./lib/cursor-agent.js");
           const ghToken = await getCredential("github_token");
           resolvedPrUrl = await resolveCursorAgentPrUrl({
             branchName,
@@ -1202,9 +1196,7 @@ app.post("/api/webhook/cursor-agent", async (c) => {
       if (isFinished && resolvedPrUrl) {
         try {
           const { getCredential } = await import("./lib/credentials.js");
-          const { markPullRequestReadyForReview } = await import(
-            "./lib/cursor-agent.js"
-          );
+          const { markPullRequestReadyForReview } = await import("./lib/cursor-agent.js");
           const ghToken = await getCredential("github_token");
           await markPullRequestReadyForReview({
             prUrl: resolvedPrUrl,
@@ -1227,9 +1219,7 @@ app.post("/api/webhook/cursor-agent", async (c) => {
             const ghToken = await getCredential("github_token");
             if (ghToken) {
               const prNumber = prMatch[1];
-              const repoMatch = resolvedPrUrl.match(
-                /github\.com\/([^/]+\/[^/]+)\/pull/,
-              );
+              const repoMatch = resolvedPrUrl.match(/github\.com\/([^/]+\/[^/]+)\/pull/);
               if (repoMatch) {
                 const ghRes = await fetch(
                   `https://api.github.com/repos/${repoMatch[1]}/pulls/${prNumber}`,
@@ -1266,9 +1256,7 @@ app.post("/api/webhook/cursor-agent", async (c) => {
             ? `\u2705 *<${resolvedPrUrl}|${safePrTitle}>*`
             : `\u2705 *<${resolvedPrUrl}|${linkLabel}>*`
           : "\u2705 Agent finished";
-        const branchLine = branchName
-          ? `\n_Branch:_ \`${branchName}\``
-          : "";
+        const branchLine = branchName ? `\n_Branch:_ \`${branchName}\`` : "";
         const summaryLine = summary ? `\n\n${summary}` : "";
         message = `${prLine}${branchLine}${summaryLine}`;
       } else if (isError) {
@@ -1279,9 +1267,7 @@ app.post("/api/webhook/cursor-agent", async (c) => {
 
       if (isFinished && agentId) {
         try {
-          const { getCursorConversation } = await import(
-            "./lib/cursor-agent.js"
-          );
+          const { getCursorConversation } = await import("./lib/cursor-agent.js");
           const conversation = await getCursorConversation(agentId);
           if (conversation?.summary) {
             message += `\n\n_${conversation.summary}_`;
@@ -1294,8 +1280,7 @@ app.post("/api/webhook/cursor-agent", async (c) => {
       const dmChannelId = await resolveSlackDestination(slackClient, dmTarget);
 
       if (dmChannelId) {
-        const useThreadTs =
-          channelId === dmChannelId && threadTs ? threadTs : undefined;
+        const useThreadTs = channelId === dmChannelId && threadTs ? threadTs : undefined;
         await safePostMessage(slackClient, {
           channel: dmChannelId,
           thread_ts: useThreadTs,
@@ -1308,11 +1293,7 @@ app.post("/api/webhook/cursor-agent", async (c) => {
         });
       }
 
-      if (
-        channelId &&
-        channelId !== "unknown" &&
-        channelId !== dmChannelId
-      ) {
+      if (channelId && channelId !== "unknown" && channelId !== dmChannelId) {
         await safePostMessage(slackClient, {
           channel: channelId,
           thread_ts: threadTs || undefined,

@@ -1,7 +1,14 @@
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { apiGet, apiDelete } from "@/lib/api";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -66,7 +73,8 @@ function MemoriesPage() {
     },
   });
 
-  if (error && !data) return <div className="text-destructive text-sm">Failed to load memories: {error.message}</div>;
+  if (error && !data)
+    return <div className="text-destructive text-sm">Failed to load memories: {error.message}</div>;
 
   const memories = data?.items ?? [];
   const total = data?.total ?? 0;
@@ -75,9 +83,7 @@ function MemoriesPage() {
     <div className="flex flex-col gap-4 flex-1 min-h-0">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold tracking-tight">Memories</h1>
-        <span className="text-sm text-muted-foreground">
-          {isLoading ? "…" : `${total} total`}
-        </span>
+        <span className="text-sm text-muted-foreground">{isLoading ? "…" : `${total} total`}</span>
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
@@ -87,7 +93,13 @@ function MemoriesPage() {
             { to: "/memories/entities", label: "Entities", icon: <Network /> },
           ]}
         />
-        <form onSubmit={(e) => { e.preventDefault(); setParams({ search: searchInput || undefined, page: undefined }); }} className="relative flex-1 max-w-sm">
+        <form
+          onSubmit={(e) => {
+            e.preventDefault();
+            setParams({ search: searchInput || undefined, page: undefined });
+          }}
+          className="relative flex-1 max-w-sm"
+        >
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
             placeholder="Search memories (press Enter)..."
@@ -103,12 +115,19 @@ function MemoriesPage() {
         >
           <option value="">All types</option>
           {MEMORY_TYPES.map((t) => (
-            <option key={t} value={t}>{t}</option>
+            <option key={t} value={t}>
+              {t}
+            </option>
           ))}
         </select>
       </div>
 
-      <div className={cn("flex-1 min-h-0 rounded-xl border overflow-auto transition-opacity", isFetching && !isLoading && "opacity-50")}>
+      <div
+        className={cn(
+          "flex-1 min-h-0 rounded-xl border overflow-auto transition-opacity",
+          isFetching && !isLoading && "opacity-50",
+        )}
+      >
         <Table className="min-w-[600px]">
           <TableHeader>
             <TableRow>
@@ -126,7 +145,9 @@ function MemoriesPage() {
               <TableRowsSkeleton columns={7} />
             ) : memories.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={7} className="text-center text-muted-foreground py-8">No memories found</TableCell>
+                <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                  No memories found
+                </TableCell>
               </TableRow>
             ) : (
               memories.map((memory) => (
@@ -136,11 +157,19 @@ function MemoriesPage() {
                       {truncate(memory.content, 80)}
                     </Link>
                   </TableCell>
-                  <TableCell><Badge variant="secondary">{memory.type}</Badge></TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{memory.category ?? "—"}</TableCell>
-                  <TableCell className="text-sm text-muted-foreground">{memory.importance ?? "—"}</TableCell>
+                  <TableCell>
+                    <Badge variant="secondary">{memory.type}</Badge>
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {memory.category ?? "—"}
+                  </TableCell>
+                  <TableCell className="text-sm text-muted-foreground">
+                    {memory.importance ?? "—"}
+                  </TableCell>
                   <TableCell>{memory.relevanceScore?.toFixed(2) ?? "—"}</TableCell>
-                  <TableCell className="text-muted-foreground text-sm">{formatDate(memory.createdAt)}</TableCell>
+                  <TableCell className="text-muted-foreground text-sm">
+                    {formatDate(memory.createdAt)}
+                  </TableCell>
                   <TableCell>
                     <Button variant="ghost" size="icon-sm" onClick={() => setDeleteId(memory.id)}>
                       <Trash2 className="h-4 w-4 text-destructive" />
@@ -153,7 +182,12 @@ function MemoriesPage() {
         </Table>
       </div>
 
-      <Pagination total={total} pageSize={PAGE_SIZE} page={page ?? 1} onPageChange={(p) => setParams({ page: p > 1 ? p : undefined })} />
+      <Pagination
+        total={total}
+        pageSize={PAGE_SIZE}
+        page={page ?? 1}
+        onPageChange={(p) => setParams({ page: p > 1 ? p : undefined })}
+      />
 
       <Dialog open={!!deleteId} onOpenChange={() => setDeleteId(null)}>
         <DialogContent>
@@ -162,7 +196,9 @@ function MemoriesPage() {
           </DialogHeader>
           <p className="text-sm text-muted-foreground">This action cannot be undone.</p>
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setDeleteId(null)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setDeleteId(null)}>
+              Cancel
+            </Button>
             <Button
               variant="destructive"
               onClick={() => deleteId && deleteMutation.mutate(deleteId)}
@@ -182,6 +218,11 @@ export const Route = createFileRoute("/memories/")({
   validateSearch: (raw: Record<string, unknown>) => ({
     search: typeof raw.search === "string" ? raw.search : undefined,
     type: typeof raw.type === "string" ? raw.type : undefined,
-    page: typeof raw.page === "number" ? raw.page : typeof raw.page === "string" ? Number(raw.page) || undefined : undefined,
+    page:
+      typeof raw.page === "number"
+        ? raw.page
+        : typeof raw.page === "string"
+          ? Number(raw.page) || undefined
+          : undefined,
   }),
 });

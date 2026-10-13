@@ -102,25 +102,9 @@ const FAMILY_PRONOUNS: Record<PronounFamily, Record<PronounCategory, string>> = 
   },
 };
 
-const MALE_GENDER_VALUES = new Set([
-  "male",
-  "man",
-  "masculine",
-  "he",
-  "him",
-  "he/him",
-  "m",
-]);
+const MALE_GENDER_VALUES = new Set(["male", "man", "masculine", "he", "him", "he/him", "m"]);
 
-const FEMALE_GENDER_VALUES = new Set([
-  "female",
-  "woman",
-  "feminine",
-  "she",
-  "her",
-  "she/her",
-  "f",
-]);
+const FEMALE_GENDER_VALUES = new Set(["female", "woman", "feminine", "she", "her", "she/her", "f"]);
 
 const NEUTRAL_GENDER_VALUES = new Set([
   "non-binary",
@@ -191,10 +175,7 @@ export function classifyPronounSummary(
     };
   }
 
-  if (
-    scan.presentFamilies.length === 1 &&
-    scan.presentFamilies[0] === expectedFamily
-  ) {
+  if (scan.presentFamilies.length === 1 && scan.presentFamilies[0] === expectedFamily) {
     return {
       kind: "MATCH",
       reason: "Summary pronouns align with user gender.",
@@ -284,22 +265,19 @@ function resolvePronounCategory(
       if (nextWord) return { category: "possessiveAdjective" };
       return {
         category: "possessiveAdjective",
-        ambiguousReason:
-          "Ambiguous `her`; defaulted to possessive adjective mapping.",
+        ambiguousReason: "Ambiguous `her`; defaulted to possessive adjective mapping.",
       };
     case "his":
       if (nextWord) return { category: "possessiveAdjective" };
       return {
         category: "possessiveAdjective",
-        ambiguousReason:
-          "Ambiguous `his`; defaulted to possessive adjective mapping.",
+        ambiguousReason: "Ambiguous `his`; defaulted to possessive adjective mapping.",
       };
     case "their":
       if (nextWord) return { category: "possessiveAdjective" };
       return {
         category: "possessiveAdjective",
-        ambiguousReason:
-          "Ambiguous `their`; defaulted to possessive adjective mapping.",
+        ambiguousReason: "Ambiguous `their`; defaulted to possessive adjective mapping.",
       };
   }
 }
@@ -340,14 +318,8 @@ export function patchSimplePronounMismatch(
       continue;
     }
 
-    const resolution = resolvePronounCategory(
-      matchedToken,
-      summary,
-      matchStart,
-      matchEnd,
-    );
-    const replacement =
-      FAMILY_PRONOUNS[targetFamily][resolution.category] ?? matchedToken;
+    const resolution = resolvePronounCategory(matchedToken, summary, matchStart, matchEnd);
+    const replacement = FAMILY_PRONOUNS[targetFamily][resolution.category] ?? matchedToken;
     const casedReplacement = applyCasePattern(matchedPronoun, replacement);
 
     if (resolution.ambiguousReason) {

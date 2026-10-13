@@ -2,8 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const writeToSandboxMock = vi.hoisted(() =>
   vi.fn(
-    async (filename: string, _data: Buffer, _userId: string) =>
-      `/home/user/downloads/${filename}`,
+    async (filename: string, _data: Buffer, _userId: string) => `/home/user/downloads/${filename}`,
   ),
 );
 const getOrCreateSandboxMock = vi.hoisted(() => vi.fn());

@@ -5,14 +5,8 @@ import { mcpConnections, mcpServers, type McpConnection, type McpServer } from "
 import { db } from "../../db/client.js";
 import { encryptCredential } from "../../lib/credentials.js";
 import { logger } from "../../lib/logger.js";
-import {
-  startMcpOAuth,
-  upsertPendingConnection,
-} from "../../lib/mcp-oauth.js";
-import {
-  createMcpClientForServer,
-  refreshMcpToolCache,
-} from "../../lib/mcp-runtime.js";
+import { startMcpOAuth, upsertPendingConnection } from "../../lib/mcp-oauth.js";
+import { createMcpClientForServer, refreshMcpToolCache } from "../../lib/mcp-runtime.js";
 import {
   featuredMcpServers,
   getMarketplaceCatalog,
@@ -155,10 +149,7 @@ const mcpCatalogEntrySchema = z.object({
   installedServerId: z.string().nullable(),
 });
 
-function withInstalledState(
-  entries: McpCatalogEntry[],
-  installedByUrl: Map<string, string>,
-) {
+function withInstalledState(entries: McpCatalogEntry[], installedByUrl: Map<string, string>) {
   return entries.map((entry) => {
     const installedServerId = installedByUrl.get(normalizeMcpUrl(entry.url)) ?? null;
     return {
@@ -294,9 +285,7 @@ dashboardMcpApp.openapi(marketplaceRoute, async (c) => {
             ? and(eq(mcpServers.workspaceId, workspaceId), visibility)
             : eq(mcpServers.workspaceId, workspaceId),
         );
-      installedByUrl = new Map(
-        servers.map((server) => [normalizeMcpUrl(server.url), server.id]),
-      );
+      installedByUrl = new Map(servers.map((server) => [normalizeMcpUrl(server.url), server.id]));
     } catch (error) {
       logger.warn("Failed to load installed MCP servers for marketplace", {
         error: String(error),
@@ -869,7 +858,11 @@ dashboardMcpApp.openapi(authMcpRoute, async (c) => {
   if (!loaded.userId) {
     return c.json({ error: "A signed-in user is required to start MCP OAuth" }, 400);
   }
-  if (loaded.server.visibility === "personal" && loaded.server.ownerId !== loaded.userId && !loaded.isAdmin) {
+  if (
+    loaded.server.visibility === "personal" &&
+    loaded.server.ownerId !== loaded.userId &&
+    !loaded.isAdmin
+  ) {
     return c.json({ error: "Forbidden" }, 403);
   }
 

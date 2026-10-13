@@ -62,20 +62,13 @@ export async function readCachedAppContext(
     const rows = await db
       .select()
       .from(appContextCache)
-      .where(
-        and(
-          eq(appContextCache.workspaceId, workspaceId),
-          eq(appContextCache.userId, userId),
-        ),
-      )
+      .where(and(eq(appContextCache.workspaceId, workspaceId), eq(appContextCache.userId, userId)))
       .limit(1);
 
     const row = rows[0];
     if (!row) return null;
     if (now - row.updatedAt.getTime() > APP_CONTEXT_TTL_MS) return null;
-    return Array.isArray(row.entities) && row.entities.length > 0
-      ? row.entities
-      : null;
+    return Array.isArray(row.entities) && row.entities.length > 0 ? row.entities : null;
   } catch (error: any) {
     logger.warn("Failed to read app context cache", {
       error: error?.message,
@@ -89,9 +82,7 @@ export async function readCachedAppContext(
  * Extract the inline `app_context` payload from a Slack message event
  * (present on `message.im` when the app subscribes to `app_context_changed`).
  */
-export function extractEventAppContext(
-  event: unknown,
-): AppContextEntity[] | null {
+export function extractEventAppContext(event: unknown): AppContextEntity[] | null {
   const appContext = (event as { app_context?: unknown })?.app_context as
     | { entities?: unknown }
     | undefined;
@@ -132,9 +123,7 @@ const ENTITY_RENDERERS: Record<string, (value: string) => string> = {
 };
 
 /** Render app_context entities as a short human-readable list. */
-export function renderAppContextEntities(
-  entities: AppContextEntity[],
-): string {
+export function renderAppContextEntities(entities: AppContextEntity[]): string {
   return entities
     .filter((e) => e && typeof e.type === "string" && typeof e.value === "string" && e.value)
     .map((e) => {
@@ -151,9 +140,7 @@ export function renderAppContextEntities(
  * Build the "User's current view" system-context block for the DM prompt.
  * Returns null when nothing renders. Kept deliberately small (~100 tokens).
  */
-export function buildAppContextBlock(
-  entities: AppContextEntity[],
-): string | null {
+export function buildAppContextBlock(entities: AppContextEntity[]): string | null {
   const rendered = renderAppContextEntities(entities);
   if (!rendered) return null;
   return `## User's current view

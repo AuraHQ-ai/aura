@@ -3,9 +3,7 @@ import { formatForSlack } from "./format.js";
 
 describe("formatForSlack", () => {
   it("converts **bold** to *bold*", () => {
-    expect(formatForSlack("This is **bold** text")).toBe(
-      "This is *bold* text",
-    );
+    expect(formatForSlack("This is **bold** text")).toBe("This is *bold* text");
   });
 
   it("converts markdown headers to bold", () => {

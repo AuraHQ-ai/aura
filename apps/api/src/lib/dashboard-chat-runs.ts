@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { desc, eq, inArray } from "drizzle-orm";
 import { dashboardChatRuns } from "@aura/db/schema";
 import { db } from "../db/client.js";
 import { logger } from "./logger.js";
@@ -104,9 +104,7 @@ export async function getLatestRunsForThreads(
 }
 
 /** Look up the latest run row for a single thread (reconciled). */
-export async function getLatestRunForThread(
-  threadId: string,
-): Promise<ThreadRunInfo | null> {
+export async function getLatestRunForThread(threadId: string): Promise<ThreadRunInfo | null> {
   const map = await getLatestRunsForThreads([threadId]);
   return map.get(threadId) ?? null;
 }

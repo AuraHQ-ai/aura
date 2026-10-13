@@ -20,10 +20,7 @@ export function mcpWorkspaceId(): string {
   return DEFAULT_MCP_WORKSPACE;
 }
 
-export async function uniqueMcpSlug(
-  workspaceId: string,
-  desired: string,
-): Promise<string> {
+export async function uniqueMcpSlug(workspaceId: string, desired: string): Promise<string> {
   const existing = await db
     .select({ slug: mcpServers.slug })
     .from(mcpServers)

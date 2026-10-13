@@ -50,12 +50,18 @@ export const LEGACY_BACKFILL_HASHES: ReadonlyMap<string, string> = new Map([
   ["0a4301ad0ae605a9f3f1d99c2826aac9f4a5393f50cf5387841784b9b0961f70", "0027_api_credentials"],
   ["c0a582517466882bb94712043ae880b1714dfc154ce777c3ef93aa7aea74e7f8", "0028_job_credential_ids"],
   ["767aabdfeb61dd16f6969020c426e72f4d3b2b5466231f4afebedad8f25b8cef", "0031_hybrid_memory_search"],
-  ["0c426cfbc24a40672a3ce2ad35b73746c02b2a6d6ecd87fb5ddce4bc808a18c1", "0049_remove_governance_tables"],
+  [
+    "0c426cfbc24a40672a3ce2ad35b73746c02b2a6d6ecd87fb5ddce4bc808a18c1",
+    "0049_remove_governance_tables",
+  ],
   ["1197a8ff4fc3a31c33fc1f47e5bb8e9762f0450649ae291e7b69ffcaa0fae526", "0054_echo_loop_prevention"],
   // (a) silently skipped by the watermark bug — schema verified present in prod
   ["daab31de8de4e72ccb327d8f540cf821341577580466daea694212a27977d5e0", "0017_amused_kree"],
   ["3dac0cbc18a14f60af945ff92efe78319f9d0a30068bb8514e76d4464379fff0", "0025_feedback_table"],
-  ["5856e3d56893bddb6cadcb4808121861d171c3bc5ebb8f0b3d9a60debcf291d9", "0074_dashboard_chat_runs_user_message"],
+  [
+    "5856e3d56893bddb6cadcb4808121861d171c3bc5ebb8f0b3d9a60debcf291d9",
+    "0074_dashboard_chat_runs_user_message",
+  ],
 ]);
 
 /**
@@ -82,9 +88,9 @@ export const LEGACY_BACKFILL_HASHES: ReadonlyMap<string, string> = new Map([
 export function planMigrations(
   entries: JournalEntryWithHash[],
   existingHashes: Set<string>,
-  legacyHashes: ReadonlySet<string> | ReadonlyMap<string, string> = LEGACY_BACKFILL_HASHES
+  legacyHashes: ReadonlySet<string> | ReadonlyMap<string, string> = LEGACY_BACKFILL_HASHES,
 ): MigrationPlan[] {
-  return entries.map(entry => {
+  return entries.map((entry) => {
     if (existingHashes.has(entry.hash)) {
       return { ...entry, action: "skip" as const };
     }

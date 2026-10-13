@@ -8,21 +8,36 @@ type Logo = { name: string; file: string; width: number; href: string };
 
 export const stackLogos: Logo[] = [
   // ── AI Models ──────────────────────────────────────────────
-  { name: "Anthropic",   file: "anthropic",   width: 20, href: "/blog/what-we-stole-from-claude-cursor-openclaw" },
-  { name: "OpenAI",      file: "openai",      width: 20, href: "/blog/what-we-stole-from-claude-cursor-openclaw" },
-  { name: "xAI",         file: "xai",         width: 20, href: "/blog/what-we-stole-from-claude-cursor-openclaw" },
+  {
+    name: "Anthropic",
+    file: "anthropic",
+    width: 20,
+    href: "/blog/what-we-stole-from-claude-cursor-openclaw",
+  },
+  {
+    name: "OpenAI",
+    file: "openai",
+    width: 20,
+    href: "/blog/what-we-stole-from-claude-cursor-openclaw",
+  },
+  { name: "xAI", file: "xai", width: 20, href: "/blog/what-we-stole-from-claude-cursor-openclaw" },
   // ── Infra ──────────────────────────────────────────────────
-  { name: "Vercel",      file: "vercel",      width: 20, href: "/blog/the-only-tool-your-agent-needs" },
-  { name: "Neon",        file: "neon",        width: 20, href: "/blog/why-neon-postgres" },
+  { name: "Vercel", file: "vercel", width: 20, href: "/blog/the-only-tool-your-agent-needs" },
+  { name: "Neon", file: "neon", width: 20, href: "/blog/why-neon-postgres" },
   // ── Comms ──────────────────────────────────────────────────
-  { name: "Slack",       file: "slack",       width: 20, href: "/blog/building-on-slack-assistant-sdk" },
+  { name: "Slack", file: "slack", width: 20, href: "/blog/building-on-slack-assistant-sdk" },
   // ── Voice / Search ─────────────────────────────────────────
-  { name: "ElevenLabs",  file: "elevenlabs",  width: 20, href: "/blog/building-voice-agents-elevenlabs" },
-  { name: "Google",      file: "google",      width: 20, href: "/blog/vector-search-cant-find-people" },
+  {
+    name: "ElevenLabs",
+    file: "elevenlabs",
+    width: 20,
+    href: "/blog/building-voice-agents-elevenlabs",
+  },
+  { name: "Google", file: "google", width: 20, href: "/blog/vector-search-cant-find-people" },
   // ── Dev tools ──────────────────────────────────────────────
-  { name: "Cohere",      file: "cohere",      width: 64, href: "/blog/vector-search-cant-find-people" },
-  { name: "Tavily",      file: "tavily",      width: 58, href: "/blog/the-only-tool-your-agent-needs" },
-  { name: "E2B",         file: "e2b",         width: 36, href: "/blog/how-e2b-sandboxes-work" },
+  { name: "Cohere", file: "cohere", width: 64, href: "/blog/vector-search-cant-find-people" },
+  { name: "Tavily", file: "tavily", width: 58, href: "/blog/the-only-tool-your-agent-needs" },
+  { name: "E2B", file: "e2b", width: 36, href: "/blog/how-e2b-sandboxes-work" },
   { name: "Browserbase", file: "browserbase", width: 88, href: "/blog/why-browserbase" },
 ];
 

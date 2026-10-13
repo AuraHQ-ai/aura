@@ -1,9 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { hasRole } from "../../lib/permissions.js";
-import {
-  getModelCatalogResponse,
-  syncModelCatalogFromGateway,
-} from "../../lib/model-catalog.js";
+import { getModelCatalogResponse, syncModelCatalogFromGateway } from "../../lib/model-catalog.js";
 import { createDashboardApp } from "./schemas.js";
 
 export const dashboardModelsApp = createDashboardApp();

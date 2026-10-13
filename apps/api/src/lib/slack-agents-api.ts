@@ -59,16 +59,18 @@ export const agentsSessions = {
     client: WebClient,
     args: AgentsSessionsSetStatusArguments,
   ): Promise<AgentsSessionsResponse> {
-    return client.apiCall("agents.sessions.setStatus", { ...args }) as Promise<AgentsSessionsResponse>;
+    return client.apiCall("agents.sessions.setStatus", {
+      ...args,
+    }) as Promise<AgentsSessionsResponse>;
   },
-  rename(
-    client: WebClient,
-    args: AgentsSessionsRenameArguments,
-  ): Promise<AgentsSessionsResponse> {
+  rename(client: WebClient, args: AgentsSessionsRenameArguments): Promise<AgentsSessionsResponse> {
     const title =
       args.title.length <= AGENT_SESSION_TITLE_MAX_CHARS
         ? args.title
         : `${args.title.slice(0, AGENT_SESSION_TITLE_MAX_CHARS - 1)}…`;
-    return client.apiCall("agents.sessions.rename", { ...args, title }) as Promise<AgentsSessionsResponse>;
+    return client.apiCall("agents.sessions.rename", {
+      ...args,
+      title,
+    }) as Promise<AgentsSessionsResponse>;
   },
 } as const;

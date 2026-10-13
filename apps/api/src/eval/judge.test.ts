@@ -82,7 +82,9 @@ describe("judgeWindow id mapping (never positional)", () => {
 
   it("tolerates judges echoing the full [R:...] wrapper", async () => {
     const window = makeWindow(["aaa"]);
-    const generate = generateReturning([entry("[R:aaa]", { verdict: "partial", failure_class: "latency" })]);
+    const generate = generateReturning([
+      entry("[R:aaa]", { verdict: "partial", failure_class: "latency" }),
+    ]);
 
     const result = await judgeWindow(window, { generate });
     expect(result.judged.get("aaa")?.verdict).toBe("partial");
@@ -155,9 +157,7 @@ describe("judgeWindow verdict normalization", () => {
 
   it("defaults a missing failure class to none on failed verdicts", async () => {
     const window = makeWindow(["aaa"]);
-    const generate = generateReturning([
-      entry("aaa", { verdict: "failed", failure_class: null }),
-    ]);
+    const generate = generateReturning([entry("aaa", { verdict: "failed", failure_class: null })]);
 
     const result = await judgeWindow(window, { generate });
     expect(result.judged.get("aaa")?.failureClass).toBe("none");
@@ -212,6 +212,8 @@ describe("judgeWindow verdict normalization", () => {
     });
     const callArgs = generate.mock.calls[0][0];
     expect(callArgs.instructions).toContain("Honest refusals and capability boundaries");
-    expect(callArgs.instructions).toContain("Use failed only for incorrect, silent, or confabulated behavior");
+    expect(callArgs.instructions).toContain(
+      "Use failed only for incorrect, silent, or confabulated behavior",
+    );
   });
 });

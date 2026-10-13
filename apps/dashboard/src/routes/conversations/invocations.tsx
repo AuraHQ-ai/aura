@@ -73,9 +73,7 @@ function InvocationsPage() {
 
   if (error && !data)
     return (
-      <div className="text-destructive text-sm">
-        Failed to load conversations: {error.message}
-      </div>
+      <div className="text-destructive text-sm">Failed to load conversations: {error.message}</div>
     );
 
   const conversations = data?.items ?? [];
@@ -85,9 +83,7 @@ function InvocationsPage() {
     <div className="flex flex-col gap-4 flex-1 min-h-0">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold tracking-tight">Conversations</h1>
-        <span className="text-sm text-muted-foreground">
-          {isLoading ? "…" : `${total} total`}
-        </span>
+        <span className="text-sm text-muted-foreground">{isLoading ? "…" : `${total} total`}</span>
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
@@ -127,7 +123,12 @@ function InvocationsPage() {
         </Select>
       </div>
 
-      <div className={cn("flex-1 min-h-0 flex flex-col transition-opacity", isFetching && !isLoading && "opacity-50")}>
+      <div
+        className={cn(
+          "flex-1 min-h-0 flex flex-col transition-opacity",
+          isFetching && !isLoading && "opacity-50",
+        )}
+      >
         <div className="flex-1 min-h-0 rounded-xl border overflow-auto">
           <Table className="min-w-[850px]">
             <TableHeader>
@@ -144,55 +145,48 @@ function InvocationsPage() {
             <TableBody>
               {isLoading ? (
                 <TableRowsSkeleton columns={7} />
-              ) : conversations.map((conv) => (
-                <TableRow key={conv.id}>
-                  <TableCell className="text-sm text-muted-foreground">
-                    <Link
-                      to="/conversations/$id"
-                      params={{ id: conv.id }}
-                      className="hover:underline"
-                    >
-                      {formatDate(conv.createdAt)}
-                    </Link>
-                  </TableCell>
-                  <TableCell>
-                    <Badge
-                      variant={
-                        conv.sourceType === "interactive" ? "default" : "secondary"
-                      }
-                    >
-                      {conv.sourceType === "job_execution" ? "job" : "interactive"}
-                    </Badge>
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {conv.sourceType === "job_execution"
-                      ? conv.sourceLabel
-                      : formatPreview(conv.resolvedName, conv.messagePreview)}
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground font-mono">
-                    {conv.modelId ?? "—"}
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground font-mono">
-                    {conv.costUsd
-                      ? `$${parseFloat(conv.costUsd).toFixed(4)}`
-                      : "—"}
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {conv.tokenUsage
-                      ? `${(conv.tokenUsage.inputTokens ?? 0).toLocaleString()} / ${(conv.tokenUsage.outputTokens ?? 0).toLocaleString()}`
-                      : "—"}
-                  </TableCell>
-                  <TableCell className="text-sm text-muted-foreground">
-                    {conv.messageCount}
-                  </TableCell>
-                </TableRow>
-              ))}
+              ) : (
+                conversations.map((conv) => (
+                  <TableRow key={conv.id}>
+                    <TableCell className="text-sm text-muted-foreground">
+                      <Link
+                        to="/conversations/$id"
+                        params={{ id: conv.id }}
+                        className="hover:underline"
+                      >
+                        {formatDate(conv.createdAt)}
+                      </Link>
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={conv.sourceType === "interactive" ? "default" : "secondary"}>
+                        {conv.sourceType === "job_execution" ? "job" : "interactive"}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {conv.sourceType === "job_execution"
+                        ? conv.sourceLabel
+                        : formatPreview(conv.resolvedName, conv.messagePreview)}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground font-mono">
+                      {conv.modelId ?? "—"}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground font-mono">
+                      {conv.costUsd ? `$${parseFloat(conv.costUsd).toFixed(4)}` : "—"}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {conv.tokenUsage
+                        ? `${(conv.tokenUsage.inputTokens ?? 0).toLocaleString()} / ${(conv.tokenUsage.outputTokens ?? 0).toLocaleString()}`
+                        : "—"}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {conv.messageCount}
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
               {!isLoading && conversations.length === 0 && (
                 <TableRow>
-                  <TableCell
-                    colSpan={7}
-                    className="text-center text-muted-foreground py-8"
-                  >
+                  <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
                     No conversations found
                   </TableCell>
                 </TableRow>

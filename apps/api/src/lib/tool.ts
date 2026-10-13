@@ -63,9 +63,7 @@ export interface SlackToolMetadata<TInput = any, TOutput = any> {
   /** Extract a short summary from result for the completed card */
   output?: (result: TOutput) => string | undefined;
   /** Extract URL citations for web tool cards */
-  sources?: (
-    result: TOutput,
-  ) => Array<{ type: "url"; url: string; text: string }> | undefined;
+  sources?: (result: TOutput) => Array<{ type: "url"; url: string; text: string }> | undefined;
 }
 
 /**
@@ -214,13 +212,11 @@ export function defineTool<TInput, TOutput>(config: {
 
       const rawResult = await originalExecute(input);
       // Default-on result cap: no tool can ship uncapped output to the model.
-      const result = (maxResultChars === false
-        ? rawResult
-        : capToolResult(
-            rawResult,
-            maxResultChars ?? DEFAULT_MAX_RESULT_CHARS,
-            toolName,
-          )) as TOutput;
+      const result = (
+        maxResultChars === false
+          ? rawResult
+          : capToolResult(rawResult, maxResultChars ?? DEFAULT_MAX_RESULT_CHARS, toolName)
+      ) as TOutput;
 
       if (logId) {
         try {
@@ -228,7 +224,9 @@ export function defineTool<TInput, TOutput>(config: {
             .update(actionLog)
             .set({ result: result as any })
             .where(eq(actionLog.id, logId));
-        } catch { /* non-critical */ }
+        } catch {
+          /* non-critical */
+        }
       }
 
       return result;
@@ -242,16 +240,16 @@ export function defineTool<TInput, TOutput>(config: {
               result: { error: error.message } as any,
             })
             .where(eq(actionLog.id, logId));
-        } catch { /* non-critical */ }
+        } catch {
+          /* non-critical */
+        }
       }
       throw error;
     }
   };
 
   const toolConfig = { ...rest, strict: strict ?? false, execute: auditedExecute };
-  const t = tool<TInput, TOutput, any>(
-    toolConfig as unknown as Tool<TInput, TOutput, any>,
-  );
+  const t = tool<TInput, TOutput, any>(toolConfig as unknown as Tool<TInput, TOutput, any>);
   if (slack) {
     (t as any).slack = slack;
   }
@@ -270,9 +268,7 @@ export function defineTool<TInput, TOutput>(config: {
  * Call this on the tools record after building it so the audit
  * interceptor knows which tool is being invoked.
  */
-export function registerToolNames<T extends Record<string, unknown>>(
-  tools: T,
-): T {
+export function registerToolNames<T extends Record<string, unknown>>(tools: T): T {
   for (const [name, t] of Object.entries(tools)) {
     if (t && typeof t === "object" && "__toolRef" in t) {
       (t as any).__toolRef.name = name;

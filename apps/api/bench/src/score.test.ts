@@ -8,11 +8,7 @@ vi.mock("../../src/db/client.js", () => ({ db: {} }));
 
 import { aggregateScores } from "./score.js";
 import type { PerCaseResult } from "./types.js";
-import {
-  loadToyCorpus,
-  stratifiedSample,
-  SUBSET_PER_CATEGORY,
-} from "./fixtures.js";
+import { loadToyCorpus, stratifiedSample, SUBSET_PER_CATEGORY } from "./fixtures.js";
 import { formatMemoriesForPrompt } from "../../src/memory/format-for-prompt.js";
 import { DEFAULT_TIERS } from "./models.js";
 import type { BenchCase } from "./types.js";
@@ -175,8 +171,12 @@ describe("stratifiedSample", () => {
   it("differs across seeds", () => {
     const cases: BenchCase[] = [];
     for (let i = 0; i < 20; i++) cases.push(makeCase("a", `a${i}`));
-    const a = stratifiedSample(cases, 5, 1).map((c) => c.id).sort();
-    const b = stratifiedSample(cases, 5, 2).map((c) => c.id).sort();
+    const a = stratifiedSample(cases, 5, 1)
+      .map((c) => c.id)
+      .sort();
+    const b = stratifiedSample(cases, 5, 2)
+      .map((c) => c.id)
+      .sort();
     expect(a).not.toEqual(b);
   });
 
@@ -194,7 +194,13 @@ describe("loadToyCorpus", () => {
     expect(cases.length).toBeGreaterThanOrEqual(5);
     const categories = new Set(cases.map((c) => c.category));
     // Each of these maps to a distinct branch in judge.ts pickPrompt().
-    for (const required of ["single_hop", "multi_hop", "temporal", "knowledge_update", "abstention"]) {
+    for (const required of [
+      "single_hop",
+      "multi_hop",
+      "temporal",
+      "knowledge_update",
+      "abstention",
+    ]) {
       expect(categories.has(required)).toBe(true);
     }
     const abstention = cases.find((c) => c.abstention)!;

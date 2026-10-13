@@ -1,6 +1,6 @@
 import { config } from "dotenv";
-import { resolve } from "path";
-import { fileURLToPath } from "url";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { sql } from "drizzle-orm";
 import { generateText, Output } from "ai";
 import { z } from "zod";
@@ -80,7 +80,7 @@ async function processBatch(
       const baseRelevance = importanceToRelevance(importance);
       const ageMs = Date.now() - new Date(mem.created_at).getTime();
       const ageDays = ageMs / (1000 * 60 * 60 * 24);
-      const decayedScore = baseRelevance * Math.pow(DECAY_FACTOR, ageDays);
+      const decayedScore = baseRelevance * DECAY_FACTOR ** ageDays;
 
       await db.execute(sql`
         UPDATE memories
@@ -96,9 +96,7 @@ async function processBatch(
     return { classified, errors: 0 };
   } catch (err) {
     progress.tick(batch.length);
-    console.error(
-      `  ERROR: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    console.error(`  ERROR: ${err instanceof Error ? err.message : String(err)}`);
     return { classified: 0, errors: 1 };
   }
 }
@@ -172,7 +170,9 @@ async function main() {
   console.log(`Batches with errors: ${totalErrors}`);
   console.log(`\nDistribution:`);
   for (const row of stats) {
-    console.log(`  ${row.bucket}: ${row.c} memories (avg importance: ${row.avg_importance}, avg relevance: ${row.avg_relevance})`);
+    console.log(
+      `  ${row.bucket}: ${row.c} memories (avg importance: ${row.avg_importance}, avg relevance: ${row.avg_relevance})`,
+    );
   }
 }
 

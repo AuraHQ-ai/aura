@@ -83,9 +83,7 @@ export function buildTurns(
   messages: TurnSourceMessage[],
   parts: TurnSourcePart[],
 ): EvalTurn[] {
-  const orderedTraces = [...traces].sort(
-    (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
-  );
+  const orderedTraces = [...traces].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
   const messagesByTrace = new Map<string, TurnSourceMessage[]>();
   for (const msg of messages) {
     const list = messagesByTrace.get(msg.conversationId) ?? [];
@@ -138,9 +136,7 @@ export function buildTurns(
       const toolNames = msgParts
         .filter((p) => p.type === "tool-invocation" && p.toolName)
         .map((p) => p.toolName!);
-      const textParts = msgParts.filter(
-        (p) => p.type === "text" && p.textValue?.trim(),
-      );
+      const textParts = msgParts.filter((p) => p.type === "text" && p.textValue?.trim());
 
       if (textParts.length === 0) {
         // Tool-only relay step: carry its tool names to the next response.
@@ -183,10 +179,7 @@ export interface WindowOptions {
  * reappear elsewhere only as context, never as scoring targets, so verdicts
  * stay atomic.
  */
-export function buildWindows(
-  turns: EvalTurn[],
-  opts: WindowOptions = {},
-): EvalWindow[] {
+export function buildWindows(turns: EvalTurn[], opts: WindowOptions = {}): EvalWindow[] {
   const stride = Math.max(1, opts.stride ?? WINDOW_STRIDE);
   const lead = Math.max(0, opts.lead ?? WINDOW_LEAD);
   const trail = Math.max(0, opts.trail ?? WINDOW_TRAIL);
@@ -222,10 +215,7 @@ function truncateMiddle(text: string, maxChars: number): string {
  * the judge MUST echo these ids back, and verdicts are mapped by id, never by
  * array position.
  */
-export function renderWindowTranscript(
-  window: EvalWindow,
-  maxTurnChars = MAX_TURN_CHARS,
-): string {
+export function renderWindowTranscript(window: EvalWindow, maxTurnChars = MAX_TURN_CHARS): string {
   const ownedSet = new Set(window.ownedPartIds);
   const lines: string[] = [];
 
@@ -245,9 +235,7 @@ export function renderWindowTranscript(
         turn.partId && ownedSet.has(turn.partId)
           ? `[R:${turn.partId}] AURA`
           : "AURA (context only — do not score)";
-      lines.push(
-        `${marker} @ ${ts}${tools}:\n${truncateMiddle(turn.text, maxTurnChars)}`,
-      );
+      lines.push(`${marker} @ ${ts}${tools}:\n${truncateMiddle(turn.text, maxTurnChars)}`);
     }
   }
 

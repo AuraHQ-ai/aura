@@ -46,8 +46,7 @@ export function mcpResultToModelOutput(
     result && typeof result === "object" && "data" in (result as object)
       ? (result as { data: unknown }).data
       : result;
-  const text =
-    typeof payload === "string" ? payload : JSON.stringify(payload, null, 2);
+  const text = typeof payload === "string" ? payload : JSON.stringify(payload, null, 2);
   return {
     type: "content",
     value: [
@@ -92,9 +91,7 @@ export function normalizeMcpInputSchema(raw: unknown): Record<string, unknown> {
   return schema as Record<string, unknown>;
 }
 
-export function cachedToolsFromRemote(
-  remote: Record<string, any>,
-): McpCachedTool[] {
+export function cachedToolsFromRemote(remote: Record<string, any>): McpCachedTool[] {
   return Object.entries(remote).map(([name, t]) => ({
     name,
     description: typeof t?.description === "string" ? t.description : undefined,
@@ -103,10 +100,7 @@ export function cachedToolsFromRemote(
   }));
 }
 
-export async function persistCachedTools(
-  serverId: string,
-  cached: McpCachedTool[],
-): Promise<void> {
+export async function persistCachedTools(serverId: string, cached: McpCachedTool[]): Promise<void> {
   await db
     .update(mcpServers)
     .set({ cachedTools: cached, toolsCachedAt: new Date(), updatedAt: new Date() })
@@ -166,10 +160,7 @@ export async function createMcpClientForServer(
   };
 }
 
-export function hasLiveConnection(
-  server: McpServer,
-  connection?: McpConnection | null,
-): boolean {
+export function hasLiveConnection(server: McpServer, connection?: McpConnection | null): boolean {
   if (!server.enabled) return false;
   if (server.authType === "none") return true;
   if (server.authType === "header") return Boolean(server.encryptedHeaderValue);
@@ -219,16 +210,10 @@ export function buildMcpToolStubs(
     const namespaced = namespaceMcpTool(server.slug, cachedTool.name);
     const needsApproval =
       !server.trusted && isWriteLikeMcpTool(cachedTool.name, cachedTool.annotations);
-    const inputSchema = jsonSchema(
-      normalizeMcpInputSchema(cachedTool.inputSchema) as any,
-    );
+    const inputSchema = jsonSchema(normalizeMcpInputSchema(cachedTool.inputSchema) as any);
 
     tools[namespaced] = tool({
-      description: describeUntrustedMcpTool(
-        server.slug,
-        cachedTool.name,
-        cachedTool.description,
-      ),
+      description: describeUntrustedMcpTool(server.slug, cachedTool.name, cachedTool.description),
       inputSchema,
       needsApproval,
       strict: false,
@@ -239,9 +224,7 @@ export function buildMcpToolStubs(
           const remote = await client.tools();
           const remoteTool = remote[cachedTool.name];
           if (!remoteTool?.execute) {
-            throw new Error(
-              `MCP tool ${cachedTool.name} is not available on ${server.slug}`,
-            );
+            throw new Error(`MCP tool ${cachedTool.name} is not available on ${server.slug}`);
           }
           const raw = await remoteTool.execute(input, {
             messages: [],
@@ -275,10 +258,7 @@ export function buildMcpToolStubs(
 
 export type McpCloser = () => Promise<void>;
 
-export function attachMcpCloser<T extends Record<string, unknown>>(
-  tools: T,
-  closer: McpCloser,
-): T {
+export function attachMcpCloser<T extends Record<string, unknown>>(tools: T, closer: McpCloser): T {
   Object.defineProperty(tools, MCP_CLOSE, {
     value: closer,
     enumerable: false,

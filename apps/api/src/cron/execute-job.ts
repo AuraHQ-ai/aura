@@ -51,11 +51,7 @@ class ScriptJobError extends Error {
   readonly scriptOutput: ScriptExecutionOutput | null;
   readonly hardFailure: boolean;
 
-  constructor(
-    message: string,
-    scriptOutput: ScriptExecutionOutput | null,
-    hardFailure = false,
-  ) {
+  constructor(message: string, scriptOutput: ScriptExecutionOutput | null, hardFailure = false) {
     super(message);
     this.name = "ScriptJobError";
     this.scriptOutput = scriptOutput;
@@ -354,7 +350,10 @@ export async function executeJob(
       .returning({ id: jobs.id });
 
     if (claimed.length === 0) {
-      logger.info("executeJob: job already claimed or disabled, skipping", { jobId, jobName: job.name });
+      logger.info("executeJob: job already claimed or disabled, skipping", {
+        jobId,
+        jobName: job.name,
+      });
       return false;
     }
 
@@ -397,14 +396,9 @@ export async function executeJob(
     // owner (issue #1344). Credential resolution is deliberately scoped to
     // job.requestedBy; running anyway would silently drop the credential.
     if (credentialIds.length > 0) {
-      const missingCredentials = await findMissingJobCredentials(
-        credentialIds,
-        job.requestedBy,
-      );
+      const missingCredentials = await findMissingJobCredentials(credentialIds, job.requestedBy);
       if (missingCredentials.length > 0) {
-        const detail = missingCredentials
-          .map(describeMissingJobCredential)
-          .join("; ");
+        const detail = missingCredentials.map(describeMissingJobCredential).join("; ");
         const message =
           `Required credential(s) not available to job owner ${job.requestedBy}: ${detail}. ` +
           `Credential resolution is deliberately scoped to the job owner, so the run was ` +
@@ -432,9 +426,7 @@ export async function executeJob(
     // narrows the sandbox env (applied below via executionContext + script layer).
     // Jobs default to 'medium' (Sonnet-class); frontier 'main' is opt-in.
     const isTaskMode = job.promptMode === "task";
-    const modelCategory: JobModelCategory = isJobModelCategory(job.model)
-      ? job.model
-      : "medium";
+    const modelCategory: JobModelCategory = isJobModelCategory(job.model) ? job.model : "medium";
     const envAllowlist = job.envAllowlist ?? undefined;
 
     const stablePrefix = isTaskMode ? buildTaskPrefix() : await buildStablePrefix();
@@ -448,7 +440,7 @@ export async function executeJob(
         ? `Plan note "${continuationTag.topic}":\n\n${planContent}\n\nNext steps to execute:\n${nextSteps}${credentialNote}`
         : `Plan note "${continuationTag.topic}" not found. Original instructions:\n${nextSteps}${credentialNote}`;
 
-      systemPrompt = stablePrefix + "\n\n" + timeContext + "\n\n" + CONTINUATION_SPECIFIC_INSTRUCTIONS;
+      systemPrompt = `${stablePrefix}\n\n${timeContext}\n\n${CONTINUATION_SPECIFIC_INSTRUCTIONS}`;
 
       logger.info("Heartbeat: executing continuation", {
         jobId,
@@ -467,7 +459,7 @@ export async function executeJob(
         prompt += `\n\nPrevious result for context:\n${job.lastResult}`;
       }
 
-      systemPrompt = stablePrefix + "\n\n" + timeContext + "\n\n" + JOB_SPECIFIC_INSTRUCTIONS;
+      systemPrompt = `${stablePrefix}\n\n${timeContext}\n\n${JOB_SPECIFIC_INSTRUCTIONS}`;
 
       logger.info("Heartbeat: executing job", {
         jobId,
@@ -605,24 +597,30 @@ export async function executeJob(
             const todayStr = now.toISOString().slice(0, 10);
             const isNewDay = job.lastExecutionDate !== todayStr;
 
-            await db.update(jobs).set({
-              status: isRecurring ? "pending" : "completed",
-              ...(isRecurring ? { executeAt: null } : {}),
-              result: resultText.slice(0, 2000),
-              lastResult: resultText.slice(0, 2000),
-              lastExecutedAt: now,
-              executionCount: sql`${jobs.executionCount} + 1`,
-              todayExecutions: isNewDay ? 1 : sql`${jobs.todayExecutions} + 1`,
-              lastExecutionDate: todayStr,
-              retries: 0,
-              updatedAt: now,
-            }).where(eq(jobs.id, jobId));
+            await db
+              .update(jobs)
+              .set({
+                status: isRecurring ? "pending" : "completed",
+                ...(isRecurring ? { executeAt: null } : {}),
+                result: resultText.slice(0, 2000),
+                lastResult: resultText.slice(0, 2000),
+                lastExecutedAt: now,
+                executionCount: sql`${jobs.executionCount} + 1`,
+                todayExecutions: isNewDay ? 1 : sql`${jobs.todayExecutions} + 1`,
+                lastExecutionDate: todayStr,
+                retries: 0,
+                updatedAt: now,
+              })
+              .where(eq(jobs.id, jobId));
 
-            await db.update(jobExecutions).set({
-              status: "completed",
-              finishedAt: now,
-              summary: resultText.slice(0, 500),
-            }).where(eq(jobExecutions.id, executionId));
+            await db
+              .update(jobExecutions)
+              .set({
+                status: "completed",
+                finishedAt: now,
+                summary: resultText.slice(0, 500),
+              })
+              .where(eq(jobExecutions.id, executionId));
 
             const outcomeId = await persistJobOutcome({
               workspaceId: job.workspaceId,
@@ -680,9 +678,7 @@ export async function executeJob(
           // stderr and the normal retry/escalation path takes over. The LLM
           // is never invoked for this run.
           const stderrTail = truncateJobFailureText(
-            scriptExecutionOutput?.stderr ||
-              scriptExecutionOutput?.stdout ||
-              scriptErr?.message,
+            scriptExecutionOutput?.stderr || scriptExecutionOutput?.stdout || scriptErr?.message,
           );
           await sendJobOpsNotice({
             jobId,
@@ -741,8 +737,9 @@ export async function executeJob(
       jobExecutionId: executionId,
     };
 
-    const { agent, modelId, getStepModelIds, getCompactionTotals } =
-      await executionContext.run(jobExecutionContext, () =>
+    const { agent, modelId, getStepModelIds, getCompactionTotals } = await executionContext.run(
+      jobExecutionContext,
+      () =>
         createHeadlessAgent({
           slackClient,
           context: {
@@ -757,7 +754,7 @@ export async function executeJob(
           // respawn from inside this run continues at depth + 1, capped at 3.
           continuationDepth: continuationTag?.depth ?? 0,
         }),
-      );
+    );
 
     // Create a conversation trace for this job execution
     conversationId = await createConversationTrace({
@@ -768,28 +765,22 @@ export async function executeJob(
 
     // Phase 1: persist the exact inputs BEFORE calling generate.
     // If the process crashes mid-execution, we still have what was sent.
-    conversationOrderIndex = await persistConversationInputs(
-      conversationId,
-      systemPrompt,
-      prompt,
-    );
+    conversationOrderIndex = await persistConversationInputs(conversationId, systemPrompt, prompt);
 
-    const generateResult = await executionContext.run(
-      jobExecutionContext,
-      () =>
-        withTrace(
-          {
-            traceName: "headless-job",
-            sessionId: job.threadTs || job.channelId || job.id,
-            userId: job.requestedBy,
-            tags: [
-              "channel:scheduled-job",
-              ...(job.channelId ? [`slack-channel:${job.channelId}`] : []),
-            ],
-            metadata: { slackUserId: job.requestedBy, jobId: job.id },
-          },
-          () => agent.generate({ prompt }),
-        ),
+    const generateResult = await executionContext.run(jobExecutionContext, () =>
+      withTrace(
+        {
+          traceName: "headless-job",
+          sessionId: job.threadTs || job.channelId || job.id,
+          userId: job.requestedBy,
+          tags: [
+            "channel:scheduled-job",
+            ...(job.channelId ? [`slack-channel:${job.channelId}`] : []),
+          ],
+          metadata: { slackUserId: job.requestedBy, jobId: job.id },
+        },
+        () => agent.generate({ prompt }),
+      ),
     );
 
     const { text, steps, totalUsage: usage } = generateResult;
@@ -875,13 +866,16 @@ export async function executeJob(
           ? { steps: serializedSteps, scratchpad: scratchpadContents }
           : serializedSteps,
         tokenUsage,
-        summary: isCleanNoOp ? noOpMarker.substring(0, 500) : (text || "").substring(0, 500) || null,
+        summary: isCleanNoOp
+          ? noOpMarker.substring(0, 500)
+          : (text || "").substring(0, 500) || null,
       })
       .where(eq(jobExecutions.id, executionId));
 
-    const result = (
-      isCleanNoOp ? noOpMarker : text || "Job completed (no text output)"
-    ).substring(0, 2000);
+    const result = (isCleanNoOp ? noOpMarker : text || "Job completed (no text output)").substring(
+      0,
+      2000,
+    );
     const now = new Date();
     const todayStr = now.toISOString().slice(0, 10);
     const isNewDay = job.lastExecutionDate !== todayStr;

@@ -19,12 +19,9 @@ function lineKey(line) {
   }
 }
 
-const currentLines = existsSync(currentPath)
-  ? splitLines(readFileSync(currentPath, "utf8"))
-  : [];
-const localLines = localPath && existsSync(localPath)
-  ? splitLines(readFileSync(localPath, "utf8"))
-  : [];
+const currentLines = existsSync(currentPath) ? splitLines(readFileSync(currentPath, "utf8")) : [];
+const localLines =
+  localPath && existsSync(localPath) ? splitLines(readFileSync(localPath, "utf8")) : [];
 
 const seen = new Set(currentLines.map(lineKey));
 const merged = [...currentLines];

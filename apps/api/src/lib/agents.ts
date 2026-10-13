@@ -64,7 +64,12 @@ export async function createInteractiveAgent(
   options: InteractiveAgentOptions,
 ): Promise<InteractiveAgentResult> {
   const { modelId, model } = await getMainModel();
-  const tools = await createSlackTools(options.slackClient, options.context, modelId, options.invocationId);
+  const tools = await createSlackTools(
+    options.slackClient,
+    options.context,
+    modelId,
+    options.invocationId,
+  );
   const stepModelIds: string[] = [];
   const compactionTotals: CompactionTotals = {
     compactedToolResults: 0,
@@ -73,10 +78,9 @@ export async function createInteractiveAgent(
   // Deferred-tool manifest is environment-level ("what you can call"), so it
   // rides in the cached environment layer ahead of the conversation — not the
   // volatile runtime tail.
-  const environmentContext = appendDeferredToolsBlock(
-    options.environmentContext,
-    getDeferredToolManifest(tools),
-  ) ?? options.environmentContext;
+  const environmentContext =
+    appendDeferredToolsBlock(options.environmentContext, getDeferredToolManifest(tools)) ??
+    options.environmentContext;
   const systemMessages = buildCachedSystemMessages(
     options.stablePrefix,
     environmentContext,
@@ -156,19 +160,21 @@ export interface HeadlessAgentOptions {
 export async function createHeadlessAgent(options: HeadlessAgentOptions) {
   const category: JobModelCategory = options.modelCategory ?? "medium";
   const { modelId, model } =
-    category === "main"
-      ? await getMainModel()
-      : await getModelByCategory(category);
-  const tools = await createSlackTools(options.slackClient, options.context, modelId, options.invocationId);
+    category === "main" ? await getMainModel() : await getModelByCategory(category);
+  const tools = await createSlackTools(
+    options.slackClient,
+    options.context,
+    modelId,
+    options.invocationId,
+  );
   const stepModelIds: string[] = [];
   const compactionTotals: CompactionTotals = {
     compactedToolResults: 0,
     compactionTokensSaved: 0,
   };
-  const systemPrompt = appendDeferredToolsBlock(
-    options.systemPrompt,
-    getDeferredToolManifest(tools),
-  ) ?? options.systemPrompt;
+  const systemPrompt =
+    appendDeferredToolsBlock(options.systemPrompt, getDeferredToolManifest(tools)) ??
+    options.systemPrompt;
 
   const agent = new ToolLoopAgent({
     model,
@@ -227,10 +233,9 @@ export interface SubagentAgentOptions {
 }
 
 export function createSubAgent(options: SubagentAgentOptions) {
-  const systemPrompt = appendDeferredToolsBlock(
-    options.systemPrompt,
-    getDeferredToolManifest(options.tools),
-  ) ?? options.systemPrompt;
+  const systemPrompt =
+    appendDeferredToolsBlock(options.systemPrompt, getDeferredToolManifest(options.tools)) ??
+    options.systemPrompt;
 
   return new ToolLoopAgent({
     model: options.model,

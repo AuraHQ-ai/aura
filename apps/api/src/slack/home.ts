@@ -8,10 +8,7 @@ import {
   listGrantsForCredentials,
   getCredentialById,
 } from "../lib/api-credentials.js";
-import {
-  getModelCatalogResponse,
-  type ModelOption,
-} from "../lib/model-catalog.js";
+import { getModelCatalogResponse, type ModelOption } from "../lib/model-catalog.js";
 import { LAST_RESORT_MODELS } from "../lib/ai.js";
 
 // ── Credential Definitions ───────────────────────────────────────────────────
@@ -221,9 +218,7 @@ async function buildUserCredentialBlocks(userId: string): Promise<any[]> {
     return blocks;
   }
 
-  const ownedCredIds = creds
-    .filter((c) => c.owner_id === userId)
-    .map((c) => c.id);
+  const ownedCredIds = creds.filter((c) => c.owner_id === userId).map((c) => c.id);
   const allGrants = await listGrantsForCredentials(ownedCredIds);
   const grantsByCredId = new Map<
     string,
@@ -308,67 +303,72 @@ export function buildAddCredentialBlocks(credType: "token" | "oauth_client" = "t
         { text: { type: "plain_text", text: "Token" }, value: "token" },
         { text: { type: "plain_text", text: "OAuth Client" }, value: "oauth_client" },
       ],
-      initial_option: credType === "oauth_client"
-        ? { text: { type: "plain_text", text: "OAuth Client" }, value: "oauth_client" }
-        : { text: { type: "plain_text", text: "Token" }, value: "token" },
+      initial_option:
+        credType === "oauth_client"
+          ? { text: { type: "plain_text", text: "OAuth Client" }, value: "oauth_client" }
+          : { text: { type: "plain_text", text: "Token" }, value: "token" },
     },
   };
 
-  const valueBlocks = credType === "oauth_client"
-    ? [
-        {
-          type: "input",
-          block_id: "cred_client_id_block",
-          label: { type: "plain_text", text: "Client ID" },
-          element: {
-            type: "plain_text_input",
-            action_id: "cred_client_id",
-            placeholder: { type: "plain_text", text: "Paste client ID" },
-          },
-        },
-        {
-          type: "input",
-          block_id: "cred_client_secret_block",
-          label: { type: "plain_text", text: "Client Secret" },
-          element: {
-            type: "plain_text_input",
-            action_id: "cred_client_secret",
-            placeholder: { type: "plain_text", text: "Paste client secret" },
-          },
-        },
-        {
-          type: "input",
-          block_id: "cred_token_url_block",
-          optional: true,
-          label: { type: "plain_text", text: "Token URL (optional)" },
-          element: {
-            type: "plain_text_input",
-            action_id: "cred_token_url",
-            placeholder: { type: "plain_text", text: "https://cloud.airbyte.com/api/v1/applications/token" },
-          },
-        },
-        {
-          type: "context",
-          elements: [
-            {
-              type: "mrkdwn",
-              text: "If provided, credentials will be automatically exchanged for an access token when retrieved.",
+  const valueBlocks =
+    credType === "oauth_client"
+      ? [
+          {
+            type: "input",
+            block_id: "cred_client_id_block",
+            label: { type: "plain_text", text: "Client ID" },
+            element: {
+              type: "plain_text_input",
+              action_id: "cred_client_id",
+              placeholder: { type: "plain_text", text: "Paste client ID" },
             },
-          ],
-        },
-      ]
-    : [
-        {
-          type: "input",
-          block_id: "cred_value_block",
-          label: { type: "plain_text", text: "Value" },
-          element: {
-            type: "plain_text_input",
-            action_id: "cred_value",
-            placeholder: { type: "plain_text", text: "Paste your API token or key" },
           },
-        },
-      ];
+          {
+            type: "input",
+            block_id: "cred_client_secret_block",
+            label: { type: "plain_text", text: "Client Secret" },
+            element: {
+              type: "plain_text_input",
+              action_id: "cred_client_secret",
+              placeholder: { type: "plain_text", text: "Paste client secret" },
+            },
+          },
+          {
+            type: "input",
+            block_id: "cred_token_url_block",
+            optional: true,
+            label: { type: "plain_text", text: "Token URL (optional)" },
+            element: {
+              type: "plain_text_input",
+              action_id: "cred_token_url",
+              placeholder: {
+                type: "plain_text",
+                text: "https://cloud.airbyte.com/api/v1/applications/token",
+              },
+            },
+          },
+          {
+            type: "context",
+            elements: [
+              {
+                type: "mrkdwn",
+                text: "If provided, credentials will be automatically exchanged for an access token when retrieved.",
+              },
+            ],
+          },
+        ]
+      : [
+          {
+            type: "input",
+            block_id: "cred_value_block",
+            label: { type: "plain_text", text: "Value" },
+            element: {
+              type: "plain_text_input",
+              action_id: "cred_value",
+              placeholder: { type: "plain_text", text: "Paste your API token or key" },
+            },
+          },
+        ];
 
   return [
     {
@@ -401,10 +401,7 @@ export function buildAddCredentialBlocks(credType: "token" | "oauth_client" = "t
   ];
 }
 
-export async function openAddCredentialModal(
-  client: WebClient,
-  triggerId: string,
-): Promise<void> {
+export async function openAddCredentialModal(client: WebClient, triggerId: string): Promise<void> {
   await client.views.open({
     trigger_id: triggerId,
     view: {
@@ -557,7 +554,7 @@ export async function openCredentialAccessModal(
       type: "section",
       text: {
         type: "mrkdwn",
-        text: "👑 <@" + cred.ownerId + "> — *Owner*",
+        text: `👑 <@${cred.ownerId}> — *Owner*`,
       },
     },
   ];
@@ -568,7 +565,7 @@ export async function openCredentialAccessModal(
         type: "section",
         text: {
           type: "mrkdwn",
-          text: "👤 <@" + grant.granteeId + "> — *" + grant.permission + "*",
+          text: `👤 <@${grant.granteeId}> — *${grant.permission}*`,
         },
       });
     }
@@ -647,17 +644,12 @@ export async function openCredentialModal(
  * Build and publish the App Home tab for a user.
  * Admins see editable dropdowns; everyone else sees a read-only view.
  */
-export async function publishHomeTab(
-  client: WebClient,
-  userId: string,
-): Promise<void> {
+export async function publishHomeTab(client: WebClient, userId: string): Promise<void> {
   try {
     const currentSettings = await getAllSettings();
     const catalog = await getModelCatalogResponse();
     const admin = await hasRole(userId, "admin");
-    const labelByValue = new Map(
-      catalog.catalog.map((model) => [model.value, model.label]),
-    );
+    const labelByValue = new Map(catalog.catalog.map((model) => [model.value, model.label]));
 
     const mainValue = currentSettings.model_main || LAST_RESORT_MODELS.main;
     const fastValue = currentSettings.model_fast || LAST_RESORT_MODELS.fast;
@@ -721,7 +713,12 @@ export async function publishHomeTab(
             text: "*:arrow_up: Escalation Model*\nSwapped in automatically when the main model is struggling mid-conversation.",
           },
         },
-        buildDropdown("select_model_escalation", "Escalation Model", catalog.escalation, escalationValue),
+        buildDropdown(
+          "select_model_escalation",
+          "Escalation Model",
+          catalog.escalation,
+          escalationValue,
+        ),
         { type: "divider" },
         {
           type: "section",
@@ -760,34 +757,34 @@ export async function publishHomeTab(
             options: [
               {
                 text: { type: "plain_text", text: "Timeline" },
-                value: "\"timeline\"",
+                value: '"timeline"',
               },
               {
                 text: { type: "plain_text", text: "Plan" },
-                value: "\"plan\"",
+                value: '"plan"',
               },
               {
                 text: { type: "plain_text", text: "Hybrid" },
-                value: "\"hybrid\"",
+                value: '"hybrid"',
               },
             ],
             initial_option: (() => {
-              const mode = currentSettings.slack_task_display_mode || "\"timeline\"";
-              if (mode === "\"plan\"") {
+              const mode = currentSettings.slack_task_display_mode || '"timeline"';
+              if (mode === '"plan"') {
                 return {
                   text: { type: "plain_text", text: "Plan" },
-                  value: "\"plan\"",
+                  value: '"plan"',
                 };
               }
-              if (mode === "\"hybrid\"") {
+              if (mode === '"hybrid"') {
                 return {
                   text: { type: "plain_text", text: "Hybrid" },
-                  value: "\"hybrid\"",
+                  value: '"hybrid"',
                 };
               }
               return {
                 text: { type: "plain_text", text: "Timeline" },
-                value: "\"timeline\"",
+                value: '"timeline"',
               };
             })(),
           },
@@ -802,15 +799,13 @@ export async function publishHomeTab(
       const escalationLabel = labelByValue.get(escalationValue) || escalationValue;
       const embeddingLabel = labelByValue.get(embeddingValue) || embeddingValue;
 
-      blocks.push(
-        {
-          type: "section",
-          text: {
-            type: "mrkdwn",
-            text: `*:brain: Main Model:* ${mainLabel}\n*:zap: Fast Model:* ${fastLabel}\n*:newspaper: Medium Model:* ${mediumLabel}\n*:arrow_up: Escalation Model:* ${escalationLabel}\n*:mag: Embedding Model:* ${embeddingLabel}`,
-          },
+      blocks.push({
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `*:brain: Main Model:* ${mainLabel}\n*:zap: Fast Model:* ${fastLabel}\n*:newspaper: Medium Model:* ${mediumLabel}\n*:arrow_up: Escalation Model:* ${escalationLabel}\n*:mag: Embedding Model:* ${embeddingLabel}`,
         },
-      );
+      });
     }
 
     const userCredBlocks = await buildUserCredentialBlocks(userId);

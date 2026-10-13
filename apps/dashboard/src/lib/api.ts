@@ -52,7 +52,10 @@ async function apiFetch<T>(method: string, path: string, body?: unknown): Promis
   return res.json();
 }
 
-export async function apiGet<T>(path: string, searchParams?: Record<string, string | undefined>): Promise<T> {
+export async function apiGet<T>(
+  path: string,
+  searchParams?: Record<string, string | undefined>,
+): Promise<T> {
   return apiFetch<T>("GET", `${path}${buildQueryString(searchParams)}`);
 }
 

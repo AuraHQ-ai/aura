@@ -48,10 +48,7 @@ export function createProgress(
     } else if (completed >= total) {
       eta = "done";
     }
-    return (
-      `[${completed}/${total}] ${pct}% | ` +
-      `elapsed ${formatDuration(elapsed)} | ETA ${eta}`
-    );
+    return `[${completed}/${total}] ${pct}% | ` + `elapsed ${formatDuration(elapsed)} | ETA ${eta}`;
   }
 
   function print() {
@@ -68,9 +65,7 @@ export function createProgress(
 
   function done() {
     const elapsed = Date.now() - startTime;
-    console.log(
-      `  ${label}: ${completed}/${total} done in ${formatDuration(elapsed)}`,
-    );
+    console.log(`  ${label}: ${completed}/${total} done in ${formatDuration(elapsed)}`);
   }
 
   return {

@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const userRows = new Map<string, Array<{ id: string; displayName: string; realName: string; username: string }>>();
+const userRows = new Map<
+  string,
+  Array<{ id: string; displayName: string; realName: string; username: string }>
+>();
 const selectQueues = new Map<string, unknown[][]>();
 const updateReturningQueue: unknown[][] = [];
 const updateSetCalls: Array<{ table: string | undefined; values: unknown }> = [];
@@ -259,10 +262,7 @@ describe("email sync tools", () => {
       reason: "junk cleanup",
     });
 
-    expect(archiveThreadsMock).toHaveBeenCalledWith("UJOAN", [
-      "thread-1",
-      "thread-2",
-    ]);
+    expect(archiveThreadsMock).toHaveBeenCalledWith("UJOAN", ["thread-1", "thread-2"]);
     expect(result).toMatchObject({
       ok: true,
       archived: 2,
@@ -351,9 +351,7 @@ describe("email sync tools", () => {
     const tools = createEmailSyncTools(slackClient as any, { userId: "UADMIN" });
     hasRoleMock.mockResolvedValue(true);
 
-    archiveThreadsMock.mockResolvedValue([
-      { threadId: "thread-1", status: "archived" },
-    ]);
+    archiveThreadsMock.mockResolvedValue([{ threadId: "thread-1", status: "archived" }]);
 
     const result = await (tools.archive_emails as any).execute({
       user_name: "Joan",

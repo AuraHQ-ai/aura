@@ -1,13 +1,8 @@
 import TurndownService from "turndown";
-import { and, eq, isNull, sql, inArray, asc } from "drizzle-orm";
+import { and, eq, isNull, inArray, asc } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { emailsRaw, type NewEmailRaw } from "@aura/db/schema";
-import {
-  getGmailClientForUser,
-  getHeader,
-  extractBodyParts,
-  hasAttachmentParts,
-} from "./gmail.js";
+import { getGmailClientForUser, getHeader, extractBodyParts, hasAttachmentParts } from "./gmail.js";
 import { logger } from "./logger.js";
 import { logError } from "./error-logger.js";
 import { resolveOrCreateFromEmail } from "./person-resolution.js";
@@ -106,9 +101,7 @@ function parseEmailList(raw: string): string[] {
     }
   }
   if (current.trim()) addresses.push(current.trim());
-  return addresses
-    .map((addr) => parseEmailAddress(addr.trim()).email)
-    .filter(Boolean);
+  return addresses.map((addr) => parseEmailAddress(addr.trim()).email).filter(Boolean);
 }
 
 // ── Gmail Batch API ──────────────────────────────────────────────────────────
@@ -129,16 +122,15 @@ async function batchGetMessages(
     const boundary = `batch_${Date.now()}_${i}`;
 
     const parts = batch
-      .map(
-        (id, idx) =>
-          [
-            `--${boundary}`,
-            `Content-Type: application/http`,
-            `Content-ID: <item${idx}>`,
-            ``,
-            `GET /gmail/v1/users/me/messages/${id}?format=full`,
-            ``,
-          ].join("\r\n"),
+      .map((id, idx) =>
+        [
+          `--${boundary}`,
+          `Content-Type: application/http`,
+          `Content-ID: <item${idx}>`,
+          ``,
+          `GET /gmail/v1/users/me/messages/${id}?format=full`,
+          ``,
+        ].join("\r\n"),
       )
       .join("\r\n");
 
@@ -163,9 +155,7 @@ async function batchGetMessages(
     }
 
     const text = await res.text();
-    const responseParts = text
-      .split(/--batch_[^\r\n]+/)
-      .filter((p) => p.includes("{"));
+    const responseParts = text.split(/--batch_[^\r\n]+/).filter((p) => p.includes("{"));
     for (const part of responseParts) {
       const jsonMatch = part.match(/\{[\s\S]*\}/);
       if (jsonMatch) {
@@ -189,11 +179,7 @@ async function batchGetMessages(
 const BATCH_API_MISS_RECOVERY_LOG_INTERVAL = 25;
 let batchApiMissRecoveredSinceStart = 0;
 
-function recordBatchApiMissRecoveries(
-  userId: string,
-  recovered: number,
-  attempted: number,
-): void {
+function recordBatchApiMissRecoveries(userId: string, recovered: number, attempted: number): void {
   if (recovered <= 0) return;
 
   const previous = batchApiMissRecoveredSinceStart;
@@ -217,11 +203,7 @@ function recordBatchApiMissRecoveries(
 
 // ── Message row conversion ───────────────────────────────────────────────────
 
-function messageToRow(
-  msg: any,
-  userId: string,
-  userEmail: string | null,
-): NewEmailRaw | null {
+function messageToRow(msg: any, userId: string, userEmail: string | null): NewEmailRaw | null {
   if (!msg?.id || !msg?.threadId) return null;
 
   const headers = msg.payload?.headers || [];
@@ -234,9 +216,7 @@ function messageToRow(
   const { email: fromEmail, name: fromName } = parseEmailAddress(fromRaw);
   const date = dateStr ? new Date(dateStr) : new Date();
   const direction: "inbound" | "outbound" =
-    userEmail && fromEmail.toLowerCase() === userEmail.toLowerCase()
-      ? "outbound"
-      : "inbound";
+    userEmail && fromEmail.toLowerCase() === userEmail.toLowerCase() ? "outbound" : "inbound";
 
   const { html, plain } = extractBodyParts(msg.payload);
   const bodyMarkdown = htmlToMarkdown(html, plain);
@@ -246,13 +226,7 @@ function messageToRow(
   const attachments = hasAttachmentParts(msg.payload);
 
   const rawHeaders: Record<string, string> = {};
-  for (const h of [
-    "Message-ID",
-    "In-Reply-To",
-    "References",
-    "Reply-To",
-    "List-Unsubscribe",
-  ]) {
+  for (const h of ["Message-ID", "In-Reply-To", "References", "Reply-To", "List-Unsubscribe"]) {
     const val = getHeader(headers, h);
     if (val) rawHeaders[h] = val;
   }
@@ -283,10 +257,7 @@ function messageToRow(
  * Uses Gmail's HTTP batch endpoint (100 messages/request) and batch DB inserts.
  * Does NOT classify threads — call computeThreadStates() separately.
  */
-export async function syncEmails(
-  userId: string,
-  options: SyncOptions = {},
-): Promise<SyncResult> {
+export async function syncEmails(userId: string, options: SyncOptions = {}): Promise<SyncResult> {
   const result: SyncResult = { synced: 0, skipped: 0, errors: 0, errorDetails: [] };
 
   const gmailResult = await getGmailClientForUser(userId);
@@ -457,10 +428,7 @@ export async function syncEmails(
           );
         }
       } catch (err) {
-        retryFailureReasons.set(
-          e.gmailMessageId,
-          `batch_api_retry_process_failed: ${String(err)}`,
-        );
+        retryFailureReasons.set(e.gmailMessageId, `batch_api_retry_process_failed: ${String(err)}`);
         logger.warn("Failed to process retried batch_api_miss message", {
           userId,
           gmailMessageId: e.gmailMessageId,
@@ -507,9 +475,7 @@ export async function syncEmails(
       }
     }
 
-    const permanentMisses = result.errorDetails.filter((e) =>
-      missedIdSet.has(e.gmailMessageId),
-    );
+    const permanentMisses = result.errorDetails.filter((e) => missedIdSet.has(e.gmailMessageId));
     if (permanentMisses.length > 0) {
       logger.error("Email sync: batch_api_miss persisted after retry", {
         userId,
@@ -553,20 +519,17 @@ export async function syncEmails(
 
   // Post-sync: embed threads that got new emails (non-blocking)
   try {
-    const threadIds = [...new Set(
-      result.synced > 0
-        ? await db
-            .selectDistinct({ gmailThreadId: emailsRaw.gmailThreadId })
-            .from(emailsRaw)
-            .where(
-              and(
-                eq(emailsRaw.userId, userId),
-                isNull(emailsRaw.embedding),
-              ),
-            )
-            .then((rows) => rows.map((r) => r.gmailThreadId))
-        : [],
-    )];
+    const threadIds = [
+      ...new Set(
+        result.synced > 0
+          ? await db
+              .selectDistinct({ gmailThreadId: emailsRaw.gmailThreadId })
+              .from(emailsRaw)
+              .where(and(eq(emailsRaw.userId, userId), isNull(emailsRaw.embedding)))
+              .then((rows) => rows.map((r) => r.gmailThreadId))
+          : [],
+      ),
+    ];
 
     if (threadIds.length > 0) {
       const embedded = await embedEmailThreads(userId, threadIds);
@@ -599,11 +562,14 @@ function truncateForEmbedding(text: string): string {
 // ── Thread embedding ────────────────────────────────────────────────────────
 
 function buildThreadText(
-  emails: { fromName: string | null; date: Date; subject: string | null; bodyMarkdown: string | null }[],
+  emails: {
+    fromName: string | null;
+    date: Date;
+    subject: string | null;
+    bodyMarkdown: string | null;
+  }[],
 ): string {
-  const sorted = [...emails].sort(
-    (a, b) => a.date.getTime() - b.date.getTime(),
-  );
+  const sorted = [...emails].sort((a, b) => a.date.getTime() - b.date.getTime());
   return sorted
     .map(
       (e) =>
@@ -612,10 +578,7 @@ function buildThreadText(
     .join("\n---\n");
 }
 
-async function embedEmailThreads(
-  userId: string,
-  threadIds: string[],
-): Promise<number> {
+async function embedEmailThreads(userId: string, threadIds: string[]): Promise<number> {
   const BATCH_SIZE = 50;
   let embedded = 0;
 
@@ -631,12 +594,7 @@ async function embedEmailThreads(
         bodyMarkdown: emailsRaw.bodyMarkdown,
       })
       .from(emailsRaw)
-      .where(
-        and(
-          eq(emailsRaw.userId, userId),
-          inArray(emailsRaw.gmailThreadId, batchThreadIds),
-        ),
-      )
+      .where(and(eq(emailsRaw.userId, userId), inArray(emailsRaw.gmailThreadId, batchThreadIds)))
       .orderBy(asc(emailsRaw.date));
 
     const threadMap = new Map<string, typeof emails>();
@@ -669,10 +627,7 @@ async function embedEmailThreads(
             updatedAt: new Date(),
           })
           .where(
-            and(
-              eq(emailsRaw.userId, userId),
-              eq(emailsRaw.gmailThreadId, orderedThreadIds[j]),
-            ),
+            and(eq(emailsRaw.userId, userId), eq(emailsRaw.gmailThreadId, orderedThreadIds[j])),
           );
         embedded++;
       }
@@ -702,12 +657,7 @@ export async function backfillEmailEmbeddings(
   const threadRows = await db
     .selectDistinct({ gmailThreadId: emailsRaw.gmailThreadId })
     .from(emailsRaw)
-    .where(
-      and(
-        eq(emailsRaw.userId, userId),
-        isNull(emailsRaw.embedding),
-      ),
-    );
+    .where(and(eq(emailsRaw.userId, userId), isNull(emailsRaw.embedding)));
 
   const threadIds = threadRows.map((r) => r.gmailThreadId);
 

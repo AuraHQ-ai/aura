@@ -11,7 +11,6 @@
     "vercel-build": "pnpm --filter @aura/db db:migrate",
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
-    "lint": "eslint src/",
     "test": "vitest run",
     "content:index": "tsx scripts/index-content.ts",
     "content:index:no-embeddings": "tsx scripts/index-content.ts --skip-embeddings",

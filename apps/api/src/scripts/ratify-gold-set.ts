@@ -8,8 +8,8 @@
  *   pnpm ratify:gold-set --export > ratified-eval-cases.json
  */
 import { config } from "dotenv";
-import { resolve } from "path";
-import { fileURLToPath } from "url";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { EvalFailureClass, EvalRubric } from "@aura/db/schema";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
@@ -51,7 +51,9 @@ function parseRubric(raw: string): EvalRubric {
   try {
     parsed = JSON.parse(raw);
   } catch (error) {
-    console.error(`Invalid --rubric JSON: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(
+      `Invalid --rubric JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
     process.exit(1);
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -77,9 +79,7 @@ const actionCount =
   (hasFlag("list") ? 1 : 0) + (readFlag("ratify") ? 1 : 0) + (hasFlag("export") ? 1 : 0);
 if (actionCount !== 1) usage();
 
-const { and, asc, desc, eq, inArray, isNotNull, isNull, sql } = await import(
-  "drizzle-orm"
-);
+const { and, asc, desc, eq, inArray, isNotNull, isNull, sql } = await import("drizzle-orm");
 const {
   conversationMessages,
   conversationParts,
@@ -130,15 +130,17 @@ async function listQueue() {
 
   for (const row of rows) {
     const link = slackThreadLink(row.channelId, row.threadTs);
-    console.log([
-      `id: ${row.id}`,
-      `verdict: ${row.verdict}/${row.failureClass}`,
-      `created: ${row.traceCreatedAt.toISOString()}`,
-      `thread: ${link ?? "(no Slack thread link)"}`,
-      `intent: ${truncate(row.servingIntent, 240) || "(none)"}`,
-      `note: ${truncate(row.note, 300) || "(none)"}`,
-      `excerpt: ${truncate(row.text, 300) || "(empty)"}`,
-    ].join("\n"));
+    console.log(
+      [
+        `id: ${row.id}`,
+        `verdict: ${row.verdict}/${row.failureClass}`,
+        `created: ${row.traceCreatedAt.toISOString()}`,
+        `thread: ${link ?? "(no Slack thread link)"}`,
+        `intent: ${truncate(row.servingIntent, 240) || "(none)"}`,
+        `note: ${truncate(row.note, 300) || "(none)"}`,
+        `excerpt: ${truncate(row.text, 300) || "(empty)"}`,
+      ].join("\n"),
+    );
     console.log("");
   }
   console.error(`Listed ${rows.length} ratification candidate(s).`);
@@ -272,7 +274,8 @@ async function exportRatified() {
 
     const question = questionTurn
       ? questionTurn.text
-      : (row.score.servingIntent ?? "Provide the correct Aura response for the ratified eval case.");
+      : (row.score.servingIntent ??
+        "Provide the correct Aura response for the ratified eval case.");
 
     cases.push({
       id: `eval-response-${row.score.id}`,

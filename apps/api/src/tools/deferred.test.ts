@@ -57,11 +57,10 @@ describe("deferred tool thread cache", () => {
       send_voice_note: { description: "Generate a voice note." },
     };
 
-    await applyAnthropicToolDiscovery(
-      tools,
-      "anthropic/claude-sonnet-4-5",
-      { channelId: "C123", threadTs: "171234.000100" },
-    );
+    await applyAnthropicToolDiscovery(tools, "anthropic/claude-sonnet-4-5", {
+      channelId: "C123",
+      threadTs: "171234.000100",
+    });
 
     expect(tools.toolSearch).toBeDefined();
     expect(tools.send_voice_note.providerOptions.anthropic.deferLoading).toBe(true);
@@ -80,14 +79,15 @@ describe("deferred tool thread cache", () => {
       bq_execute_query: { description: "Run SQL." },
     };
 
-    await applyAnthropicToolDiscovery(
-      tools,
-      "anthropic/claude-sonnet-4-5",
-      { channelId: "C123", threadTs: "171234.000100" },
-    );
+    await applyAnthropicToolDiscovery(tools, "anthropic/claude-sonnet-4-5", {
+      channelId: "C123",
+      threadTs: "171234.000100",
+    });
 
     expect(tools.send_voice_note.providerOptions.anthropic.deferLoading).toBeUndefined();
-    expect(tools.send_voice_note.providerOptions.anthropic.cacheControl).toEqual({ type: "ephemeral" });
+    expect(tools.send_voice_note.providerOptions.anthropic.cacheControl).toEqual({
+      type: "ephemeral",
+    });
     expect(tools.bq_execute_query.providerOptions.anthropic.deferLoading).toBe(true);
     expect(getDeferredToolManifest(tools).map((entry) => entry.name)).toEqual(["bq_execute_query"]);
   });
@@ -114,11 +114,10 @@ describe("deferred tool thread cache", () => {
       mcp__stripe__list_customers: { description: "List Stripe customers." },
     };
 
-    await applyAnthropicToolDiscovery(
-      tools,
-      "anthropic/claude-sonnet-4-5",
-      { channelId: "C123", threadTs: "171234.000100" },
-    );
+    await applyAnthropicToolDiscovery(tools, "anthropic/claude-sonnet-4-5", {
+      channelId: "C123",
+      threadTs: "171234.000100",
+    });
 
     expect(tools.mcp__stripe__list_customers.providerOptions.anthropic.deferLoading).toBe(true);
     expect(getDeferredToolManifest(tools).map((entry) => entry.name)).toEqual([

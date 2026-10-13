@@ -6,14 +6,39 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { DetailSkeleton } from "@/components/page-skeleton";
 import { cn, formatDate } from "@/lib/utils";
 import { useState, useMemo } from "react";
-import { ArrowLeft, Trash2, UserPlus, Check, ChevronsUpDown, Shield, ScrollText, Pencil, Eye, EyeOff } from "lucide-react";
+import {
+  ArrowLeft,
+  Trash2,
+  UserPlus,
+  Check,
+  ChevronsUpDown,
+  Shield,
+  ScrollText,
+  Pencil,
+  Eye,
+  EyeOff,
+} from "lucide-react";
 
 interface Grant {
   id: string;
@@ -144,7 +169,10 @@ function CredentialDetailPage() {
   });
 
   if (isLoading) return <DetailSkeleton />;
-  if (error) return <div className="text-destructive text-sm">Failed to load credential: {error.message}</div>;
+  if (error)
+    return (
+      <div className="text-destructive text-sm">Failed to load credential: {error.message}</div>
+    );
   if (!data) return null;
 
   return (
@@ -152,7 +180,9 @@ function CredentialDetailPage() {
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
         <div className="flex items-center gap-3 min-w-0">
           <Button variant="ghost" size="icon-sm" className="shrink-0" asChild>
-            <Link to="/credentials"><ArrowLeft className="h-4 w-4" /></Link>
+            <Link to="/credentials">
+              <ArrowLeft className="h-4 w-4" />
+            </Link>
           </Button>
           <div className="min-w-0 flex-1">
             <h1 className="text-base font-semibold font-mono truncate">{data.name}</h1>
@@ -171,11 +201,15 @@ function CredentialDetailPage() {
           >
             <Pencil className="h-4 w-4" /> Rename
           </Button>
-          <Button variant="outline" size="sm" onClick={() => setShowUpdateValue(true)}>Update Value</Button>
+          <Button variant="outline" size="sm" onClick={() => setShowUpdateValue(true)}>
+            Update Value
+          </Button>
           <Button
             variant="destructive"
             size="sm"
-            onClick={() => { if (confirm("Delete this credential?")) deleteMutation.mutate(); }}
+            onClick={() => {
+              if (confirm("Delete this credential?")) deleteMutation.mutate();
+            }}
           >
             <Trash2 className="h-4 w-4" />
           </Button>
@@ -184,7 +218,9 @@ function CredentialDetailPage() {
 
       <div className="grid gap-3 sm:grid-cols-4">
         <Card>
-          <CardHeader><CardTitle className="text-sm">Value</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle className="text-sm">Value</CardTitle>
+          </CardHeader>
           <CardContent>
             <div className="flex items-center gap-2 min-w-0">
               <code className="text-sm font-mono truncate flex-1">
@@ -213,7 +249,9 @@ function CredentialDetailPage() {
           </CardContent>
         </Card>
         <Card>
-          <CardHeader><CardTitle className="text-sm">Scope (min role)</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle className="text-sm">Scope (min role)</CardTitle>
+          </CardHeader>
           <CardContent>
             <select
               value={data.scope}
@@ -221,25 +259,39 @@ function CredentialDetailPage() {
               className="h-8 w-full rounded-md border border-input bg-transparent px-2 text-sm"
             >
               {VALID_SCOPES.map((s) => (
-                <option key={s} value={s}>{SCOPE_LABELS[s]}</option>
+                <option key={s} value={s}>
+                  {SCOPE_LABELS[s]}
+                </option>
               ))}
             </select>
           </CardContent>
         </Card>
         <Card>
-          <CardHeader><CardTitle className="text-sm">Created</CardTitle></CardHeader>
-          <CardContent><span className="text-sm">{formatDate(data.createdAt)}</span></CardContent>
+          <CardHeader>
+            <CardTitle className="text-sm">Created</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <span className="text-sm">{formatDate(data.createdAt)}</span>
+          </CardContent>
         </Card>
         <Card>
-          <CardHeader><CardTitle className="text-sm">Expires</CardTitle></CardHeader>
-          <CardContent><span className="text-sm">{formatDate(data.expiresAt)}</span></CardContent>
+          <CardHeader>
+            <CardTitle className="text-sm">Expires</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <span className="text-sm">{formatDate(data.expiresAt)}</span>
+          </CardContent>
         </Card>
       </div>
 
       <Tabs defaultValue="grants">
         <TabsList>
-          <TabsTrigger value="grants"><Shield /> Grants ({data.grants.length})</TabsTrigger>
-          <TabsTrigger value="audit"><ScrollText /> Audit Log ({data.auditLog.length})</TabsTrigger>
+          <TabsTrigger value="grants">
+            <Shield /> Grants ({data.grants.length})
+          </TabsTrigger>
+          <TabsTrigger value="audit">
+            <ScrollText /> Audit Log ({data.auditLog.length})
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="grants">
@@ -264,13 +316,21 @@ function CredentialDetailPage() {
                 {data.grants.map((g) => (
                   <TableRow key={g.id}>
                     <TableCell className="font-medium">{g.granteeName || g.granteeId}</TableCell>
-                    <TableCell><Badge variant="outline">{g.permission}</Badge></TableCell>
+                    <TableCell>
+                      <Badge variant="outline">{g.permission}</Badge>
+                    </TableCell>
                     <TableCell className="text-sm">{g.grantedBy}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{formatDate(g.grantedAt)}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {formatDate(g.grantedAt)}
+                    </TableCell>
                     <TableCell>{g.revokedAt ? formatDate(g.revokedAt) : "—"}</TableCell>
                     <TableCell>
                       {!g.revokedAt && (
-                        <Button variant="ghost" size="sm" onClick={() => revokeMutation.mutate(g.id)}>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => revokeMutation.mutate(g.id)}
+                        >
                           Revoke
                         </Button>
                       )}
@@ -279,7 +339,9 @@ function CredentialDetailPage() {
                 ))}
                 {data.grants.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={6} className="text-center text-muted-foreground py-4">No grants</TableCell>
+                    <TableCell colSpan={6} className="text-center text-muted-foreground py-4">
+                      No grants
+                    </TableCell>
                   </TableRow>
                 )}
               </TableBody>
@@ -301,15 +363,23 @@ function CredentialDetailPage() {
               <TableBody>
                 {data.auditLog.map((entry) => (
                   <TableRow key={entry.id}>
-                    <TableCell><Badge variant="outline">{entry.action}</Badge></TableCell>
+                    <TableCell>
+                      <Badge variant="outline">{entry.action}</Badge>
+                    </TableCell>
                     <TableCell className="text-sm">{entry.accessedBy}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{entry.context || "—"}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground">{formatDate(entry.timestamp)}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {entry.context || "—"}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {formatDate(entry.timestamp)}
+                    </TableCell>
                   </TableRow>
                 ))}
                 {data.auditLog.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={4} className="text-center text-muted-foreground py-4">No audit entries</TableCell>
+                    <TableCell colSpan={4} className="text-center text-muted-foreground py-4">
+                      No audit entries
+                    </TableCell>
                   </TableRow>
                 )}
               </TableBody>
@@ -340,7 +410,9 @@ function CredentialDetailPage() {
               </p>
             )}
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setShowRename(false)}>Cancel</Button>
+              <Button variant="outline" onClick={() => setShowRename(false)}>
+                Cancel
+              </Button>
               <Button
                 onClick={() => renameMutation.mutate()}
                 disabled={!renameValue || renameValue === data.name || renameMutation.isPending}
@@ -358,10 +430,20 @@ function CredentialDetailPage() {
             <DialogTitle>Update Credential Value</DialogTitle>
           </DialogHeader>
           <div className="space-y-3">
-            <Input type="password" placeholder="New value" value={newValue} onChange={(e) => setNewValue(e.target.value)} />
+            <Input
+              type="password"
+              placeholder="New value"
+              value={newValue}
+              onChange={(e) => setNewValue(e.target.value)}
+            />
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setShowUpdateValue(false)}>Cancel</Button>
-              <Button onClick={() => updateValueMutation.mutate()} disabled={updateValueMutation.isPending}>
+              <Button variant="outline" onClick={() => setShowUpdateValue(false)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={() => updateValueMutation.mutate()}
+                disabled={updateValueMutation.isPending}
+              >
                 {updateValueMutation.isPending ? "Updating..." : "Update"}
               </Button>
             </div>
@@ -404,9 +486,16 @@ function CredentialDetailPage() {
                             setUserPickerOpen(false);
                           }}
                         >
-                          <Check className={cn("mr-2 h-4 w-4", granteeId === user.slackUserId ? "opacity-100" : "opacity-0")} />
+                          <Check
+                            className={cn(
+                              "mr-2 h-4 w-4",
+                              granteeId === user.slackUserId ? "opacity-100" : "opacity-0",
+                            )}
+                          />
                           <span>{user.displayName || user.slackUserId}</span>
-                          <span className="ml-auto text-xs text-muted-foreground">{user.slackUserId}</span>
+                          <span className="ml-auto text-xs text-muted-foreground">
+                            {user.slackUserId}
+                          </span>
                         </CommandItem>
                       ))}
                     </CommandGroup>
@@ -424,7 +513,9 @@ function CredentialDetailPage() {
               <option value="admin">Admin</option>
             </select>
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setShowGrant(false)}>Cancel</Button>
+              <Button variant="outline" onClick={() => setShowGrant(false)}>
+                Cancel
+              </Button>
               <Button onClick={() => grantMutation.mutate()} disabled={grantMutation.isPending}>
                 {grantMutation.isPending ? "Granting..." : "Grant"}
               </Button>

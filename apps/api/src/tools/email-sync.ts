@@ -31,10 +31,7 @@ type EmailSyncRefresh = {
   error?: string;
 };
 
-async function assertCanAccessUserEmail(
-  callerUserId: string | undefined,
-  targetUserId: string,
-) {
+async function assertCanAccessUserEmail(callerUserId: string | undefined, targetUserId: string) {
   if (callerUserId && callerUserId === targetUserId) {
     return { ok: true as const };
   }
@@ -115,10 +112,7 @@ async function refreshRecentEmailsIfStale(
   }
 }
 
-export function createEmailSyncTools(
-  client: WebClient,
-  context?: ScheduleContext,
-) {
+export function createEmailSyncTools(client: WebClient, context?: ScheduleContext) {
   return {
     sync_emails: defineTool({
       requiredCredentials: ["google_oauth"],
@@ -127,9 +121,7 @@ export function createEmailSyncTools(
       inputSchema: z.object({
         user_name: z
           .string()
-          .describe(
-            "Display name, username, or user ID of the Gmail account owner",
-          ),
+          .describe("Display name, username, or user ID of the Gmail account owner"),
         after: z
           .string()
           .optional()
@@ -139,9 +131,7 @@ export function createEmailSyncTools(
         before: z
           .string()
           .optional()
-          .describe(
-            "Gmail date filter, e.g. '2025/06/01'. Translated to 'before:<date>' query.",
-          ),
+          .describe("Gmail date filter, e.g. '2025/06/01'. Translated to 'before:<date>' query."),
         newer_than: z
           .string()
           .optional()
@@ -212,9 +202,7 @@ export function createEmailSyncTools(
 
           let threadStates = null;
           if (shouldClassify && !isLargeSync) {
-            const { computeThreadStates } = await import(
-              "../lib/email-triage.js"
-            );
+            const { computeThreadStates } = await import("../lib/email-triage.js");
             threadStates = await computeThreadStates(user.id);
           }
 
@@ -222,7 +210,9 @@ export function createEmailSyncTools(
 
           let message: string;
           if (threadStates) {
-            message = `${syncSummary}, classified ${threadStates.processed} threads (${Object.entries(threadStates.breakdown)
+            message = `${syncSummary}, classified ${threadStates.processed} threads (${Object.entries(
+              threadStates.breakdown,
+            )
               .map(([k, v]) => `${k}: ${v}`)
               .join(", ")})`;
           } else if (shouldClassify && isLargeSync) {
@@ -257,7 +247,11 @@ export function createEmailSyncTools(
           return { ok: false, error: `Sync failed: ${error.message}` };
         }
       },
-      slack: { status: "Syncing emails...", detail: (i) => i.user_name, output: (r) => r.ok === false ? r.error : `${r.synced ?? 0} emails synced` },
+      slack: {
+        status: "Syncing emails...",
+        detail: (i) => i.user_name,
+        output: (r) => (r.ok === false ? r.error : `${r.synced ?? 0} emails synced`),
+      },
     }),
 
     email_digest: defineTool({
@@ -267,13 +261,8 @@ export function createEmailSyncTools(
       inputSchema: z.object({
         user_name: z
           .string()
-          .describe(
-            "Display name, username, or user ID of the Gmail account owner",
-          ),
-        include_fyi: z
-          .boolean()
-          .optional()
-          .describe("Include FYI-level threads (default false)"),
+          .describe("Display name, username, or user ID of the Gmail account owner"),
+        include_fyi: z.boolean().optional().describe("Include FYI-level threads (default false)"),
       }),
       execute: async ({ user_name, include_fyi }) => {
         try {
@@ -289,10 +278,7 @@ export function createEmailSyncTools(
           const access = await assertCanAccessUserEmail(context?.userId, userId);
           if (!access.ok) return access;
 
-          const syncRefresh = await refreshRecentEmailsIfStale(
-            userId,
-            "email_digest_stale_check",
-          );
+          const syncRefresh = await refreshRecentEmailsIfStale(userId, "email_digest_stale_check");
 
           const stateFilter = include_fyi
             ? sql`(${emailsRaw.threadState} IS NULL OR ${emailsRaw.threadState} != 'junk')`
@@ -310,12 +296,7 @@ export function createEmailSyncTools(
               direction: emailsRaw.direction,
             })
             .from(emailsRaw)
-            .where(
-              and(
-                eq(emailsRaw.userId, userId),
-                stateFilter,
-              ),
-            )
+            .where(and(eq(emailsRaw.userId, userId), stateFilter))
             .orderBy(
               sql`CASE ${emailsRaw.threadState}
                 WHEN 'awaiting_your_reply' THEN 1
@@ -328,10 +309,7 @@ export function createEmailSyncTools(
             )
             .limit(200);
 
-          const threadMap = new Map<
-            string,
-            { latest: (typeof emails)[0]; count: number }
-          >();
+          const threadMap = new Map<string, { latest: (typeof emails)[0]; count: number }>();
           for (const email of emails) {
             const existing = threadMap.get(email.gmailThreadId);
             if (!existing) {
@@ -350,21 +328,19 @@ export function createEmailSyncTools(
 
           // Get actual message counts per thread
           const threadIds = [...threadMap.keys()];
-          const threadCounts = threadIds.length > 0
-            ? await db
-                .select({
-                  gmailThreadId: emailsRaw.gmailThreadId,
-                  messageCount: sql<number>`count(*)::int`,
-                })
-                .from(emailsRaw)
-                .where(
-                  and(
-                    eq(emailsRaw.userId, userId),
-                    inArray(emailsRaw.gmailThreadId, threadIds)
+          const threadCounts =
+            threadIds.length > 0
+              ? await db
+                  .select({
+                    gmailThreadId: emailsRaw.gmailThreadId,
+                    messageCount: sql<number>`count(*)::int`,
+                  })
+                  .from(emailsRaw)
+                  .where(
+                    and(eq(emailsRaw.userId, userId), inArray(emailsRaw.gmailThreadId, threadIds)),
                   )
-                )
-                .groupBy(emailsRaw.gmailThreadId)
-            : [];
+                  .groupBy(emailsRaw.gmailThreadId)
+              : [];
 
           const threadCountMap = new Map<string, number>();
           for (const tc of threadCounts) {
@@ -374,32 +350,22 @@ export function createEmailSyncTools(
           const threads = [...threadMap.values()].map(({ latest: t }) => ({
             gmail_thread_id: t.gmailThreadId,
             subject: t.subject || "(no subject)",
-            from: t.fromName
-              ? `${t.fromName} <${t.fromEmail}>`
-              : t.fromEmail,
+            from: t.fromName ? `${t.fromName} <${t.fromEmail}>` : t.fromEmail,
             from_email: t.fromEmail,
             thread_state: t.threadState || "unclassified",
             thread_state_reason: t.threadStateReason || "",
             direction: t.direction,
             email_count: threadCountMap.get(t.gmailThreadId) || 1,
-            last_message: t.date
-              ? formatDistanceToNow(t.date, { addSuffix: true })
-              : "unknown",
+            last_message: t.date ? formatDistanceToNow(t.date, { addSuffix: true }) : "unknown",
           }));
 
-          const awaitingYourReply = threads.filter(
-            (t) => t.thread_state === "awaiting_your_reply",
-          );
+          const awaitingYourReply = threads.filter((t) => t.thread_state === "awaiting_your_reply");
           const awaitingTheirReply = threads.filter(
             (t) => t.thread_state === "awaiting_their_reply",
           );
           const fyi = threads.filter((t) => t.thread_state === "fyi");
-          const resolved = threads.filter(
-            (t) => t.thread_state === "resolved",
-          );
-          const unclassified = threads.filter(
-            (t) => t.thread_state === "unclassified",
-          );
+          const resolved = threads.filter((t) => t.thread_state === "resolved");
+          const unclassified = threads.filter((t) => t.thread_state === "unclassified");
 
           return {
             ok: true,
@@ -425,37 +391,26 @@ export function createEmailSyncTools(
           return { ok: false, error: `Digest failed: ${error.message}` };
         }
       },
-      slack: { status: "Running email digest...", detail: (i) => i.user_name, output: (r) => "error" in r ? r.error : `${r.threads.length} threads` },
+      slack: {
+        status: "Running email digest...",
+        detail: (i) => i.user_name,
+        output: (r) => ("error" in r ? r.error : `${r.threads.length} threads`),
+      },
     }),
 
     update_email_thread: defineTool({
       requiredCredentials: ["google_oauth"],
       description:
         "Update the triage state of an email thread by gmail_thread_id. Get the thread ID from email_digest or search_emails. Users may update their own threads; admins may update another user's threads. If the thread is missing from emails_raw, this performs a bounded recent Gmail sync and retries once.",
-      inputSchema: z
-        .object({
-          user_name: z
-            .string()
-            .describe(
-              "Display name, username, or user ID of the Gmail account owner",
-            ),
-          gmail_thread_id: z
-            .string()
-            .describe("Gmail thread ID to update"),
-          thread_state: z
-            .enum(threadStateValues)
-            .describe("New state"),
-          reason: z
-            .string()
-            .optional()
-            .describe("Why the state was changed"),
-        }),
-      execute: async ({
-        user_name,
-        gmail_thread_id,
-        thread_state,
-        reason,
-      }) => {
+      inputSchema: z.object({
+        user_name: z
+          .string()
+          .describe("Display name, username, or user ID of the Gmail account owner"),
+        gmail_thread_id: z.string().describe("Gmail thread ID to update"),
+        thread_state: z.enum(threadStateValues).describe("New state"),
+        reason: z.string().optional().describe("Why the state was changed"),
+      }),
+      execute: async ({ user_name, gmail_thread_id, thread_state, reason }) => {
         try {
           const user = await resolveUserByName(client, user_name);
           if (!user) {
@@ -488,7 +443,10 @@ export function createEmailSyncTools(
             );
 
             matchingThreads = await db
-              .selectDistinct({ gmailThreadId: emailsRaw.gmailThreadId, subject: emailsRaw.subject })
+              .selectDistinct({
+                gmailThreadId: emailsRaw.gmailThreadId,
+                subject: emailsRaw.subject,
+              })
               .from(emailsRaw)
               .where(and(...conditions));
           }
@@ -503,9 +461,7 @@ export function createEmailSyncTools(
             };
           }
 
-          const threadIds = [
-            ...new Set(matchingThreads.map((t) => t.gmailThreadId)),
-          ];
+          const threadIds = [...new Set(matchingThreads.map((t) => t.gmailThreadId))];
 
           const result = await db
             .update(emailsRaw)
@@ -515,19 +471,10 @@ export function createEmailSyncTools(
               threadStateUpdatedAt: new Date(),
               updatedAt: new Date(),
             })
-            .where(
-              and(
-                eq(emailsRaw.userId, userId),
-                inArray(emailsRaw.gmailThreadId, threadIds),
-              ),
-            )
+            .where(and(eq(emailsRaw.userId, userId), inArray(emailsRaw.gmailThreadId, threadIds)))
             .returning({ gmailThreadId: emailsRaw.gmailThreadId });
 
-          const subjects = [
-            ...new Set(
-              matchingThreads.map((t) => t.subject || "(no subject)"),
-            ),
-          ];
+          const subjects = [...new Set(matchingThreads.map((t) => t.subject || "(no subject)"))];
 
           logger.info("update_email_thread", {
             userId,
@@ -555,7 +502,10 @@ export function createEmailSyncTools(
           };
         }
       },
-      slack: { status: "Updating email thread...", output: (r) => r.ok === false ? r.error : `Updated to '${r.thread_state}'` },
+      slack: {
+        status: "Updating email thread...",
+        output: (r) => (r.ok === false ? r.error : `Updated to '${r.thread_state}'`),
+      },
     }),
 
     update_email_threads: defineTool({
@@ -565,20 +515,13 @@ export function createEmailSyncTools(
       inputSchema: z.object({
         user_name: z
           .string()
-          .describe(
-            "Display name, username, or user ID of the Gmail account owner",
-          ),
+          .describe("Display name, username, or user ID of the Gmail account owner"),
         updates: z
           .array(
             z.object({
               gmail_thread_id: z.string().describe("Gmail thread ID"),
-              thread_state: z
-                .enum(threadStateValues)
-                .describe("New state for this thread"),
-              reason: z
-                .string()
-                .optional()
-                .describe("Why the state was changed"),
+              thread_state: z.enum(threadStateValues).describe("New state for this thread"),
+              reason: z.string().optional().describe("Why the state was changed"),
             }),
           )
           .min(1)
@@ -683,7 +626,15 @@ export function createEmailSyncTools(
           };
         }
       },
-      slack: { status: "Updating email threads...", output: (r) => "error" in r ? r.error : ("message" in r && r.ok === false ? r.message : `${r.updated} threads updated`) },
+      slack: {
+        status: "Updating email threads...",
+        output: (r) =>
+          "error" in r
+            ? r.error
+            : "message" in r && r.ok === false
+              ? r.message
+              : `${r.updated} threads updated`,
+      },
     }),
 
     archive_emails: defineTool({
@@ -693,16 +644,12 @@ export function createEmailSyncTools(
       inputSchema: z.object({
         user_name: z
           .string()
-          .describe(
-            "Display name, username, or user ID of the Gmail account owner",
-          ),
+          .describe("Display name, username, or user ID of the Gmail account owner"),
         gmail_thread_ids: z
           .array(z.string())
           .min(1)
           .max(MAX_ARCHIVE_THREADS_PER_CALL)
-          .describe(
-            `Gmail thread IDs to archive (max ${MAX_ARCHIVE_THREADS_PER_CALL} per call)`,
-          ),
+          .describe(`Gmail thread IDs to archive (max ${MAX_ARCHIVE_THREADS_PER_CALL} per call)`),
         reason: z
           .string()
           .optional()
@@ -809,10 +756,7 @@ export function createEmailSyncTools(
       slack: {
         status: "Archiving emails...",
         detail: (i) => `${i.gmail_thread_ids.length} thread(s)`,
-        output: (r) =>
-          "error" in r && r.error
-            ? r.error
-            : `${(r as any).archived ?? 0} archived`,
+        output: (r) => ("error" in r && r.error ? r.error : `${(r as any).archived ?? 0} archived`),
       },
     }),
 
@@ -823,9 +767,7 @@ export function createEmailSyncTools(
       inputSchema: z.object({
         user_name: z
           .string()
-          .describe(
-            "Display name, username, or user ID of the Gmail account owner",
-          ),
+          .describe("Display name, username, or user ID of the Gmail account owner"),
         query: z.string().describe("Search query string"),
         mode: z
           .enum(["text", "semantic"])
@@ -858,10 +800,7 @@ export function createEmailSyncTools(
           const access = await assertCanAccessUserEmail(context?.userId, userId);
           if (!access.ok) return access;
 
-          const syncRefresh = await refreshRecentEmailsIfStale(
-            userId,
-            "search_emails_stale_check",
-          );
+          const syncRefresh = await refreshRecentEmailsIfStale(userId, "search_emails_stale_check");
 
           const conditions = [eq(emailsRaw.userId, userId)];
 
@@ -969,10 +908,7 @@ export function createEmailSyncTools(
               )
               .limit(limit * 3);
 
-            const threadMap = new Map<
-              string,
-              (typeof rawResults)[0]
-            >();
+            const threadMap = new Map<string, (typeof rawResults)[0]>();
             for (const row of rawResults) {
               const existing = threadMap.get(row.gmailThreadId);
               if (!existing) {
@@ -1029,7 +965,11 @@ export function createEmailSyncTools(
           };
         }
       },
-      slack: { status: "Searching emails...", detail: (i) => i.query, output: (r) => r.ok === false ? r.error : `${r.count ?? 0} results` },
+      slack: {
+        status: "Searching emails...",
+        detail: (i) => i.query,
+        output: (r) => (r.ok === false ? r.error : `${r.count ?? 0} results`),
+      },
     }),
   };
 }

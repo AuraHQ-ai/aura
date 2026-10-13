@@ -55,9 +55,7 @@ async function getBrowserbaseConfig(): Promise<BrowserbaseConfig> {
 /**
  * Create a new browser session via Browserbase REST API
  */
-export async function createSession(
-  options: CreateSessionOptions = {},
-): Promise<BrowserSession> {
+export async function createSession(options: CreateSessionOptions = {}): Promise<BrowserSession> {
   const config = await getBrowserbaseConfig();
 
   const requestBody = {
@@ -145,19 +143,16 @@ export async function releaseSession(sessionId: string): Promise<void> {
   logger.info("Releasing Browserbase session", { sessionId });
 
   try {
-    const response = await fetch(
-      `https://api.browserbase.com/v1/sessions/${sessionId}`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-bb-api-key": config.apiKey,
-        },
-        body: JSON.stringify({
-          status: "REQUEST_RELEASE",
-        }),
+    const response = await fetch(`https://api.browserbase.com/v1/sessions/${sessionId}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-bb-api-key": config.apiKey,
       },
-    );
+      body: JSON.stringify({
+        status: "REQUEST_RELEASE",
+      }),
+    });
 
     if (!response.ok) {
       const error = (await response.json()) as BrowserbaseError;

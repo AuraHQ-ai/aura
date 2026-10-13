@@ -9,8 +9,8 @@
  * Requires E2B_API_KEY in .env.local or environment.
  */
 import { config } from "dotenv";
-import { readFileSync } from "fs";
-import { resolve } from "path";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 config({ path: resolve(__dirname, "..", ".env.local") });
 

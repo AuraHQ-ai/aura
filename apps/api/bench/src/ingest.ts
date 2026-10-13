@@ -36,10 +36,7 @@ import { db } from "../../src/db/client.js";
 import { messages as messagesTable, type NewMessage } from "@aura/db/schema";
 import { toDbChannelType } from "../../src/memory/store.js";
 import { embedTexts } from "../../src/lib/embeddings.js";
-import {
-  extractMemoriesFromTranscript,
-  type ExtractionContext,
-} from "../../src/memory/extract.js";
+import { extractMemoriesFromTranscript, type ExtractionContext } from "../../src/memory/extract.js";
 import type { ThreadMessage } from "../../src/memory/store.js";
 import { logger } from "../../src/lib/logger.js";
 import type { BenchCase } from "./types.js";
@@ -92,10 +89,7 @@ export function countUniqueConversations(cases: BenchCase[]): number {
  * real unit of extraction work) rather than per whole conversation.
  */
 export function countTotalSessions(cases: BenchCase[]): number {
-  return uniqueConversations(cases).reduce(
-    (sum, c) => sum + c.sessions.length,
-    0,
-  );
+  return uniqueConversations(cases).reduce((sum, c) => sum + c.sessions.length, 0);
 }
 
 /** De-dupe cases down to unique conversations (see conversationKey). */
@@ -203,7 +197,9 @@ export async function storeMessagesForCases(
       for (const group of chunk(withContent, EMBED_CHUNK)) {
         try {
           const vecs = await embedTexts(group.map((r) => r.content as string));
-          group.forEach((r, gi) => embeddings.set(r.externalId, vecs[gi]));
+          group.forEach((r, gi) => {
+            embeddings.set(r.externalId, vecs[gi]);
+          });
         } catch (error) {
           logger.warn("bench: message embedding chunk failed (storing without)", {
             error: String(error).slice(0, 200),
@@ -253,7 +249,10 @@ interface BuiltTurn {
 }
 
 /** Materialize a session's turns with synthetic user ids and timestamps. */
-function buildSessionTurns(benchCase: BenchCase, session: BenchCase["sessions"][number]): BuiltTurn[] {
+function buildSessionTurns(
+  benchCase: BenchCase,
+  session: BenchCase["sessions"][number],
+): BuiltTurn[] {
   const sessionDate = new Date(session.timestamp);
   return session.turns.map((turn, turnIdx) => ({
     role: turn.role,
@@ -386,7 +385,8 @@ async function runExtractionCall(
     createdAt: b.createdAt,
   }));
   const lastUser =
-    [...call.window].reverse().find((m) => m.role === "user") ?? call.window[call.window.length - 1];
+    [...call.window].reverse().find((m) => m.role === "user") ??
+    call.window[call.window.length - 1];
   const lastAssistant =
     call.focalAssistant ?? [...call.window].reverse().find((m) => m.role === "assistant") ?? null;
 

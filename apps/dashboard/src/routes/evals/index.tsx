@@ -21,11 +21,7 @@ import {
 } from "@/components/ui/select";
 import { TableRowsSkeleton } from "@/components/page-skeleton";
 import { Pagination } from "@/components/pagination";
-import {
-  VerdictBadge,
-  FailureClassBadge,
-  type EvalScore,
-} from "@/components/eval-verdict-badge";
+import { VerdictBadge, FailureClassBadge, type EvalScore } from "@/components/eval-verdict-badge";
 import { cn, formatDate, truncate } from "@/lib/utils";
 import { useState } from "react";
 import { Search, CheckCircle } from "lucide-react";
@@ -186,9 +182,7 @@ function EvalsPage() {
 
   if (error && !data)
     return (
-      <div className="text-destructive text-sm">
-        Failed to load eval scores: {error.message}
-      </div>
+      <div className="text-destructive text-sm">Failed to load eval scores: {error.message}</div>
     );
 
   const items = data?.items ?? [];
@@ -198,9 +192,7 @@ function EvalsPage() {
     <div className="flex flex-col gap-4 flex-1 min-h-0">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold tracking-tight">Evals</h1>
-        <span className="text-sm text-muted-foreground">
-          {isLoading ? "…" : `${total} total`}
-        </span>
+        <span className="text-sm text-muted-foreground">{isLoading ? "…" : `${total} total`}</span>
       </div>
 
       <FunnelCards funnel={funnel} />
@@ -311,12 +303,8 @@ function EvalsPage() {
               <TableRowsSkeleton columns={7} />
             ) : items.length === 0 ? (
               <TableRow>
-                <TableCell
-                  colSpan={7}
-                  className="text-center text-muted-foreground py-8"
-                >
-                  No response scores yet — the overnight batch judge fills this
-                  in.
+                <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                  No response scores yet — the overnight batch judge fills this in.
                 </TableCell>
               </TableRow>
             ) : (
@@ -335,11 +323,7 @@ function EvalsPage() {
                     <FailureClassBadge failureClass={item.failureClass} />
                   </TableCell>
                   <TableCell className="text-sm">
-                    <Link
-                      to="/evals/$id"
-                      params={{ id: item.id }}
-                      className="hover:underline"
-                    >
+                    <Link to="/evals/$id" params={{ id: item.id }} className="hover:underline">
                       {truncate(item.servingIntent, 60) || "—"}
                     </Link>
                     {item.resolvedInWindow && (
@@ -374,12 +358,7 @@ function EvalsPage() {
         </Table>
       </div>
 
-      <Pagination
-        total={total}
-        pageSize={PAGE_SIZE}
-        page={page}
-        onPageChange={setPage}
-      />
+      <Pagination total={total} pageSize={PAGE_SIZE} page={page} onPageChange={setPage} />
     </div>
   );
 }

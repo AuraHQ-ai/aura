@@ -94,9 +94,7 @@ describe("extractEventAppContext", () => {
 describe("resolveAppContextForMessage", () => {
   it("prefers the fresh inline event payload over the cache", async () => {
     // A different (older) context sits in the cache — it must NOT be read.
-    mocks.selectLimitMock.mockResolvedValue([
-      cacheRow([canvasEntity], new Date()),
-    ]);
+    mocks.selectLimitMock.mockResolvedValue([cacheRow([canvasEntity], new Date())]);
 
     const entities = await resolveAppContextForMessage({
       event: { app_context: { entities: [channelEntity] } },
@@ -194,11 +192,9 @@ describe("renderAppContextEntities / buildAppContextBlock", () => {
   });
 
   it("renders unknown entity types with a de-prefixed label", () => {
-    expect(
-      renderAppContextEntities([
-        { type: "slack#/types/bookmark_id", value: "Bk123" },
-      ]),
-    ).toBe("bookmark id Bk123");
+    expect(renderAppContextEntities([{ type: "slack#/types/bookmark_id", value: "Bk123" }])).toBe(
+      "bookmark id Bk123",
+    );
   });
 
   it("skips malformed entities", () => {
@@ -219,8 +215,6 @@ describe("renderAppContextEntities / buildAppContextBlock", () => {
 
   it("returns null when nothing renders", () => {
     expect(buildAppContextBlock([])).toBeNull();
-    expect(
-      buildAppContextBlock([{ type: "x", value: "" } as AppContextEntity]),
-    ).toBeNull();
+    expect(buildAppContextBlock([{ type: "x", value: "" } as AppContextEntity])).toBeNull();
   });
 });

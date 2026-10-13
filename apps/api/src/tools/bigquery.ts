@@ -2,9 +2,7 @@ import { z } from "zod";
 import { logger } from "../lib/logger.js";
 import { formatTimestamp } from "../lib/temporal.js";
 import { getBigQueryClient } from "../lib/bigquery.js";
-import {
-  augmentBigQueryErrorMessage,
-} from "../lib/bigquery-errors.js";
+import { augmentBigQueryErrorMessage } from "../lib/bigquery-errors.js";
 import { defineTool } from "../lib/tool.js";
 import type { ScheduleContext } from "@aura/db/schema";
 
@@ -147,9 +145,7 @@ export function createBigQueryTools(context?: ScheduleContext) {
       .describe("Number of sample rows to fetch (default 5, max 20)"),
   });
   const executeQueryInputSchema = z.object({
-    sql: z
-      .string()
-      .describe("The SQL query to execute (BigQuery Standard SQL, SELECT/WITH only)"),
+    sql: z.string().describe("The SQL query to execute (BigQuery Standard SQL, SELECT/WITH only)"),
     label: z
       .string()
       .max(60)
@@ -316,10 +312,7 @@ export function createBigQueryTools(context?: ScheduleContext) {
             _truncated: true,
             _note: `Showing ${truncated.length} of ${samples.length} sample rows to stay within size limits.`,
           };
-        } while (
-          JSON.stringify(output).length > MAX_RESULT_CHARS &&
-          truncated.length > 0
-        );
+        } while (JSON.stringify(output).length > MAX_RESULT_CHARS && truncated.length > 0);
         return output;
       }
 
@@ -362,9 +355,7 @@ export function createBigQueryTools(context?: ScheduleContext) {
     try {
       // Resolve dataset location so the query job runs in the right region
       const datasetId = extractDatasetFromSQL(finalSql);
-      const location = datasetId
-        ? await resolveDatasetLocation(client, datasetId)
-        : undefined;
+      const location = datasetId ? await resolveDatasetLocation(client, datasetId) : undefined;
 
       const queryResult = await client.query({
         query: finalSql,
@@ -412,10 +403,7 @@ export function createBigQueryTools(context?: ScheduleContext) {
             _truncated: true,
             _note: `Showing ${truncated.length} of ${totalRows} rows. Use a more specific query or smaller LIMIT.`,
           };
-        } while (
-          JSON.stringify(output).length > MAX_RESULT_CHARS &&
-          truncated.length > 0
-        );
+        } while (JSON.stringify(output).length > MAX_RESULT_CHARS && truncated.length > 0);
         return output;
       }
 
@@ -439,7 +427,10 @@ export function createBigQueryTools(context?: ScheduleContext) {
         "List all datasets in BigQuery. This is step 1 of the recovery ladder and the safest reset point when queries fail. Use this before table/query calls so you know the real dataset names and locations. After exploring, save findings to a 'data-warehouse-map' knowledge note for future reference.",
       inputSchema: z.object({}),
       execute: async () => executeListBigQueryDatasets("bq_list_datasets"),
-      slack: { status: "Listing datasets...", output: (r) => r.ok === false ? r.error : `${(r.datasets ?? []).length} datasets` },
+      slack: {
+        status: "Listing datasets...",
+        output: (r) => (r.ok === false ? r.error : `${(r.datasets ?? []).length} datasets`),
+      },
     }),
 
     bq_list_tables: defineTool({
@@ -448,13 +439,16 @@ export function createBigQueryTools(context?: ScheduleContext) {
         "List all tables in a BigQuery dataset, including type, row count, and description. This is step 2 in the recovery ladder after bq_list_datasets.",
       inputSchema: listTablesInputSchema,
       execute: async (input) => executeListBigQueryTables(input, "bq_list_tables"),
-      slack: { status: "Listing tables...", detail: (i) => i.dataset, output: (r) => r.ok === false ? r.error : `${(r.tables ?? []).length} tables` },
+      slack: {
+        status: "Listing tables...",
+        detail: (i) => i.dataset,
+        output: (r) => (r.ok === false ? r.error : `${(r.tables ?? []).length} tables`),
+      },
     }),
 
     bq_inspect_table: defineTool({
       requiredCredentials: ["google_bq_credentials"],
-      description:
-        `Get a table's full schema, metadata, and sample rows. This is step 3 of the recovery ladder and should be used before querying any unfamiliar table. ${BIGQUERY_DEBUGGING_LADDER} ${BIGQUERY_SQL_STYLE_GUIDANCE} After exploring, update the 'data-warehouse-map' knowledge note with useful columns, joins, and quirks.`,
+      description: `Get a table's full schema, metadata, and sample rows. This is step 3 of the recovery ladder and should be used before querying any unfamiliar table. ${BIGQUERY_DEBUGGING_LADDER} ${BIGQUERY_SQL_STYLE_GUIDANCE} After exploring, update the 'data-warehouse-map' knowledge note with useful columns, joins, and quirks.`,
       inputSchema: inspectTableInputSchema,
       execute: async (input) => executeInspectBigQueryTable(input, "bq_inspect_table"),
       slack: {
@@ -462,7 +456,8 @@ export function createBigQueryTools(context?: ScheduleContext) {
         detail: (i) => `${i.dataset}.${i.table}`,
         output: (r) => {
           if ("error" in r && typeof r.error === "string") return r.error;
-          if ("row_count" in r) return `${r.row_count ?? "?"} rows, ${(r.schema ?? []).length} columns`;
+          if ("row_count" in r)
+            return `${r.row_count ?? "?"} rows, ${(r.schema ?? []).length} columns`;
           return undefined;
         },
       },
@@ -470,8 +465,7 @@ export function createBigQueryTools(context?: ScheduleContext) {
 
     bq_execute_query: defineTool({
       requiredCredentials: ["google_bq_credentials"],
-      description:
-        `Run a read-only BigQuery query (SELECT/WITH only). ${BIGQUERY_SQL_STYLE_GUIDANCE} ${BIGQUERY_DEBUGGING_LADDER} For unfamiliar tables, bq_inspect_table before querying. Do not infer permissions issues from one complex failing query; retry a minimal valid query first.`,
+      description: `Run a read-only BigQuery query (SELECT/WITH only). ${BIGQUERY_SQL_STYLE_GUIDANCE} ${BIGQUERY_DEBUGGING_LADDER} For unfamiliar tables, bq_inspect_table before querying. Do not infer permissions issues from one complex failing query; retry a minimal valid query first.`,
       inputSchema: executeQueryInputSchema,
       inputExamples: [
         {
@@ -493,10 +487,11 @@ export function createBigQueryTools(context?: ScheduleContext) {
       slack: {
         status: "Running a SQL query...",
         detail: (input) =>
-          !input.sql ? undefined
+          !input.sql
+            ? undefined
             : input.sql.length <= 120
               ? input.sql
-              : input.sql.slice(0, 119) + "…",
+              : `${input.sql.slice(0, 119)}…`,
         output: (result) => {
           if ("error" in result && typeof result.error === "string") return result.error;
           if ("total_rows" in result) return `${result.total_rows ?? 0} rows`;

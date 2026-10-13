@@ -54,7 +54,9 @@ describe("stripToolCallMarkup (issue #1515)", () => {
   it("strips <invoke> and <function=...> variants", () => {
     expect(stripToolCallMarkup(`Hi ${INVOKE_BLOCK} there`).text).toMatch(/Hi\s+there/);
     expect(
-      stripToolCallMarkup('<function=run_command><parameter=command>ls</parameter></function>').text.trim(),
+      stripToolCallMarkup(
+        "<function=run_command><parameter=command>ls</parameter></function>",
+      ).text.trim(),
     ).toBe("");
   });
 });
@@ -177,7 +179,7 @@ describe("sanitizeAssistantToolMarkup (issue #1515)", () => {
     expect(result.droppedLeakedToolCallIds).toEqual(["call_xml"]);
     const assistant = result.messages.find((m) => m.role === "assistant");
     const text = Array.isArray(assistant?.content)
-      ? (assistant?.content as any[]).map((p) => p.text).join("")
+      ? (assistant!.content as any[]).map((p) => p.text).join("")
       : String(assistant?.content ?? "");
     expect(text).toContain("Sure.");
     expect(text).not.toContain("<tool_call>");

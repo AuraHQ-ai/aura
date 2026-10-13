@@ -13,11 +13,7 @@ import {
   type TurnDeadlinePath,
   type TurnDeadlines,
 } from "./turn-deadline.js";
-import {
-  detectToolThrashFromSteps,
-  logToolThrashBreaker,
-  ToolThrashError,
-} from "./tool-thrash.js";
+import { detectToolThrashFromSteps, logToolThrashBreaker, ToolThrashError } from "./tool-thrash.js";
 import type { ModelCapabilities } from "@aura/db/schema";
 
 export { ToolThrashError } from "./tool-thrash.js";
@@ -120,9 +116,10 @@ export function detectToolCallLoop(
 }
 
 export function formatToolLoopMessage(detection: ToolLoopDetection): string {
-  return TOOL_LOOP_MESSAGE
-    .replaceAll("{toolName}", detection.toolName)
-    .replaceAll("{callCount}", String(detection.callCount));
+  return TOOL_LOOP_MESSAGE.replaceAll("{toolName}", detection.toolName).replaceAll(
+    "{callCount}",
+    String(detection.callCount),
+  );
 }
 
 // ── Turn wall-clock deadline messages (issue #1318) ──────────────────────────
@@ -160,16 +157,18 @@ export interface CompactionStepStats {
   estimatedTokensSaved: number;
 }
 
-type PrepareStepResult = {
-  system?: string;
-  instructions?: string;
-  providerOptions?: ProviderOptions;
-  model?: LanguageModel;
-  messages?: Array<ModelMessage>;
-  /** Empty past the hard turn deadline so the model must emit final text. */
-  activeTools?: ReadonlyArray<never>;
-  toolChoice?: "auto" | "none" | "required";
-} | undefined;
+type PrepareStepResult =
+  | {
+      system?: string;
+      instructions?: string;
+      providerOptions?: ProviderOptions;
+      model?: LanguageModel;
+      messages?: Array<ModelMessage>;
+      /** Empty past the hard turn deadline so the model must emit final text. */
+      activeTools?: ReadonlyArray<never>;
+      toolChoice?: "auto" | "none" | "required";
+    }
+  | undefined;
 
 type PrepareStepFn = (options: {
   stepNumber: number;
@@ -243,9 +242,10 @@ export function resolveProviderThinkingOptions(
       if (capabilities.thinkingMode === "none") return {};
       return {
         anthropic: {
-          thinking: capabilities.thinkingMode === "adaptive"
-            ? { type: "adaptive" }
-            : { type: "enabled", budgetTokens },
+          thinking:
+            capabilities.thinkingMode === "adaptive"
+              ? { type: "adaptive" }
+              : { type: "enabled", budgetTokens },
         },
       } as ProviderOptions;
     case "openai":
@@ -260,9 +260,8 @@ export function resolveProviderThinkingOptions(
       return {
         google: {
           thinkingConfig: {
-            thinkingBudget: capabilities.thinkingBudget === "dynamic"
-              ? -1
-              : capabilities.thinkingBudget,
+            thinkingBudget:
+              capabilities.thinkingBudget === "dynamic" ? -1 : capabilities.thinkingBudget,
           },
         },
       } as ProviderOptions;
@@ -285,15 +284,10 @@ export async function getProviderThinkingOptions(
   budgetTokens: number,
 ): Promise<ProviderOptions> {
   const catalogCapabilities = await getModelCapabilities(modelId);
-  return resolveProviderThinkingOptions(
-    modelId,
-    catalogCapabilities.capabilities,
-    budgetTokens,
-    {
-      found: catalogCapabilities.found,
-      supportsThinking: catalogCapabilities.supportsThinking,
-    },
-  );
+  return resolveProviderThinkingOptions(modelId, catalogCapabilities.capabilities, budgetTokens, {
+    found: catalogCapabilities.found,
+    supportsThinking: catalogCapabilities.supportsThinking,
+  });
 }
 
 export function createPrepareStep(opts: {
@@ -417,28 +411,23 @@ export function createPrepareStep(opts: {
     let modelOverride: LanguageModel | undefined;
 
     // --- Tool failure detection (always active) ---
-    const lastStep = Array.isArray(steps) && steps.length > 0
-      ? steps[steps.length - 1]
-      : null;
+    const lastStep = Array.isArray(steps) && steps.length > 0 ? steps[steps.length - 1] : null;
 
-    const hadToolFailure = lastStep?.toolResults?.some(
-      (r: any) => r.output?.ok === false || r.output?.error,
-    ) ?? false;
+    const hadToolFailure =
+      lastStep?.toolResults?.some((r: any) => r.output?.ok === false || r.output?.error) ?? false;
 
     if (hadToolFailure) failureCount++;
 
     // --- Model escalation: persistent failures → escalation model ---
-    if (
-      stepNumber > 15 &&
-      failureCount >= 3 &&
-      !hasEscalatedModel &&
-      opts.getEscalationModel
-    ) {
+    if (stepNumber > 15 && failureCount >= 3 && !hasEscalatedModel && opts.getEscalationModel) {
       try {
         escalatedModel = await opts.getEscalationModel();
         hasEscalatedModel = true;
         modelOverride = escalatedModel.model;
-        logger.warn("prepareStep: escalating to escalation model", { stepNumber, modelId: escalatedModel.modelId });
+        logger.warn("prepareStep: escalating to escalation model", {
+          stepNumber,
+          modelId: escalatedModel.modelId,
+        });
       } catch (err: any) {
         logger.error("prepareStep: failed to load escalation model", {
           stepNumber,
@@ -453,7 +442,8 @@ export function createPrepareStep(opts: {
 
     // Effective model may have changed via escalation; look up its thinking
     // support via the gateway-sourced catalog (tags.includes("reasoning")).
-    const effectiveModelId = (hasEscalatedModel && escalatedModel) ? escalatedModel.modelId : opts.modelId;
+    const effectiveModelId =
+      hasEscalatedModel && escalatedModel ? escalatedModel.modelId : opts.modelId;
     opts.recordStepModelId?.(stepNumber, effectiveModelId);
     providerOptions = await getCachedProviderThinkingOptions(effectiveModelId, opts.thinkingBudget);
 
@@ -557,10 +547,7 @@ export function createPrepareStep(opts: {
         context: { elapsedMs, step: stepNumber, path: opts.turnPath },
       });
       systemSuffixes.push(
-        TURN_SOFT_DEADLINE_MESSAGE.replace(
-          "{elapsedSec}",
-          String(Math.round(elapsedMs / 1000)),
-        ),
+        TURN_SOFT_DEADLINE_MESSAGE.replace("{elapsedSec}", String(Math.round(elapsedMs / 1000))),
       );
     }
 
@@ -582,8 +569,7 @@ export function createPrepareStep(opts: {
           });
           logError({
             errorName: "ToolCallLoop",
-            errorMessage:
-              `Turn called ${loop.toolName} ${loop.callCount} times without intervening text; wrap-up nudge injected`,
+            errorMessage: `Turn called ${loop.toolName} ${loop.callCount} times without intervening text; wrap-up nudge injected`,
             errorCode: "tool_call_loop",
             channelId: opts.channelId,
             userId: opts.userId,
@@ -602,9 +588,10 @@ export function createPrepareStep(opts: {
     // --- Step limit warning ---
     if (stepNumber >= threshold) {
       systemSuffixes.push(
-        WRAP_UP_MESSAGE
-          .replace("{stepCount}", String(stepNumber))
-          .replace("{limit}", String(limit)),
+        WRAP_UP_MESSAGE.replace("{stepCount}", String(stepNumber)).replace(
+          "{limit}",
+          String(limit),
+        ),
       );
       logger.info("prepareStep: injecting wrap-up nudge", {
         stepNumber,
@@ -616,11 +603,13 @@ export function createPrepareStep(opts: {
     // cache for the affected steps only — acceptable tradeoff since these
     // nudges fire near the end of a turn.
     if (systemSuffixes.length > 0) {
-      systemOverride = opts.stablePrefix
-        + (opts.environmentContext ? "\n\n" + opts.environmentContext : "")
-        + (opts.conversationContext ? "\n\n" + opts.conversationContext : "")
-        + (opts.dynamicContext ? "\n\n" + opts.dynamicContext : "")
-        + "\n\n" + systemSuffixes.join("\n\n");
+      systemOverride =
+        opts.stablePrefix +
+        (opts.environmentContext ? `\n\n${opts.environmentContext}` : "") +
+        (opts.conversationContext ? `\n\n${opts.conversationContext}` : "") +
+        (opts.dynamicContext ? `\n\n${opts.dynamicContext}` : "") +
+        "\n\n" +
+        systemSuffixes.join("\n\n");
     }
 
     // --- Leaked ChatML tool-call markup (issue #1515) ---

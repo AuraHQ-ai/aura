@@ -44,17 +44,17 @@ import {
 } from "./sandbox-command.js";
 
 function sign(rawBody: string, secret: string): string {
-  return "sha256=" + crypto.createHmac("sha256", secret).update(rawBody, "utf8").digest("hex");
+  return `sha256=${crypto.createHmac("sha256", secret).update(rawBody, "utf8").digest("hex")}`;
 }
 
 function createDatabaseMock(row: any) {
   let currentRow = row;
-  const limit = vi.fn(async () => currentRow ? [currentRow] : []);
+  const limit = vi.fn(async () => (currentRow ? [currentRow] : []));
   const whereSelect = vi.fn(() => ({ limit }));
   const from = vi.fn(() => ({ where: whereSelect }));
   const select = vi.fn(() => ({ from }));
 
-  const returning = vi.fn(async () => currentRow ? [currentRow] : []);
+  const returning = vi.fn(async () => (currentRow ? [currentRow] : []));
   const whereUpdate = vi.fn(() => ({ returning }));
   const set = vi.fn((values: Record<string, unknown>) => {
     if (currentRow) currentRow = { ...currentRow, ...values };
@@ -155,10 +155,14 @@ describe("sandbox command webhook", () => {
     const { database, calls } = createDatabaseMock(row);
     const resumeConversation = vi.fn().mockResolvedValue(undefined);
     const enqueued: Promise<void>[] = [];
-    const app = createSandboxCommandWebhookApp({ chat: { postMessage: vi.fn() } } as any, database, {
-      resumeConversation,
-      enqueueResume: (promise) => enqueued.push(promise),
-    });
+    const app = createSandboxCommandWebhookApp(
+      { chat: { postMessage: vi.fn() } } as any,
+      database,
+      {
+        resumeConversation,
+        enqueueResume: (promise) => enqueued.push(promise),
+      },
+    );
     const body = JSON.stringify({
       id: "abcdef12",
       exit_code: 1,
@@ -177,23 +181,27 @@ describe("sandbox command webhook", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true, resumed: true });
-    expect(calls.set).toHaveBeenCalledWith(expect.objectContaining({
-      status: "failed",
-      exitCode: 1,
-      stdoutTail: "last stdout",
-      stderrTail: "last stderr",
-    }));
-    expect(resumeConversation).toHaveBeenCalledWith(expect.objectContaining({
-      row: expect.objectContaining({
-        id: "abcdef12",
-        channelId: "C123",
-        threadTs: "1710000000.000000",
+    expect(calls.set).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "failed",
+        exitCode: 1,
+        stdoutTail: "last stdout",
+        stderrTail: "last stderr",
       }),
-      exitCode: 1,
-      stdoutTail: "last stdout",
-      stderrTail: "last stderr",
-      slackClient: expect.anything(),
-    }));
+    );
+    expect(resumeConversation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        row: expect.objectContaining({
+          id: "abcdef12",
+          channelId: "C123",
+          threadTs: "1710000000.000000",
+        }),
+        exitCode: 1,
+        stdoutTail: "last stdout",
+        stderrTail: "last stderr",
+        slackClient: expect.anything(),
+      }),
+    );
     expect(enqueued).toHaveLength(1);
   });
 
@@ -250,17 +258,19 @@ describe("sandbox command webhook", () => {
       }),
       expect.any(Function),
     );
-    expect(runPipelineMock).toHaveBeenCalledWith(expect.objectContaining({
-      event: expect.objectContaining({
-        type: "app_mention",
-        channel: "C123",
-        thread_ts: "1710000000.000000",
-        user: "U123",
-        text: expect.stringContaining("<detached-command-result"),
+    expect(runPipelineMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        event: expect.objectContaining({
+          type: "app_mention",
+          channel: "C123",
+          thread_ts: "1710000000.000000",
+          user: "U123",
+          text: expect.stringContaining("<detached-command-result"),
+        }),
+        client: slackClient,
+        botUserId: "U_AURA",
       }),
-      client: slackClient,
-      botUserId: "U_AURA",
-    }));
+    );
     expect(runPipelineMock.mock.calls[0]?.[0].event.text).toContain("_Command:_ `pnpm test`");
     expect(runPipelineMock.mock.calls[0]?.[0].event.text).toContain("*stdout tail:*");
     expect(runPipelineMock.mock.calls[0]?.[0].event.text).toContain("ok");
@@ -284,10 +294,14 @@ describe("sandbox command webhook", () => {
     };
     const { database } = createDatabaseMock(row);
     const resumeConversation = vi.fn().mockResolvedValue(undefined);
-    const app = createSandboxCommandWebhookApp({ chat: { postMessage: vi.fn() } } as any, database, {
-      resumeConversation,
-      enqueueResume: () => undefined,
-    });
+    const app = createSandboxCommandWebhookApp(
+      { chat: { postMessage: vi.fn() } } as any,
+      database,
+      {
+        resumeConversation,
+        enqueueResume: () => undefined,
+      },
+    );
     const body = JSON.stringify({
       id: "abcdef12",
       exit_code: 0,
@@ -339,10 +353,14 @@ describe("sandbox command webhook", () => {
     };
     const { database } = createDatabaseMock(row);
     const resumeConversation = vi.fn().mockResolvedValue(undefined);
-    const app = createSandboxCommandWebhookApp({ chat: { postMessage: vi.fn() } } as any, database, {
-      resumeConversation,
-      enqueueResume: () => undefined,
-    });
+    const app = createSandboxCommandWebhookApp(
+      { chat: { postMessage: vi.fn() } } as any,
+      database,
+      {
+        resumeConversation,
+        enqueueResume: () => undefined,
+      },
+    );
     const body = JSON.stringify({
       id: "abcdef12",
       exit_code: 0,

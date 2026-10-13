@@ -116,21 +116,15 @@ async function resolveSlot(
   return resolveTier((TIER_NAMES.has(fallback) ? fallback : "main") as ModelTier);
 }
 
-export async function resolveBenchExtractionModel(
-  override?: string,
-): Promise<ResolvedModel> {
+export async function resolveBenchExtractionModel(override?: string): Promise<ResolvedModel> {
   return resolveSlot(override, process.env.AURA_BENCH_EXTRACTION, DEFAULT_TIERS.extraction);
 }
 
-export async function resolveBenchAnswererModel(
-  override?: string,
-): Promise<ResolvedModel> {
+export async function resolveBenchAnswererModel(override?: string): Promise<ResolvedModel> {
   return resolveSlot(override, process.env.AURA_BENCH_ANSWERER, DEFAULT_TIERS.answerer);
 }
 
-export async function resolveBenchJudgeModel(
-  override?: string,
-): Promise<ResolvedModel> {
+export async function resolveBenchJudgeModel(override?: string): Promise<ResolvedModel> {
   return resolveSlot(override, process.env.AURA_BENCH_JUDGE, DEFAULT_TIERS.judge);
 }
 

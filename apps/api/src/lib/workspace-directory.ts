@@ -60,9 +60,7 @@ function parsePerson(person: PeopleConnection): DirectoryUser | null {
 /**
  * Search the workspace directory by name or email.
  */
-export async function searchDirectoryUser(
-  query: string
-): Promise<DirectoryUser[] | null> {
+export async function searchDirectoryUser(query: string): Promise<DirectoryUser[] | null> {
   const token = await getAccessToken();
   if (!token) return null;
 
@@ -76,7 +74,7 @@ export async function searchDirectoryUser(
 
   const resp = await fetch(
     `https://people.googleapis.com/v1/people:searchDirectoryPeople?${params}`,
-    { headers: { Authorization: `Bearer ${token}` } }
+    { headers: { Authorization: `Bearer ${token}` } },
   );
 
   if (!resp.ok) {
@@ -96,9 +94,7 @@ export async function searchDirectoryUser(
 /**
  * List workspace directory users.
  */
-export async function listDirectoryUsers(
-  maxResults = 100
-): Promise<DirectoryUser[] | null> {
+export async function listDirectoryUsers(maxResults = 100): Promise<DirectoryUser[] | null> {
   const token = await getAccessToken();
   if (!token) return null;
 
@@ -110,7 +106,7 @@ export async function listDirectoryUsers(
 
   const resp = await fetch(
     `https://people.googleapis.com/v1/people:listDirectoryPeople?${params}`,
-    { headers: { Authorization: `Bearer ${token}` } }
+    { headers: { Authorization: `Bearer ${token}` } },
   );
 
   if (!resp.ok) {
@@ -129,15 +125,9 @@ export async function listDirectoryUsers(
 /**
  * Get a specific user by email.
  */
-export async function getDirectoryUser(
-  email: string
-): Promise<DirectoryUser | null> {
+export async function getDirectoryUser(email: string): Promise<DirectoryUser | null> {
   // Search by email and find exact match
   const results = await searchDirectoryUser(email);
   if (!results) return null;
-  return (
-    results.find(
-      (u) => u.email.toLowerCase() === email.toLowerCase()
-    ) || results[0] || null
-  );
+  return results.find((u) => u.email.toLowerCase() === email.toLowerCase()) || results[0] || null;
 }

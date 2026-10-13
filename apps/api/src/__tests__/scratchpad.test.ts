@@ -20,8 +20,7 @@ describe("scratchpad tools", () => {
   });
 
   it("writes and reads back a section", async () => {
-    const { scratchpad_write, scratchpad_read } =
-      createScratchpadTools(invocationId);
+    const { scratchpad_write, scratchpad_read } = createScratchpadTools(invocationId);
 
     const writeResult = await scratchpad_write.execute!(
       { key: "findings", content: "Found 3 bugs" },
@@ -30,42 +29,25 @@ describe("scratchpad tools", () => {
     expect(writeResult).toContain('Written to scratchpad section "findings"');
     expect(writeResult).toContain("findings");
 
-    const readResult = await scratchpad_read.execute!(
-      { key: "findings" },
-      execOpts,
-    );
+    const readResult = await scratchpad_read.execute!({ key: "findings" }, execOpts);
     expect(readResult).toBe("Found 3 bugs");
   });
 
   it("overwrites an existing key", async () => {
-    const { scratchpad_write, scratchpad_read } =
-      createScratchpadTools(invocationId);
+    const { scratchpad_write, scratchpad_read } = createScratchpadTools(invocationId);
 
-    await scratchpad_write.execute!(
-      { key: "count", content: "5" },
-      execOpts,
-    );
-    await scratchpad_write.execute!(
-      { key: "count", content: "10" },
-      execOpts,
-    );
+    await scratchpad_write.execute!({ key: "count", content: "5" }, execOpts);
+    await scratchpad_write.execute!({ key: "count", content: "10" }, execOpts);
 
     const readResult = await scratchpad_read.execute!({ key: "count" }, execOpts);
     expect(readResult).toBe("10");
   });
 
   it("reads all sections when no key specified", async () => {
-    const { scratchpad_write, scratchpad_read } =
-      createScratchpadTools(invocationId);
+    const { scratchpad_write, scratchpad_read } = createScratchpadTools(invocationId);
 
-    await scratchpad_write.execute!(
-      { key: "alpha", content: "First section" },
-      execOpts,
-    );
-    await scratchpad_write.execute!(
-      { key: "beta", content: "Second section" },
-      execOpts,
-    );
+    await scratchpad_write.execute!({ key: "alpha", content: "First section" }, execOpts);
+    await scratchpad_write.execute!({ key: "beta", content: "Second section" }, execOpts);
 
     const readResult = await scratchpad_read.execute!({}, execOpts);
     expect(readResult).toContain("Scratchpad (2 sections)");
@@ -76,18 +58,11 @@ describe("scratchpad tools", () => {
   });
 
   it("returns not-found message for nonexistent key", async () => {
-    const { scratchpad_write, scratchpad_read } =
-      createScratchpadTools(invocationId);
+    const { scratchpad_write, scratchpad_read } = createScratchpadTools(invocationId);
 
-    await scratchpad_write.execute!(
-      { key: "exists", content: "data" },
-      execOpts,
-    );
+    await scratchpad_write.execute!({ key: "exists", content: "data" }, execOpts);
 
-    const readResult = await scratchpad_read.execute!(
-      { key: "missing" },
-      execOpts,
-    );
+    const readResult = await scratchpad_read.execute!({ key: "missing" }, execOpts);
     expect(readResult).toContain('Section "missing" not found');
     expect(readResult).toContain("exists");
   });
@@ -102,10 +77,7 @@ describe("scratchpad tools", () => {
   it("cleanup removes all data for an invocation", async () => {
     const { scratchpad_write } = createScratchpadTools(invocationId);
 
-    await scratchpad_write.execute!(
-      { key: "data", content: "important" },
-      execOpts,
-    );
+    await scratchpad_write.execute!({ key: "data", content: "important" }, execOpts);
 
     expect(getScratchpadContents(invocationId)).toEqual({ data: "important" });
 
@@ -130,14 +102,8 @@ describe("scratchpad tools", () => {
       execOpts,
     );
 
-    const read1 = await tools1.scratchpad_read.execute!(
-      { key: "shared-key" },
-      execOpts,
-    );
-    const read2 = await tools2.scratchpad_read.execute!(
-      { key: "shared-key" },
-      execOpts,
-    );
+    const read1 = await tools1.scratchpad_read.execute!({ key: "shared-key" }, execOpts);
+    const read2 = await tools2.scratchpad_read.execute!({ key: "shared-key" }, execOpts);
 
     expect(read1).toBe("from invocation 1");
     expect(read2).toBe("from invocation 2");
@@ -149,14 +115,8 @@ describe("scratchpad tools", () => {
   it("getScratchpadContents returns all entries as a record", async () => {
     const { scratchpad_write } = createScratchpadTools(invocationId);
 
-    await scratchpad_write.execute!(
-      { key: "a", content: "1" },
-      execOpts,
-    );
-    await scratchpad_write.execute!(
-      { key: "b", content: "2" },
-      execOpts,
-    );
+    await scratchpad_write.execute!({ key: "a", content: "1" }, execOpts);
+    await scratchpad_write.execute!({ key: "b", content: "2" }, execOpts);
 
     const contents = getScratchpadContents(invocationId);
     expect(contents).toEqual({ a: "1", b: "2" });

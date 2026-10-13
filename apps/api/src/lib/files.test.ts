@@ -24,7 +24,8 @@ function stubSlackDownload(data: Uint8Array = new Uint8Array([1, 2, 3])) {
     "fetch",
     vi.fn().mockResolvedValue({
       ok: true,
-      arrayBuffer: async () => data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
+      arrayBuffer: async () =>
+        data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength),
     }),
   );
 }
@@ -83,9 +84,7 @@ describe("downloadEventFiles", () => {
     );
 
     expect(result.parts).toEqual([]);
-    expect(result.transcripts).toEqual([
-      "[transcription failed: OPENAI_API_KEY is not set]",
-    ]);
+    expect(result.transcripts).toEqual(["[transcription failed: OPENAI_API_KEY is not set]"]);
   });
 
   it("keeps non-audio files as content parts without transcripts", async () => {
@@ -106,8 +105,6 @@ describe("downloadEventFiles", () => {
     );
 
     expect(result.transcripts).toEqual([]);
-    expect(result.parts).toEqual([
-      { type: "text", text: "[File: note.txt]\nhello file" },
-    ]);
+    expect(result.parts).toEqual([{ type: "text", text: "[File: note.txt]\nhello file" }]);
   });
 });

@@ -89,10 +89,7 @@ export function getFounderUserIds(): Set<string> {
   );
 }
 
-type TrustTierInput = Pick<
-  Memory,
-  "extractionSourceRole" | "sourceChannelType" | "relatedUserIds"
->;
+type TrustTierInput = Pick<Memory, "extractionSourceRole" | "sourceChannelType" | "relatedUserIds">;
 
 /**
  * Derive the trust tier for a memory from its existing provenance columns.
@@ -170,9 +167,7 @@ export function isCapabilityClaim(content: string): boolean {
 export function isQuarantinedCapabilityClaim(
   memory: Pick<Memory, "content" | "extractionSourceRole">,
 ): boolean {
-  return (
-    memory.extractionSourceRole === "assistant" && isCapabilityClaim(memory.content)
-  );
+  return memory.extractionSourceRole === "assistant" && isCapabilityClaim(memory.content);
 }
 
 // ── Correction-signal detection (#949) ───────────────────────────────────────

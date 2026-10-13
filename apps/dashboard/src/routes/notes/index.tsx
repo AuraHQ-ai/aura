@@ -1,7 +1,14 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { apiGet, apiPost, apiDelete } from "@/lib/api";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -66,7 +73,8 @@ function NotesPage() {
     },
   });
 
-  if (error && !data) return <div className="text-destructive text-sm">Failed to load notes: {error.message}</div>;
+  if (error && !data)
+    return <div className="text-destructive text-sm">Failed to load notes: {error.message}</div>;
 
   const notes = data?.items ?? [];
   const total = data?.total ?? 0;
@@ -75,9 +83,7 @@ function NotesPage() {
     <div className="flex flex-col gap-4 flex-1 min-h-0">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold tracking-tight">Notes</h1>
-        <span className="text-sm text-muted-foreground">
-          {isLoading ? "…" : `${total} total`}
-        </span>
+        <span className="text-sm text-muted-foreground">{isLoading ? "…" : `${total} total`}</span>
       </div>
 
       <div className="flex items-center gap-2">
@@ -86,7 +92,10 @@ function NotesPage() {
           <Input
             placeholder="Search notes..."
             value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
             className="pl-9"
           />
         </div>
@@ -95,7 +104,12 @@ function NotesPage() {
         </Button>
       </div>
 
-      <div className={cn("flex-1 min-h-0 rounded-xl border overflow-auto transition-opacity", isFetching && !isLoading && "opacity-50")}>
+      <div
+        className={cn(
+          "flex-1 min-h-0 rounded-xl border overflow-auto transition-opacity",
+          isFetching && !isLoading && "opacity-50",
+        )}
+      >
         <Table className="min-w-[600px]">
           <TableHeader>
             <TableRow>
@@ -111,19 +125,31 @@ function NotesPage() {
               <TableRowsSkeleton columns={5} />
             ) : notes.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-muted-foreground py-8">No notes found</TableCell>
+                <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                  No notes found
+                </TableCell>
               </TableRow>
             ) : (
               notes.map((note) => (
                 <TableRow key={note.id}>
                   <TableCell>
-                    <Link to="/notes/$id" params={{ id: note.id }} className="font-medium hover:underline">
+                    <Link
+                      to="/notes/$id"
+                      params={{ id: note.id }}
+                      className="font-medium hover:underline"
+                    >
                       {truncate(note.topic, 60)}
                     </Link>
                   </TableCell>
-                  <TableCell><Badge variant="secondary">{note.category}</Badge></TableCell>
-                  <TableCell className="text-muted-foreground text-sm">{formatDate(note.updatedAt)}</TableCell>
-                  <TableCell className="text-muted-foreground text-sm">{formatDate(note.expiresAt)}</TableCell>
+                  <TableCell>
+                    <Badge variant="secondary">{note.category}</Badge>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground text-sm">
+                    {formatDate(note.updatedAt)}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground text-sm">
+                    {formatDate(note.expiresAt)}
+                  </TableCell>
                   <TableCell>
                     <Button variant="ghost" size="icon-sm" onClick={() => setDeleteId(note.id)}>
                       <Trash2 className="h-4 w-4 text-destructive" />
@@ -144,18 +170,34 @@ function NotesPage() {
             <DialogTitle>Create Note</DialogTitle>
           </DialogHeader>
           <div className="space-y-4">
-            <Input placeholder="Topic" value={newTopic} onChange={(e) => setNewTopic(e.target.value)} />
+            <Input
+              placeholder="Topic"
+              value={newTopic}
+              onChange={(e) => setNewTopic(e.target.value)}
+            />
             <textarea
               placeholder="Content (markdown)"
               value={newContent}
               onChange={(e) => setNewContent(e.target.value)}
               className="flex min-h-[200px] w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
             />
-            <Input placeholder="Category" value={newCategory} onChange={(e) => setNewCategory(e.target.value)} />
+            <Input
+              placeholder="Category"
+              value={newCategory}
+              onChange={(e) => setNewCategory(e.target.value)}
+            />
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setShowCreate(false)}>Cancel</Button>
+              <Button variant="outline" onClick={() => setShowCreate(false)}>
+                Cancel
+              </Button>
               <Button
-                onClick={() => createMutation.mutate({ topic: newTopic, content: newContent, category: newCategory })}
+                onClick={() =>
+                  createMutation.mutate({
+                    topic: newTopic,
+                    content: newContent,
+                    category: newCategory,
+                  })
+                }
                 disabled={!newTopic || !newContent || createMutation.isPending}
               >
                 {createMutation.isPending ? "Creating..." : "Create"}
@@ -170,9 +212,13 @@ function NotesPage() {
           <DialogHeader>
             <DialogTitle>Delete Note</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">Are you sure you want to delete this note? This action cannot be undone.</p>
+          <p className="text-sm text-muted-foreground">
+            Are you sure you want to delete this note? This action cannot be undone.
+          </p>
           <div className="flex justify-end gap-2">
-            <Button variant="outline" onClick={() => setDeleteId(null)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setDeleteId(null)}>
+              Cancel
+            </Button>
             <Button
               variant="destructive"
               onClick={() => deleteId && deleteMutation.mutate(deleteId)}

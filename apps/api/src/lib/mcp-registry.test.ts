@@ -51,9 +51,9 @@ afterEach(() => {
 
 describe("untrustedPlainText", () => {
   it("strips HTML tags and control characters", () => {
-    expect(
-      untrustedPlainText('<img src=x onerror="alert(1)">Hello\u0007 <b>world</b>'),
-    ).toBe("Hello world");
+    expect(untrustedPlainText('<img src=x onerror="alert(1)">Hello\u0007 <b>world</b>')).toBe(
+      "Hello world",
+    );
   });
 
   it("returns empty string for non-strings", () => {
@@ -74,9 +74,10 @@ describe("pickHttpsRemote", () => {
   });
 
   it("falls back to sse when no streamable-http remote exists", () => {
-    expect(
-      pickHttpsRemote([{ type: "sse", url: "https://mcp.example.com/sse" }]),
-    ).toEqual({ url: "https://mcp.example.com/sse", transport: "sse" });
+    expect(pickHttpsRemote([{ type: "sse", url: "https://mcp.example.com/sse" }])).toEqual({
+      url: "https://mcp.example.com/sse",
+      transport: "sse",
+    });
   });
 
   it("skips non-https remotes", () => {

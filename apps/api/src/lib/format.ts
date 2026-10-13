@@ -4,7 +4,7 @@ import { CliPrettify } from "markdown-table-prettify";
 export function prettifyAndWrapTable(tableLines: string[]): string {
   const raw = tableLines.join("").trimEnd();
   const prettified = CliPrettify.prettify(raw);
-  return "```\n" + prettified + "\n```\n";
+  return `\`\`\`\n${prettified}\n\`\`\`\n`;
 }
 
 /**
@@ -32,7 +32,7 @@ export function formatForSlack(text: string): string {
   // A "table" = 2+ consecutive lines starting with |
   result = result.replace(/((?:^[ \t]*\|.*\n?){2,})/gm, (table) => {
     const prettified = CliPrettify.prettify(table.trimEnd());
-    return "```\n" + prettified + "\n```";
+    return `\`\`\`\n${prettified}\n\`\`\``;
   });
 
   // Headers → bold (### heading, ## heading, # heading)
@@ -47,8 +47,10 @@ export function formatForSlack(text: string): string {
   result = result.replace(/__(.+?)__/g, "*$1*");
 
   // Restore inline code spans
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: \x00 is our own placeholder sentinel.
   result = result.replace(/\x00INLINE(\d+)\x00/g, (_, idx) => inlineCode[Number(idx)]);
   // Restore code blocks
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: \x00 is our own placeholder sentinel.
   result = result.replace(/\x00CODE(\d+)\x00/g, (_, idx) => codeBlocks[Number(idx)]);
 
   return result;

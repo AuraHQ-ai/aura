@@ -97,9 +97,7 @@ function textToHtml(text: string): string {
 
 function getRedirectUri(): string {
   const host =
-    process.env.VERCEL_PROJECT_PRODUCTION_URL ||
-    process.env.VERCEL_URL ||
-    "localhost:3000";
+    process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL || "localhost:3000";
   const protocol = host.includes("localhost") ? "http" : "https";
   return `${protocol}://${host}/api/oauth/google/callback`;
 }
@@ -135,21 +133,28 @@ export async function getOAuth2Client(userId?: string) {
   return oauth2Client;
 }
 
-export async function getOAuth2ClientOrError(userId?: string): Promise<
-  { client: Awaited<ReturnType<typeof getOAuth2Client>> & {}; error?: never } |
-  { client?: never; error: string }
+export async function getOAuth2ClientOrError(
+  userId?: string,
+): Promise<
+  | { client: Awaited<ReturnType<typeof getOAuth2Client>> & {}; error?: never }
+  | { client?: never; error: string }
 > {
   const botUserId = await getConfig("aura_bot_user_id", "aura");
   const resolvedUserId = userId || botUserId;
   const tokenRow = await getUserRefreshToken(resolvedUserId);
   if (!tokenRow) {
-    return { error: `No Google OAuth token found for user '${resolvedUserId}'. They need to authorize via OAuth first (ask Aura to generate an auth link in Slack).` };
+    return {
+      error: `No Google OAuth token found for user '${resolvedUserId}'. They need to authorize via OAuth first (ask Aura to generate an auth link in Slack).`,
+    };
   }
 
   const clientId = process.env.GOOGLE_EMAIL_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_EMAIL_CLIENT_SECRET;
   if (!clientId || !clientSecret) {
-    return { error: "Google OAuth is not configured on this server (GOOGLE_EMAIL_CLIENT_ID / GOOGLE_EMAIL_CLIENT_SECRET env vars are missing)." };
+    return {
+      error:
+        "Google OAuth is not configured on this server (GOOGLE_EMAIL_CLIENT_ID / GOOGLE_EMAIL_CLIENT_SECRET env vars are missing).",
+    };
   }
 
   const oauth2Client = await createBaseOAuth2Client();
@@ -333,9 +338,7 @@ export function getHeader(
   headers: { name?: string | null; value?: string | null }[],
   name: string,
 ): string {
-  const header = headers.find(
-    (h) => h.name?.toLowerCase() === name.toLowerCase(),
-  );
+  const header = headers.find((h) => h.name?.toLowerCase() === name.toLowerCase());
   return header?.value || "";
 }
 
@@ -345,16 +348,12 @@ function extractBody(payload: any): string {
   }
 
   if (payload.parts) {
-    const textPart = payload.parts.find(
-      (p: any) => p.mimeType === "text/plain",
-    );
+    const textPart = payload.parts.find((p: any) => p.mimeType === "text/plain");
     if (textPart?.body?.data) {
       return Buffer.from(textPart.body.data, "base64").toString("utf-8");
     }
 
-    const htmlPart = payload.parts.find(
-      (p: any) => p.mimeType === "text/html",
-    );
+    const htmlPart = payload.parts.find((p: any) => p.mimeType === "text/html");
     if (htmlPart?.body?.data) {
       return Buffer.from(htmlPart.body.data, "base64").toString("utf-8");
     }
@@ -471,9 +470,16 @@ export async function sendEmail(
   }
 
   const raw = base64UrlEncode(
-    await buildMimeMessage(to, subject, body, options, undefined, undefined,
+    await buildMimeMessage(
+      to,
+      subject,
+      body,
+      options,
+      undefined,
+      undefined,
       fromEmail ? { from: fromEmail, includeSignature: false } : undefined,
-      options?.attachments),
+      options?.attachments,
+    ),
   );
 
   const requestBody: { raw: string; threadId?: string } = { raw };
@@ -548,10 +554,7 @@ async function listEmailsWithClient(
   return { emails, nextPageToken };
 }
 
-async function getEmailWithClient(
-  gmailClient: any,
-  messageId: string,
-): Promise<EmailDetail> {
+async function getEmailWithClient(gmailClient: any, messageId: string): Promise<EmailDetail> {
   const res = await gmailClient.users.messages.get({
     userId: "me",
     id: messageId,
@@ -581,9 +584,7 @@ async function getEmailWithClient(
 /**
  * List emails from the inbox.
  */
-export async function listEmails(
-  options?: ListEmailsOptions,
-): Promise<ListEmailsResult> {
+export async function listEmails(options?: ListEmailsOptions): Promise<ListEmailsResult> {
   const gmail = await getGmailClient();
   if (!gmail) {
     logger.error("Gmail client not available");
@@ -652,10 +653,16 @@ export async function replyToEmail(
     : `Re: ${originalSubject}`;
 
   const raw = base64UrlEncode(
-    await buildMimeMessage(originalFrom, replySubject, body, {
-      replyToMessageId: originalMessageId,
-      threadId,
-    }, undefined, undefined,
+    await buildMimeMessage(
+      originalFrom,
+      replySubject,
+      body,
+      {
+        replyToMessageId: originalMessageId,
+        threadId,
+      },
+      undefined,
+      undefined,
       fromEmail ? { from: fromEmail, includeSignature: false } : undefined,
     ),
   );
@@ -766,12 +773,7 @@ export async function getUserRefreshToken(
         email: oauthTokens.email,
       })
       .from(oauthTokens)
-      .where(
-        and(
-          eq(oauthTokens.userId, userId),
-          eq(oauthTokens.provider, "google"),
-        ),
-      )
+      .where(and(eq(oauthTokens.userId, userId), eq(oauthTokens.provider, "google")))
       .limit(1);
 
     if (!rows[0]) return null;
@@ -989,31 +991,33 @@ export async function listDrafts(
   if (drafts.length === 0) return [];
 
   const results: DraftSummary[] = await Promise.all(
-    drafts.filter((draft) => draft.id).map(async (draft) => {
-      try {
-        const detail = await gmail.users.drafts.get({
-          userId: "me",
-          id: draft.id!,
-          format: "metadata",
-        });
-        const headers = detail.data.message?.payload?.headers || [];
-        return {
-          draftId: draft.id!,
-          messageId: detail.data.message?.id || "",
-          subject: getHeader(headers as any[], "Subject") || "(no subject)",
-          to: getHeader(headers as any[], "To"),
-          snippet: detail.data.message?.snippet || "",
-        };
-      } catch {
-        return {
-          draftId: draft.id!,
-          messageId: draft.message?.id || "",
-          subject: "(unable to read)",
-          to: "",
-          snippet: "",
-        };
-      }
-    }),
+    drafts
+      .filter((draft) => draft.id)
+      .map(async (draft) => {
+        try {
+          const detail = await gmail.users.drafts.get({
+            userId: "me",
+            id: draft.id!,
+            format: "metadata",
+          });
+          const headers = detail.data.message?.payload?.headers || [];
+          return {
+            draftId: draft.id!,
+            messageId: detail.data.message?.id || "",
+            subject: getHeader(headers as any[], "Subject") || "(no subject)",
+            to: getHeader(headers as any[], "To"),
+            snippet: detail.data.message?.snippet || "",
+          };
+        } catch {
+          return {
+            draftId: draft.id!,
+            messageId: draft.message?.id || "",
+            subject: "(unable to read)",
+            to: "",
+            snippet: "",
+          };
+        }
+      }),
   );
 
   return results;
@@ -1022,10 +1026,7 @@ export async function listDrafts(
 /**
  * Delete a draft from a user's Gmail account.
  */
-export async function deleteDraft(
-  userId: string,
-  draftId: string,
-): Promise<boolean> {
+export async function deleteDraft(userId: string, draftId: string): Promise<boolean> {
   const result = await getGmailClientForUser(userId);
   if (!result) return false;
 

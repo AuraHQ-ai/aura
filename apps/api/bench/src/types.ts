@@ -230,10 +230,7 @@ export interface BenchRunConfig {
 
 // ── Score aggregation ──────────────────────────────────────────────────────
 
-export type ScoreType =
-  | "qa_accuracy"
-  | "retrieval_recall_at_15"
-  | "abstention_accuracy";
+export type ScoreType = "qa_accuracy" | "retrieval_recall_at_15" | "abstention_accuracy";
 
 /**
  * Aggregated bench score for one (dataset, category, scoreType) cell.

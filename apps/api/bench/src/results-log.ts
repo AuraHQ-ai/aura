@@ -125,11 +125,7 @@ function fmtCost(usd: number | null | undefined): string {
   return usd === null || usd === undefined ? "—" : `$${usd.toFixed(2)}`;
 }
 
-function fmtScope(e: {
-  datasets: string[];
-  subset: string;
-  limit: number | null;
-}): string {
+function fmtScope(e: { datasets: string[]; subset: string; limit: number | null }): string {
   const sizing = e.limit && e.limit > 0 ? `limit=${e.limit}` : e.subset;
   return `${e.datasets.join("+")}/${sizing}`;
 }
@@ -139,8 +135,13 @@ export function pivotScores(scores: BenchScore[]): HistoryScore[] {
   const rows = new Map<string, HistoryScore>();
   for (const s of scores) {
     const key = `${s.dataset}|${s.category}`;
-    const row =
-      rows.get(key) ?? { dataset: s.dataset, category: s.category, qa: null, recall: null, n: 0 };
+    const row = rows.get(key) ?? {
+      dataset: s.dataset,
+      category: s.category,
+      qa: null,
+      recall: null,
+      n: 0,
+    };
     if (s.scoreType === "qa_accuracy") {
       row.qa = s.score;
       row.n = Math.max(row.n, s.n);
@@ -236,7 +237,9 @@ export interface LatestResults {
   entries: HistoryEntry[];
 }
 
-function scopeKey(entry: Pick<HistoryEntry, "subset" | "corpusHash" | "caseSetHash" | "datasets">): string {
+function scopeKey(
+  entry: Pick<HistoryEntry, "subset" | "corpusHash" | "caseSetHash" | "datasets">,
+): string {
   return JSON.stringify({
     subset: entry.subset,
     corpusHash: entry.corpusHash,
@@ -268,7 +271,7 @@ export function writeLatest(history: HistoryEntry[], file: string = latestPath()
 export function readLatest(file: string = latestPath()): HistoryEntry[] {
   if (!existsSync(file)) return [];
   const parsed = JSON.parse(readFileSync(file, "utf8")) as LatestResults | HistoryEntry[];
-  return Array.isArray(parsed) ? parsed : parsed.entries ?? [];
+  return Array.isArray(parsed) ? parsed : (parsed.entries ?? []);
 }
 
 function scoresTable(scores: HistoryScore[]): string {
@@ -304,9 +307,7 @@ export function isAuthoritativeRun(
   e: Pick<HistoryEntry, "subset" | "dirty" | "datasets">,
 ): boolean {
   return (
-    AUTHORITATIVE_SUBSETS.has(e.subset) &&
-    !e.dirty &&
-    e.datasets.includes(AUTHORITATIVE_DATASET)
+    AUTHORITATIVE_SUBSETS.has(e.subset) && !e.dirty && e.datasets.includes(AUTHORITATIVE_DATASET)
   );
 }
 
@@ -317,9 +318,7 @@ export function isAuthoritativeRun(
  * correspond to a reproducible committed state or aren't the corpus CI tracks.
  * Returns undefined when no qualifying run exists yet (e.g. a fresh repo) so the
  * snapshot is simply left untouched rather than backfilled from a smoke run. */
-export function authoritativeLatest(
-  entries: HistoryEntry[],
-): HistoryEntry | undefined {
+export function authoritativeLatest(entries: HistoryEntry[]): HistoryEntry | undefined {
   const authoritative = entries.filter(isAuthoritativeRun);
   return authoritative[authoritative.length - 1];
 }
@@ -335,27 +334,19 @@ export function renderBenchReadme(
   lines.push("");
   lines.push(GENERATED_NOTICE);
   lines.push("");
-  lines.push(
-    "The memory bench replays vendored LongMemEval (default) / LoCoMo corpora through",
-  );
+  lines.push("The memory bench replays vendored LongMemEval (default) / LoCoMo corpora through");
   lines.push(
     "Aura's real `extract → retrieve → answer` pipeline on a production-faithful timeline:",
   );
-  lines.push(
-    "per-assistant-reply extraction runs as a producer that advances a global watermark,",
-  );
+  lines.push("per-assistant-reply extraction runs as a producer that advances a global watermark,");
   lines.push(
     "and each question is scored the moment the watermark passes its timestamp, retrieving",
   );
   lines.push(
     "bi-temporally as-of that instant. It scores each category on deterministic retrieval",
   );
-  lines.push(
-    "recall@15 and LLM-judged QA accuracy. Runs are logged locally with",
-  );
-  lines.push(
-    "`pnpm bench:memory … --log`, which appends to `history.jsonl` and regenerates this",
-  );
+  lines.push("recall@15 and LLM-judged QA accuracy. Runs are logged locally with");
+  lines.push("`pnpm bench:memory … --log`, which appends to `history.jsonl` and regenerates this");
   lines.push("file plus the snapshot in the root `README.md`. See the `aura-memory-bench` skill.");
   lines.push("");
 
@@ -520,7 +511,13 @@ export function recordRun(input: RecordRunInput): {
   const latestJson = writeLatest(history);
 
   if (!isAuthoritativeRun(entry)) {
-    return { historyFile, latestJson, benchReadme: null, mainReadme: null, regeneratedReadmes: false };
+    return {
+      historyFile,
+      latestJson,
+      benchReadme: null,
+      mainReadme: null,
+      regeneratedReadmes: false,
+    };
   }
 
   const latest = materializeLatest(history).entries;

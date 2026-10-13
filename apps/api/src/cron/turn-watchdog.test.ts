@@ -219,9 +219,7 @@ describe("turn watchdog sweep", () => {
     const result = await sweepStaleTurnMarkers(slackClient, NOW);
 
     expect(result).toEqual({ detected: 1, recovered: 1 });
-    expect(updateSets()).toEqual([
-      expect.objectContaining({ status: "recovered" }),
-    ]);
+    expect(updateSets()).toEqual([expect.objectContaining({ status: "recovered" })]);
     expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
       "turn_watchdog_recovery_post_error",
       expect.objectContaining({ invocationId: "inv-1", error: "slack down" }),

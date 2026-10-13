@@ -1,3 +1,6 @@
+echo "🔍 Biome (lint + format)..."
+pnpm exec biome ci . || { echo "Run \`pnpm check:fix\` to auto-fix."; exit 1; }
+
 echo "🔍 Type-checking apps/api..."
 pnpm --filter aura-api typecheck || exit 1
 

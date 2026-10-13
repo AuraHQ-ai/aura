@@ -87,10 +87,7 @@ describe("getModelCatalogResponse", () => {
     expect(response.escalation.map((o) => o.value)).toEqual(expectedChat);
 
     // Embedding category: embedding models plus unknown-type ones.
-    expect(response.embedding.map((o) => o.value)).toEqual([
-      "mystery/model",
-      "voyage/voyage-3",
-    ]);
+    expect(response.embedding.map((o) => o.value)).toEqual(["mystery/model", "voyage/voyage-3"]);
 
     // Full catalog is always present.
     expect(response.catalog).toHaveLength(rows.length);

@@ -75,10 +75,7 @@ dashboardResourcesApp.openapi(listResourcesRoute, async (c) => {
         .orderBy(desc(resources.createdAt))
         .limit(limit)
         .offset(offset),
-      db
-        .select({ total: sql<number>`count(*)::int` })
-        .from(resources)
-        .where(where),
+      db.select({ total: sql<number>`count(*)::int` }).from(resources).where(where),
     ]);
 
     return c.json({ items, total } as any, 200);
@@ -116,11 +113,7 @@ dashboardResourcesApp.openapi(getResourceRoute, async (c) => {
   try {
     const id = c.req.param("id");
 
-    const [resource] = await db
-      .select()
-      .from(resources)
-      .where(eq(resources.id, id))
-      .limit(1);
+    const [resource] = await db.select().from(resources).where(eq(resources.id, id)).limit(1);
 
     if (!resource) return c.json({ error: "Not found" }, 404);
 

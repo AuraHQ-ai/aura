@@ -35,14 +35,14 @@ const LOGGER_DROPS_ERROR_CODE = "error_logger_drops";
 const perCodeWindows = new Map<string, RateWindow>();
 let globalWindow: RateWindow = { count: 0, windowStart: Date.now() };
 let globalCircuitOpen = false;
-const droppedByCode = new Map<string, { count: number; reasons: Record<RateLimitReason, number> }>();
+const droppedByCode = new Map<
+  string,
+  { count: number; reasons: Record<RateLimitReason, number> }
+>();
 let dropsFlushTimer: ReturnType<typeof setInterval> | null = null;
 let flushingDrops = false;
 
-const slackWindows = new Map<
-  string,
-  { lastPostTime: number; batchedCount: number }
->();
+const slackWindows = new Map<string, { lastPostTime: number; batchedCount: number }>();
 
 /**
  * Strip long numeric arrays from error messages.
@@ -50,10 +50,7 @@ const slackWindows = new Map<
  * full embedding vectors into error.message. Truncate them so #aura-errors
  * stays readable. Keep first 4 + last 2 values for debuggability.
  */
-export function sanitizeErrorText(
-  input: string | undefined | null,
-  maxLen = 2000,
-): string {
+export function sanitizeErrorText(input: string | undefined | null, maxLen = 2000): string {
   if (!input) return "";
 
   // Match bracketed numeric arrays of >= 16 numeric items (signed floats incl. exp notation).
@@ -73,13 +70,15 @@ export function sanitizeErrorText(
   });
 
   if (out.length > maxLen) {
-    out = out.slice(0, maxLen) + `…(truncated, original ${input.length} chars)`;
+    out = `${out.slice(0, maxLen)}…(truncated, original ${input.length} chars)`;
   }
 
   return out;
 }
 
-function getRateLimit(errorCode: string): { limited: false } | { limited: true; reason: RateLimitReason } {
+function getRateLimit(
+  errorCode: string,
+): { limited: false } | { limited: true; reason: RateLimitReason } {
   const now = Date.now();
 
   // Global circuit breaker
@@ -91,9 +90,7 @@ function getRateLimit(errorCode: string): { limited: false } | { limited: true; 
   if (globalWindow.count >= GLOBAL_LIMIT) {
     if (!globalCircuitOpen) {
       globalCircuitOpen = true;
-      console.warn(
-        "[error-logger] Global circuit breaker tripped — suppressing DB writes",
-      );
+      console.warn("[error-logger] Global circuit breaker tripped — suppressing DB writes");
     }
     return { limited: true, reason: "global" };
   }
@@ -160,23 +157,19 @@ export async function flushLoggerDrops(): Promise<void> {
   );
   droppedByCode.clear();
 
-  const totalDropped = Object.values(drops).reduce(
-    (sum, value) => sum + value.count,
-    0,
-  );
+  const totalDropped = Object.values(drops).reduce((sum, value) => sum + value.count, 0);
 
   try {
-    await db.insert(errorEvents)
-      .values({
-        errorName: "LoggerDrops",
-        errorMessage: `Error logger dropped ${totalDropped} event${totalDropped === 1 ? "" : "s"} due to rate limiting`,
-        errorCode: LOGGER_DROPS_ERROR_CODE,
-        context: {
-          drops,
-          totalDropped,
-          flushIntervalMs: LOGGER_DROPS_FLUSH_MS,
-        },
-      });
+    await db.insert(errorEvents).values({
+      errorName: "LoggerDrops",
+      errorMessage: `Error logger dropped ${totalDropped} event${totalDropped === 1 ? "" : "s"} due to rate limiting`,
+      errorCode: LOGGER_DROPS_ERROR_CODE,
+      context: {
+        drops,
+        totalDropped,
+        flushIntervalMs: LOGGER_DROPS_FLUSH_MS,
+      },
+    });
   } catch (err) {
     for (const [errorCode, value] of Object.entries(drops)) {
       const existing = droppedByCode.get(errorCode) ?? {
@@ -212,9 +205,9 @@ export function resetErrorLoggerStateForTest(): void {
 
 let cachedErrorsChannelId: string | null = null;
 
-async function getSlackClient(): Promise<
-  InstanceType<typeof import("@slack/web-api").WebClient> | null
-> {
+async function getSlackClient(): Promise<InstanceType<
+  typeof import("@slack/web-api").WebClient
+> | null> {
   const token = process.env.SLACK_BOT_TOKEN;
   if (!token) return null;
   const { WebClient } = await import("@slack/web-api");
@@ -308,7 +301,8 @@ export function logError(params: LogErrorParams): Promise<void> {
   if (!rateLimit.limited) {
     recordWrite(code);
 
-    write = db.insert(errorEvents)
+    write = db
+      .insert(errorEvents)
       .values({
         errorName: params.errorName,
         errorMessage: sanitizeErrorText(params.errorMessage),

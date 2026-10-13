@@ -11,8 +11,8 @@ export function hasDeferredLoading(tool: unknown): boolean {
   return Boolean(
     tool &&
       typeof tool === "object" &&
-      (tool as { providerOptions?: { anthropic?: { deferLoading?: boolean } } })
-        .providerOptions?.anthropic?.deferLoading === true,
+      (tool as { providerOptions?: { anthropic?: { deferLoading?: boolean } } }).providerOptions
+        ?.anthropic?.deferLoading === true,
   );
 }
 

@@ -7,13 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { DetailSkeleton } from "@/components/page-skeleton";
 import { formatDate, truncate } from "@/lib/utils";
-import {
-  ArrowLeft,
-  Clock,
-  DollarSign,
-  MessageSquare,
-  Users,
-} from "lucide-react";
+import { ArrowLeft, Clock, DollarSign, MessageSquare, Users } from "lucide-react";
 import { ConversationDetailView } from "./$id";
 
 interface Participant {
@@ -36,10 +30,7 @@ interface ThreadData {
   meta: ThreadMeta;
 }
 
-function findClosestTraceIndex(
-  conversations: any[],
-  highlightTime: string,
-): number {
+function findClosestTraceIndex(conversations: any[], highlightTime: string): number {
   const target = new Date(highlightTime).getTime();
   let bestIdx = -1;
   let bestDist = Infinity;
@@ -66,10 +57,10 @@ function ThreadDetailPage() {
       ),
   });
 
-  const highlightIdx = data && highlight
-    ? findClosestTraceIndex(data.conversations, highlight)
-    : -1;
+  const highlightIdx =
+    data && highlight ? findClosestTraceIndex(data.conversations, highlight) : -1;
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: data/highlight are triggers — scroll once the highlighted trace has rendered.
   useEffect(() => {
     if (highlightRef.current) {
       highlightRef.current.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -78,11 +69,7 @@ function ThreadDetailPage() {
 
   if (isLoading) return <DetailSkeleton />;
   if (error)
-    return (
-      <div className="text-destructive text-sm">
-        Failed to load thread: {error.message}
-      </div>
-    );
+    return <div className="text-destructive text-sm">Failed to load thread: {error.message}</div>;
   if (!data) return null;
 
   const { conversations, meta } = data;
@@ -99,9 +86,7 @@ function ThreadDetailPage() {
           <h1 className="text-base font-semibold">Thread Detail</h1>
           <p className="text-xs text-muted-foreground truncate">
             {meta.channelId}
-            {meta.messagePreview
-              ? ` · "${truncate(meta.messagePreview, 80)}"`
-              : ""}
+            {meta.messagePreview ? ` · "${truncate(meta.messagePreview, 80)}"` : ""}
           </p>
         </div>
       </div>
@@ -142,9 +127,7 @@ function ThreadDetailPage() {
             <div className="text-sm space-y-0.5">
               <div>{formatDate(meta.startedAt)}</div>
               {meta.traceCount > 1 && (
-                <div className="text-muted-foreground">
-                  → {formatDate(meta.endedAt)}
-                </div>
+                <div className="text-muted-foreground">→ {formatDate(meta.endedAt)}</div>
               )}
             </div>
           </CardContent>
@@ -160,11 +143,7 @@ function ThreadDetailPage() {
             <div className="flex flex-wrap gap-1">
               {meta.participants.length > 0 ? (
                 meta.participants.map((p) => (
-                  <Badge
-                    key={p.userId}
-                    variant="secondary"
-                    className="text-xs"
-                  >
+                  <Badge key={p.userId} variant="secondary" className="text-xs">
                     {p.displayName ?? p.userId}
                   </Badge>
                 ))
@@ -197,9 +176,7 @@ function ThreadDetailPage() {
   );
 }
 
-export const Route = createFileRoute(
-  "/conversations/threads/$channelId/$threadTs",
-)({
+export const Route = createFileRoute("/conversations/threads/$channelId/$threadTs")({
   component: ThreadDetailPage,
   validateSearch: (raw: Record<string, unknown>) => ({
     highlight: typeof raw.highlight === "string" ? raw.highlight : undefined,

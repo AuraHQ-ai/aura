@@ -6,8 +6,8 @@ import { Monitor, Moon, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 
 const themes = [
-  { value: "light",  label: "Light",  Icon: Sun },
-  { value: "dark",   label: "Dark",   Icon: Moon },
+  { value: "light", label: "Light", Icon: Sun },
+  { value: "dark", label: "Dark", Icon: Moon },
   { value: "system", label: "System", Icon: Monitor },
 ] as const;
 
@@ -26,6 +26,7 @@ export function ThemeToggle() {
     <DropdownMenuPrimitive.Root>
       <DropdownMenuPrimitive.Trigger asChild>
         <button
+          type="button"
           aria-label="Toggle theme"
           style={{
             display: "flex",
@@ -98,7 +99,9 @@ export function ThemeToggle() {
               <Icon size={13} strokeWidth={1.75} style={{ opacity: theme === value ? 1 : 0.6 }} />
               {label}
               {theme === value && (
-                <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-muted)" }}>✓</span>
+                <span style={{ marginLeft: "auto", fontSize: 11, color: "var(--text-muted)" }}>
+                  ✓
+                </span>
               )}
             </DropdownMenuPrimitive.Item>
           ))}

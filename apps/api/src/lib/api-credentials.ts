@@ -16,17 +16,13 @@ const KEY_ENV = "CREDENTIALS_KEY";
 function validateKey(): void {
   const hex = process.env[KEY_ENV];
   if (!hex || Buffer.from(hex, "hex").length !== 32) {
-    throw new Error(
-      `${KEY_ENV} must be a 64-character hex string (32 bytes)`,
-    );
+    throw new Error(`${KEY_ENV} must be a 64-character hex string (32 bytes)`);
   }
 }
 
 function validateName(name: string): void {
   if (!NAME_RE.test(name)) {
-    throw new Error(
-      `Invalid credential name "${name}": must match /^[a-z][a-z0-9_]{1,62}$/`,
-    );
+    throw new Error(`Invalid credential name "${name}": must match /^[a-z][a-z0-9_]{1,62}$/`);
   }
 }
 
@@ -66,10 +62,7 @@ async function audit(
   }
 }
 
-async function notifyOwnerExpired(
-  ownerId: string,
-  credentialName: string,
-): Promise<void> {
+async function notifyOwnerExpired(ownerId: string, credentialName: string): Promise<void> {
   const token = process.env.SLACK_BOT_TOKEN;
   if (!token) return;
   const { WebClient } = await import("@slack/web-api");
@@ -108,7 +101,10 @@ export async function hasPermission(
 
   const grantPerm = grant[0].permission;
   const hierarchy: Array<"read" | "write" | "admin"> = ["read", "write", "admin"];
-  return hierarchy.indexOf(grantPerm as typeof requiredPermission) >= hierarchy.indexOf(requiredPermission);
+  return (
+    hierarchy.indexOf(grantPerm as typeof requiredPermission) >=
+    hierarchy.indexOf(requiredPermission)
+  );
 }
 
 export async function storeApiCredential(
@@ -130,7 +126,9 @@ export async function storeApiCredential(
       }
     } catch (e: any) {
       if (e.message.includes("client_id") || e.message.includes("client_secret")) throw e;
-      throw new Error("oauth_client value must be valid JSON with client_id and client_secret keys");
+      throw new Error(
+        "oauth_client value must be valid JSON with client_id and client_secret keys",
+      );
     }
   }
 
@@ -220,9 +218,7 @@ export async function getCredentialById(
   return rows[0] ?? null;
 }
 
-export async function listApiCredentials(
-  userId: string,
-): Promise<
+export async function listApiCredentials(userId: string): Promise<
   Array<{
     id: string;
     name: string;
@@ -254,12 +250,7 @@ export async function listApiCredentials(
     })
     .from(credentialGrants)
     .innerJoin(credentials, eq(credentialGrants.credentialId, credentials.id))
-    .where(
-      and(
-        eq(credentialGrants.granteeId, userId),
-        isNull(credentialGrants.revokedAt),
-      ),
-    );
+    .where(and(eq(credentialGrants.granteeId, userId), isNull(credentialGrants.revokedAt)));
 
   return [
     ...owned.map((r) => ({ ...r, permission: "owner" as const })),
@@ -267,9 +258,7 @@ export async function listApiCredentials(
   ];
 }
 
-export async function listGrantsForCredentials(
-  credentialIds: string[],
-): Promise<
+export async function listGrantsForCredentials(credentialIds: string[]): Promise<
   Array<{
     credentialId: string;
     granteeId: string;
@@ -287,10 +276,7 @@ export async function listGrantsForCredentials(
       displayName: users.displayName,
     })
     .from(credentialGrants)
-    .leftJoin(
-      users,
-      eq(credentialGrants.granteeId, users.slackUserId),
-    )
+    .leftJoin(users, eq(credentialGrants.granteeId, users.slackUserId))
     .where(
       and(
         inArray(credentialGrants.credentialId, credentialIds),
@@ -305,11 +291,7 @@ export async function deleteApiCredential(
   credentialId: string,
   requestingUserId: string,
 ): Promise<boolean> {
-  const rows = await db
-    .select()
-    .from(credentials)
-    .where(eq(credentials.id, credentialId))
-    .limit(1);
+  const rows = await db.select().from(credentials).where(eq(credentials.id, credentialId)).limit(1);
 
   const cred = rows[0];
   if (!cred) return false;
@@ -330,11 +312,7 @@ export async function grantApiCredentialAccess(
   granteeId: string,
   permission: "read" | "write" | "admin",
 ): Promise<void> {
-  const rows = await db
-    .select()
-    .from(credentials)
-    .where(eq(credentials.id, credentialId))
-    .limit(1);
+  const rows = await db.select().from(credentials).where(eq(credentials.id, credentialId)).limit(1);
 
   const cred = rows[0];
   if (!cred) throw new Error("Credential not found");
@@ -353,7 +331,11 @@ export async function grantApiCredentialAccess(
       grantedBy: granterId,
     })
     .onConflictDoUpdate({
-      target: [credentialGrants.workspaceId, credentialGrants.credentialId, credentialGrants.granteeId],
+      target: [
+        credentialGrants.workspaceId,
+        credentialGrants.credentialId,
+        credentialGrants.granteeId,
+      ],
       set: {
         permission,
         grantedBy: granterId,
@@ -362,7 +344,13 @@ export async function grantApiCredentialAccess(
       },
     });
 
-  await audit(credentialId, cred.name, granterId, "grant", `grantee:${granteeId} permission:${permission}`);
+  await audit(
+    credentialId,
+    cred.name,
+    granterId,
+    "grant",
+    `grantee:${granteeId} permission:${permission}`,
+  );
 }
 
 export async function revokeApiCredentialAccess(
@@ -370,11 +358,7 @@ export async function revokeApiCredentialAccess(
   revokerId: string,
   granteeId: string,
 ): Promise<void> {
-  const rows = await db
-    .select()
-    .from(credentials)
-    .where(eq(credentials.id, credentialId))
-    .limit(1);
+  const rows = await db.select().from(credentials).where(eq(credentials.id, credentialId)).limit(1);
 
   const cred = rows[0];
   if (!cred) throw new Error("Credential not found");

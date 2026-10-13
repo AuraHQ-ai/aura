@@ -145,9 +145,10 @@ export async function spawnTurnContinuationJob(params: {
 
   const truncatedMessage = params.truncatedMessage?.trim();
   if (truncatedMessage) {
-    const tail = truncatedMessage.length > TRUNCATED_MESSAGE_MAX_CHARS
-      ? truncatedMessage.slice(-TRUNCATED_MESSAGE_MAX_CHARS)
-      : truncatedMessage;
+    const tail =
+      truncatedMessage.length > TRUNCATED_MESSAGE_MAX_CHARS
+        ? truncatedMessage.slice(-TRUNCATED_MESSAGE_MAX_CHARS)
+        : truncatedMessage;
     description +=
       `\n\nYour previous message ended here before being cut off:\n"""\n${tail}\n"""\n` +
       `Anything you stated as remaining or promised for later in that text is still owed — ` +
@@ -229,8 +230,7 @@ async function findLiveTurnContinuation(
   channelId: string,
   threadTs: string | null,
 ): Promise<{ id: string; name: string } | undefined> {
-  const threadMatch =
-    threadTs === null ? isNull(jobs.threadTs) : eq(jobs.threadTs, threadTs);
+  const threadMatch = threadTs === null ? isNull(jobs.threadTs) : eq(jobs.threadTs, threadTs);
 
   const [existing] = await db
     .select({ id: jobs.id, name: jobs.name })

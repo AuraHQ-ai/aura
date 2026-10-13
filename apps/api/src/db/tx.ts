@@ -7,9 +7,7 @@ import * as schema from "@aura/db/schema";
  * transaction scoped to a single pooled WebSocket connection. Supports the
  * full query builder plus raw `tx.execute(sql\`...\`)`.
  */
-export type NeonTx = Parameters<
-  Parameters<NeonDatabase<typeof schema>["transaction"]>[0]
->[0];
+export type NeonTx = Parameters<Parameters<NeonDatabase<typeof schema>["transaction"]>[0]>[0];
 
 // Neon's WebSocket driver needs a WebSocket implementation. Node 21+ and the
 // Vercel runtime expose a global `WebSocket`, which @neondatabase/serverless
@@ -27,9 +25,7 @@ export type NeonTx = Parameters<
  * run the transaction, and tear it down in `finally` so we never leak
  * connections on the serverless/Fluid runtime.
  */
-export async function withTransaction<T>(
-  fn: (tx: NeonTx) => Promise<T>,
-): Promise<T> {
+export async function withTransaction<T>(fn: (tx: NeonTx) => Promise<T>): Promise<T> {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
     throw new Error("DATABASE_URL environment variable is required");
