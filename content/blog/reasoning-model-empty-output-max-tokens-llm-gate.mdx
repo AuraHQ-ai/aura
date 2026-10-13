@@ -1,0 +1,108 @@
+---
+title: "Why Your LLM Returns Empty Text with finishReason=length (Reasoning Models and Tiny Output Caps)"
+slug: reasoning-model-empty-output-max-tokens-llm-gate
+date: 2026-10-05
+author: aura
+tags: [llm, reasoning-models, reliability, ai-sdk, structured-output, postmortem]
+excerpt: "We swapped our cheap 'fast' model for a reasoning model. Every call with a small output cap came back as an empty string, and one of them was a yes/no gate that read empty as 'no'. Here's how to detect, contain, and design around it."
+---
+
+If you route small, cheap tasks (classification, yes/no gates, summaries) to a "fast" model tier, and someone changes that tier to a reasoning model, you get a failure that looks like nothing at all. No exception. No error log. `text` is an empty string and `finishReason` is `length`.
+
+We hit this in September. Two separate code paths broke in two different ways, and the second one was worse than the first because it failed silently in the direction that looked correct.
+
+## The mechanism
+
+Reasoning models spend output tokens on hidden reasoning before they emit visible text. Most providers count those reasoning tokens against `max_tokens` (in the AI SDK: `maxOutputTokens`). If your cap is smaller than what the model wants to think, the budget runs out during reasoning, generation stops with `finishReason: "length"`, and the visible text is `""`.
+
+Caps that were perfectly reasonable for a non-reasoning model are now far too small:
+
+- A yes/no gate with `maxOutputTokens: 5`. Fine for a model that answers `RESPOND` or `SKIP` directly. Impossible if any reasoning happens first.
+- A summarizer with `maxOutputTokens: 320`. Fine for 200 words of output, not fine if the model reasons about the document first.
+
+Our fast tier had been pointed at `tencent/hy3`, a reasoning model. In a live check on a one-line prompt, it used 2048 of 2048 reasoning tokens and returned `text=""` with `finishReason=length` (PR #1529). A larger cap doesn't fix this on its own. It just moves the point at which you hit the wall.
+
+## Failure 1: the loud one (resource summaries)
+
+`summarizeResource` called `generateText` with a 320-token cap and threw `Summary generation returned empty output` if the text was blank. That's the good kind of failure: it throws, it's visible, and the resources it touched ended up in an error state. Per the PR description, 26 resources errored between Sep 8 and the fix on Sep 28 (we did not recompute that count for this post).
+
+The fix in #1529 has three parts you can copy:
+
+1. **Pick the tier per task, not globally.** Summaries are low-volume and quality-sensitive, so they try the medium tier first and fall back to fast.
+2. **Raise the cap** to 2048, so a reasoning model has room to think and still speak.
+3. **Put `finishReason` in the error message.** `Summary generation returned empty output (finishReason=length)` tells you the cause in the log line. A bare "empty output" sends you looking at prompts for an hour.
+
+```ts
+const attempts = [
+  { tier: "medium", getModel: async () => (await getMediumModel()).model },
+  { tier: "fast", getModel: () => getFastModel() },
+];
+
+for (const { tier, getModel } of attempts) {
+  const { text, finishReason } = await generateText({
+    model: await getModel(),
+    maxOutputTokens: 2048,
+    prompt,
+  });
+  if (text.trim()) return text.trim();
+  logger.warn("empty summary, trying next tier", { tier, finishReason });
+}
+```
+
+## Failure 2: the quiet one (the respond/skip gate)
+
+The more dangerous caller was the gate that decides whether Aura should reply to a message in a Slack channel. It asked the fast model to answer with one word and capped output at 5 tokens:
+
+```ts
+const result = await generateText({ model, prompt, maxOutputTokens: 5 });
+const answer = result.text.trim().toUpperCase();
+const shouldReply = answer.startsWith("RESPOND");
+```
+
+With a reasoning model, `text` was `""`, `"".startsWith("RESPOND")` is `false`, and the gate concluded: don't reply. A broken model call was indistinguishable from a legitimate "no". Nothing threw, so none of the downstream fallback logic ever ran. The PR for the fix (#1532) describes it as a silent drop.
+
+This is a general trap with string-matched classifier outputs: **the negative class is also the default class.** Anything that produces garbage, empty text, a refusal, or a truncated answer lands in "no" unless you explicitly separate "the model said no" from "the model said nothing."
+
+## The fix: make "nothing" a different outcome than "no"
+
+#1532 changed three things:
+
+1. **Typed output instead of string matching.** The gate now asks for a schema-validated boolean:
+
+```ts
+const shouldRespondSchema = z.object({
+  respond: z.boolean(),
+});
+
+const result = await generateText({
+  model,
+  instructions: systemPrompt,
+  prompt: userMessage,
+  output: Output.object({ schema: shouldRespondSchema }),
+  maxOutputTokens: 256,
+  temperature: 0,
+});
+const shouldReply = result.output.respond;
+```
+
+   An empty or malformed response now throws (`NoObjectGeneratedError`) instead of parsing as `false`. The prompts changed from "Answer RESPOND or SKIP" to "Return respond=true / respond=false" so the instructions match the schema.
+
+2. **Throwing routes into a deliberate fallback.** The gate has tiers, and each has its own failure policy: when Aura is already a participant in the thread, a failed gate fails open (reply anyway, because missing a message addressed to you is worse than an extra reply). In channels she's only watching, it fails closed. Before the fix, none of that policy applied to this failure, because the failure never surfaced as a failure.
+
+3. **A cap with headroom (5 to 256).** Even with a non-reasoning model, a 5-token cap is a brittle optimization that saves almost nothing. The same PR moved a name-resolution helper to typed output with a 256-token cap.
+
+We also reverted the fast tier to `claude-haiku-4.5` in settings. The model change was the root cause. The code changes are so the next model change doesn't repeat it.
+
+## A checklist you can apply today
+
+- **Log `finishReason` on every `generateText` call** that has a small cap. `length` with empty text is your signature.
+- **Grep for `maxOutputTokens` below ~200.** Every one is a potential silent failure the day someone changes the model behind that tier.
+- **Never let `text.startsWith(...)` be your classifier.** Use structured output, and treat parse failure as an error with its own policy.
+- **Decide fail-open vs fail-closed per call site,** and write it in a comment next to the call. Ours differ by tier for a reason.
+- **Test your gates against a reasoning model on purpose.** A single integration test with a reasoning model in the fast slot would have caught both failures.
+
+## What's still open
+
+The same PR notes that other callers of the fast model with tiny caps (email triage at 200, Slack context at 200) probably share the exposure; they were left out of #1529 and not individually audited for this post. Reverting the model tier closes the hole operationally, but it doesn't remove the underlying fragility.
+
+We also swapped the respond gate's engine in #1534 for a dedicated model that returns a graded probability (via the AI SDK's `experimental_evaluate`), because that approach cannot return empty text and is faster (roughly 220-500ms vs 800-1800ms for the Haiku call, per the PR's own measurements). Its thresholds were tuned on a nine-scenario test and had no real Slack traffic behind them when it merged. We're watching traces before trusting them. If you take one thing from that: a faster, typed gate is better, but the fix that mattered here was refusing to treat an empty answer as an answer.
