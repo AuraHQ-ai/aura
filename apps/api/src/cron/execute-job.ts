@@ -500,15 +500,22 @@ export async function executeJob(
 
     if (job.script) {
       try {
-        const { getOrCreateSandbox, truncateOutput, getSandboxEnvs, filterEnvsByAllowlist } =
-          await import("../lib/sandbox.js");
+        const {
+          getOrCreateSandbox,
+          truncateOutput,
+          getSandboxEnvs,
+          filterEnvsByAllowlist,
+          resolveSandboxUserId,
+        } = await import("../lib/sandbox.js");
         // Use the job requester's sandbox so the script layer shares state
         // (checkouts, installed deps) with the job's LLM run_command calls.
-        const sandbox = await getOrCreateSandbox(job.requestedBy);
+        // Heartbeat/self jobs run as "aura" (not an omitted userId).
+        const sandboxUserId = resolveSandboxUserId(job.requestedBy);
+        const sandbox = await getOrCreateSandbox(sandboxUserId);
         // Script layer runs outside executionContext.run, so apply the job's
         // env allowlist explicitly here (narrows, never widens).
         const envs = filterEnvsByAllowlist(
-          await getSandboxEnvs(job.requestedBy),
+          await getSandboxEnvs(sandboxUserId),
           envAllowlist ?? null,
         );
 

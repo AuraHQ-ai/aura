@@ -10,6 +10,7 @@ import { createSandboxCommandWebhookApp } from "./webhook/sandbox-command.js";
 import { createGitHubWebhookApp } from "./webhook/github.js";
 import { dashboardApp } from "./routes/dashboard/index.js";
 import { internalApp } from "./routes/internal.js";
+import { createMcpOAuthApp } from "./routes/mcp-oauth.js";
 import { runPipeline } from "./pipeline/index.js";
 import {
   publishHomeTab,
@@ -173,6 +174,9 @@ app.route("/api/dashboard", dashboardApp);
 
 // Mount internal operational endpoints (/api/internal/*, CRON_SECRET-gated)
 app.route("/", internalApp);
+
+// MCP OAuth callback — posts back into the originating Slack thread
+app.route("/api/mcp/oauth", createMcpOAuthApp(slackClient));
 
 // ── Slack Signature Verification ────────────────────────────────────────────
 

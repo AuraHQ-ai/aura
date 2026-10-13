@@ -2490,8 +2490,12 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
                 error: "Sandbox file access requires sandbox credentials. You don't have permission to read sandbox files.",
               };
             }
-            const { getOrCreateSandbox } = await import("../lib/sandbox.js");
-            const sandbox = await getOrCreateSandbox(context?.userId);
+            const { getOrCreateSandbox, resolveSandboxUserId } = await import(
+              "../lib/sandbox.js"
+            );
+            const sandbox = await getOrCreateSandbox(
+              resolveSandboxUserId(context?.userId),
+            );
             const fileBytes = await sandbox.files.read(file_path, { format: "bytes" });
             fileBuffer = Buffer.from(fileBytes);
           } else {
@@ -2610,9 +2614,15 @@ export async function createSlackTools(client: WebClient, context?: ScheduleCont
           });
 
           if (save_to_disk) {
-            const { writeToSandbox } = await import("../lib/sandbox.js");
+            const { writeToSandbox, resolveSandboxUserId } = await import(
+              "../lib/sandbox.js"
+            );
             const buf = Buffer.from(data);
-            const savedPath = await writeToSandbox(filename, buf);
+            const savedPath = await writeToSandbox(
+              filename,
+              buf,
+              resolveSandboxUserId(context?.userId),
+            );
             return {
               ok: true,
               saved_to_disk: true,

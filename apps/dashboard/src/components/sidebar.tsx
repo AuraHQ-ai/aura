@@ -11,6 +11,7 @@ import {
   FileText,
   Settings,
   KeyRound,
+  Plug,
   BarChart3,
   TrendingUp,
   Menu,
@@ -54,6 +55,7 @@ const navItems = [
   { href: "/consumption", label: "Consumption", icon: BarChart3 },
   { href: "/adoption", label: "Adoption", icon: TrendingUp },
   { href: "/credentials", label: "Credentials", icon: KeyRound },
+  { href: "/mcp", label: "MCP", icon: Plug },
 ] as const;
 
 function getInitials(name: string) {

@@ -49,3 +49,14 @@ if (!alreadyPatched) {
 
 writeFileSync(configPath, JSON.stringify(config, null, 2));
 console.log("Patched .vercel/output/config.json (SPA fallback)");
+
+const { ensureUndiciInVercelOutput } = await import("./ensure-vercel-undici.mjs");
+const results = ensureUndiciInVercelOutput({
+  functionsRoot: join(root, ".vercel/output/functions"),
+  apiRoot: root,
+});
+const copied = results.filter((r) => r.copied).length;
+console.log(
+  `Verified undici in ${results.length} Vercel function(s)` +
+    (copied > 0 ? ` (copied into ${copied} that Nitro missed)` : ""),
+);

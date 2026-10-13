@@ -46,6 +46,7 @@ vi.mock("../lib/sandbox.js", () => ({
   getSandboxEnvs: sandboxMocks.getSandboxEnvs,
   ensureUserHome: sandboxMocks.ensureUserHome,
   truncateOutput: (value: string) => value,
+  resolveSandboxUserId: (userId?: string | null) => userId || "aura",
 }));
 
 vi.mock("../lib/logger.js", () => ({

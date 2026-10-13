@@ -4,6 +4,7 @@ import { deferredToolThreadCache } from "@aura/db/schema";
 import type { ScheduleContext } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
 import { hasDeferredLoading, withoutDeferredLoading } from "./deferred-loading.js";
+import { isMcpToolName } from "../lib/mcp-names.js";
 
 export { hasDeferredLoading, withoutDeferredLoading } from "./deferred-loading.js";
 
@@ -154,7 +155,7 @@ export async function cacheDeferredToolResolutions(
   const key = getThreadCacheKey(context);
   if (!key) return;
 
-  const names = [...new Set([...toolNames].filter((name) => DEFERRED_TOOL_NAMES.has(name)))];
+  const names = [...new Set([...toolNames].filter((name) => DEFERRED_TOOL_NAMES.has(name) || isMcpToolName(name)))];
   if (names.length === 0) return;
 
   try {
@@ -216,7 +217,11 @@ export async function applyAnthropicToolDiscovery<T extends Record<string, any>>
   };
   mutableTools.toolSearch = toolSearch;
 
-  for (const name of DEFERRED_TOOL_NAMES) {
+  const toDefer = new Set([
+    ...DEFERRED_TOOL_NAMES,
+    ...Object.keys(mutableTools).filter((name) => isMcpToolName(name)),
+  ]);
+  for (const name of toDefer) {
     const existing = mutableTools[name];
     if (!existing) continue;
     if (cachedDeferredTools.has(name)) {
