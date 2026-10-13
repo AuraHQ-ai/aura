@@ -144,6 +144,9 @@ function fixtureServer(overrides: Partial<McpServer> = {}): McpServer {
     ownerId: "UADMIN",
     enabled: true,
     trusted: false,
+    hint: null,
+    cachedInstructions: null,
+    instructionsCachedAt: null,
     deniedTools: [],
     cachedTools: [{ name: "list_customers", description: "List" }],
     toolsCachedAt: new Date(),
@@ -371,6 +374,71 @@ describe("GET /api/dashboard/mcp/marketplace", () => {
     expect(body.error).toMatch(/503/);
     expect(body.featured).toHaveLength(1);
     expect(body.items).toEqual([]);
+  });
+});
+
+describe("PATCH /api/dashboard/mcp/:id hint", () => {
+  it("lets an admin set a hint on a workspace server and returns source + prompt line", async () => {
+    dbState.servers = [fixtureServer({ visibility: "workspace" })];
+    const res = await appFor("UADMIN").request("/srv-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ hint: "France Close CRM — live weekly sales" }),
+    });
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.hint).toBe("France Close CRM — live weekly sales");
+    expect(body.hintSource).toBe("hint");
+    expect(body.effectiveHint).toBe("France Close CRM — live weekly sales");
+    expect(body.promptLine).toContain("France Close CRM");
+    expect(dbState.updates.at(-1)).toMatchObject({
+      hint: "France Close CRM — live weekly sales",
+    });
+  });
+
+  it("rejects hints longer than 300 characters", async () => {
+    dbState.servers = [fixtureServer()];
+    const res = await appFor("UADMIN").request("/srv-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ hint: "x".repeat(301) }),
+    });
+    expect(res.status).toBe(400);
+    expect(dbState.updates).toHaveLength(0);
+  });
+
+  it("forbids a non-owner from editing a personal server hint", async () => {
+    dbState.servers = [
+      fixtureServer({
+        visibility: "personal",
+        ownerId: "UOTHER",
+        encryptedHeaderValue: null,
+      }),
+    ];
+    const res = await appFor("UMEMBER").request("/srv-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ hint: "should not land" }),
+    });
+    expect(res.status).toBe(404);
+    expect(dbState.updates).toHaveLength(0);
+  });
+
+  it("lets the owner edit a personal server hint", async () => {
+    dbState.servers = [
+      fixtureServer({
+        visibility: "personal",
+        ownerId: "UMEMBER",
+        encryptedHeaderValue: null,
+      }),
+    ];
+    const res = await appFor("UMEMBER").request("/srv-1", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ hint: "My Close account" }),
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()).hint).toBe("My Close account");
   });
 });
 

@@ -83,7 +83,7 @@ export function createMcpOAuthApp(slackClient?: WebClient) {
         });
         try {
           const remote = await handle.tools();
-          await persistCachedTools(server.id, cachedToolsFromRemote(remote));
+          await persistCachedTools(server.id, cachedToolsFromRemote(remote), handle.instructions);
         } finally {
           await handle.close().catch(() => {});
         }

@@ -13,7 +13,9 @@ import {
 import { createSlackTools } from "../tools/slack.js";
 import { closeMcpClients } from "../tools/mcp.js";
 import { getDeferredToolManifest } from "../tools/deferred.js";
-import { appendDeferredToolsBlock } from "../personality/system-prompt.js";
+import { appendDeferredToolsBlock, appendMcpServersBlock } from "../personality/system-prompt.js";
+import { listLiveMcpServersForCaller, toMcpServerHintEntry } from "./mcp-servers.js";
+import { logger } from "./logger.js";
 import {
   createInteractivePrepareStep,
   createHeadlessPrepareStep,
@@ -172,9 +174,19 @@ export async function createHeadlessAgent(options: HeadlessAgentOptions) {
     compactedToolResults: 0,
     compactionTokensSaved: 0,
   };
-  const systemPrompt =
-    appendDeferredToolsBlock(options.systemPrompt, getDeferredToolManifest(tools)) ??
-    options.systemPrompt;
+  let systemPrompt = options.systemPrompt;
+  try {
+    const live = await listLiveMcpServersForCaller(options.context);
+    systemPrompt =
+      appendMcpServersBlock(systemPrompt, live.map(toMcpServerHintEntry)) ?? systemPrompt;
+  } catch (error) {
+    logger.warn("Failed to load MCP server hint block for headless job", {
+      error: error instanceof Error ? error.message : String(error),
+      userId: options.context?.userId,
+    });
+  }
+  systemPrompt =
+    appendDeferredToolsBlock(systemPrompt, getDeferredToolManifest(tools)) ?? systemPrompt;
 
   const agent = new ToolLoopAgent({
     model,

@@ -213,7 +213,14 @@ export async function applyAnthropicToolDiscovery<T extends Record<string, any>>
   // toolSearchBm25_20251119() returns an Anthropic-native tool object that
   // bypasses defineTool(), so attach the Slack metadata manually.
   const toolSearch = anthropic.tools.toolSearchBm25_20251119();
-  (toolSearch as unknown as Record<string, unknown>).slack = {
+  const toolSearchRecord = toolSearch as unknown as Record<string, unknown>;
+  const mcpSearchHint =
+    ' For MCP servers listed in <mcp_servers>, prefix the query with the server slug (e.g. "close_fr aggregation") so mcp__<slug>__* tools load first.';
+  toolSearchRecord.description =
+    (typeof toolSearchRecord.description === "string" && toolSearchRecord.description.trim()
+      ? toolSearchRecord.description
+      : "Search deferred tools by BM25 and load their schemas.") + mcpSearchHint;
+  toolSearchRecord.slack = {
     status: "Searching tools...",
     detail: (i: { query: string }) => i.query,
   };
@@ -253,7 +260,7 @@ export function getDeferredToolManifest(
   tools: Record<string, unknown>,
 ): DeferredToolManifestEntry[] {
   return Object.entries(tools)
-    .filter(([, tool]) => hasDeferredLoading(tool))
+    .filter(([name, tool]) => hasDeferredLoading(tool) && !isMcpToolName(name))
     .map(([name, tool]) => ({
       name,
       description: toOneLineDescription((tool as { description?: unknown }).description),

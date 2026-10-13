@@ -645,6 +645,13 @@
       "when": 1791823764576,
       "tag": "0091_mcp_denied_tools",
       "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "7",
+      "when": 1791926400000,
+      "tag": "0092_mcp_server_hint",
+      "breakpoints": true
     }
   ]
 }

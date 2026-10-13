@@ -18,6 +18,7 @@ import {
   buildEnvironmentContext,
   buildTaskPrefix,
   formatDeferredTools,
+  formatMcpServers,
 } from "./system-prompt.js";
 import { buildCachedSystemMessages } from "../lib/ai.js";
 
@@ -172,6 +173,31 @@ Available on demand (call tool_search_tool_bm25 to load schemas):
   it("omits the deferred_tools block when there are no deferred tools", () => {
     expect(buildEnvironmentContext({ deferredTools: [] })).not.toContain("<deferred_tools>");
     expect(formatDeferredTools(undefined)).toBe("");
+  });
+
+  it("never lists mcp__ tools in deferred_tools even if they are passed in", () => {
+    const manifest = formatDeferredTools([
+      { name: "bq_execute_query", description: "Run SQL" },
+      { name: "mcp__close_fr__aggregation", description: "Aggregate Close FR deals" },
+    ]);
+    expect(manifest).toContain("- bq_execute_query:");
+    expect(manifest).not.toContain("mcp__");
+  });
+});
+
+describe("buildEnvironmentContext mcp_servers block", () => {
+  it("renders a per-server hint block and omits it when empty", () => {
+    const prompt = buildEnvironmentContext({
+      mcpServers: [
+        { slug: "close_fr", toolCount: 122, hint: "France Close CRM" },
+        { slug: "mako", toolCount: 93, fallbackDescription: "Mako" },
+      ],
+    });
+    expect(prompt).toContain("<mcp_servers>");
+    expect(prompt).toContain("- close_fr (122 tools): France Close CRM.");
+    expect(prompt).toContain("- mako (93 tools): Mako.");
+    expect(formatMcpServers([])).toBe("");
+    expect(buildEnvironmentContext({ mcpServers: [] })).not.toContain("<mcp_servers>");
   });
 });
 

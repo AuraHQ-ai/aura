@@ -11,6 +11,7 @@ import {
   canViewMcpServer,
   mcpConnectionStatus,
   redactSensitive,
+  selectLiveMcpServersForCaller,
   toMcpServerDto,
 } from "./mcp-servers.js";
 import type { McpConnection, McpServer } from "@aura/db/schema";
@@ -30,6 +31,9 @@ function server(overrides: Partial<McpServer> = {}): McpServer {
     ownerId: "U1",
     enabled: true,
     trusted: false,
+    hint: null,
+    cachedInstructions: null,
+    instructionsCachedAt: null,
     deniedTools: [],
     cachedTools: [
       { name: "list_customers", description: "List" },
@@ -97,6 +101,14 @@ describe("allowedCachedTools + authz helpers", () => {
     expect(tools.map((t) => t.name)).toEqual(["list_customers"]);
   });
 
+  it("excludes denied tools from the DTO tool count used in prompt lines", () => {
+    const dto = toMcpServerDto(server({ deniedTools: ["create_refund"] }));
+    expect(dto.toolCount).toBe(1);
+    expect(dto.promptLine).toContain("(1 tools)");
+    expect(dto.hintSource).toBe("registry");
+    expect(dto.effectiveHint).toBe("Stripe");
+  });
+
   it("lets members view workspace servers but not manage them", () => {
     const workspace = server({ visibility: "workspace", ownerId: "UADMIN" });
     expect(canViewMcpServer(workspace, "UMEMBER", false)).toBe(true);
@@ -111,5 +123,93 @@ describe("allowedCachedTools + authz helpers", () => {
     expect(canViewMcpServer(theirs, "UMEMBER", false)).toBe(false);
     expect(canManageMcpServer(theirs, "UMEMBER", false)).toBe(false);
     expect(canManageMcpServer(theirs, "UADMIN", true)).toBe(true);
+  });
+});
+
+describe("selectLiveMcpServersForCaller", () => {
+  const connections = (userId: string, serverId = "srv-1") =>
+    new Map([
+      [
+        serverId,
+        {
+          id: "conn-1",
+          serverId,
+          userId,
+          status: "connected",
+          encryptedTokens: "tok",
+        } as McpConnection,
+      ],
+    ]);
+
+  it("never includes user A's personal server in a prompt built for user B", () => {
+    const personal = server({
+      visibility: "personal",
+      ownerId: "UA",
+      authType: "oauth",
+    });
+    const forB = selectLiveMcpServersForCaller({
+      servers: [personal],
+      connections: connections("UB"),
+      userId: "UB",
+      isJob: false,
+    });
+    expect(forB).toEqual([]);
+
+    const forA = selectLiveMcpServersForCaller({
+      servers: [personal],
+      connections: connections("UA"),
+      userId: "UA",
+      isJob: false,
+    });
+    expect(forA.map((s) => s.slug)).toEqual(["stripe"]);
+  });
+
+  it("hides a personal server from a job whose allowlist excludes it", () => {
+    const personal = server({ visibility: "personal", ownerId: "UA", authType: "none" });
+    const excluded = selectLiveMcpServersForCaller({
+      servers: [personal],
+      connections: new Map(),
+      userId: "UA",
+      isJob: true,
+      envAllowlist: ["GITHUB_TOKEN"],
+    });
+    expect(excluded).toEqual([]);
+
+    const allowed = selectLiveMcpServersForCaller({
+      servers: [personal],
+      connections: new Map(),
+      userId: "UA",
+      isJob: true,
+      envAllowlist: ["mcp:stripe"],
+    });
+    expect(allowed.map((s) => s.slug)).toEqual(["stripe"]);
+  });
+
+  it("omits oauth servers that are not live for the caller even when visible", () => {
+    const workspace = server({
+      visibility: "workspace",
+      ownerId: "UADMIN",
+      authType: "oauth",
+    });
+    expect(
+      selectLiveMcpServersForCaller({
+        servers: [workspace],
+        connections: new Map(),
+        userId: "UMEMBER",
+        isJob: false,
+      }),
+    ).toEqual([]);
+  });
+
+  it("sorts live servers by slug", () => {
+    const closeFr = server({ id: "a", slug: "close_fr", authType: "none" });
+    const closeEs = server({ id: "b", slug: "close_es", authType: "none" });
+    const ordered = selectLiveMcpServersForCaller({
+      servers: [closeFr, closeEs],
+      connections: new Map(),
+      userId: "U1",
+      isJob: false,
+    });
+    expect(ordered.map((s) => s.slug)).toEqual(["close_es", "close_fr"]);
   });
 });

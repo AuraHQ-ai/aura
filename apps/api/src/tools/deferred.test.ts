@@ -120,9 +120,9 @@ describe("deferred tool thread cache", () => {
     });
 
     expect(tools.mcp__stripe__list_customers.providerOptions.anthropic.deferLoading).toBe(true);
-    expect(getDeferredToolManifest(tools).map((entry) => entry.name)).toEqual([
-      "mcp__stripe__list_customers",
-    ]);
+    expect(getDeferredToolManifest(tools).map((entry) => entry.name)).toEqual([]);
+    expect(typeof tools.toolSearch.description).toBe("string");
+    expect(tools.toolSearch.description).toMatch(/prefix the query with the server slug/);
 
     await cacheDeferredToolResolutions(
       { workspaceId: "W1", channelId: "C123", threadTs: "171234.000100" },
@@ -131,5 +131,24 @@ describe("deferred tool thread cache", () => {
     expect(dbMocks.insertValues).toHaveBeenCalledWith([
       expect.objectContaining({ toolName: "mcp__stripe__list_customers" }),
     ]);
+  });
+
+  it("keeps MCP tools deferred for BM25 search without listing mcp__ names", async () => {
+    const tools: Record<string, any> = {
+      mcp__close_fr__aggregation: { description: "Aggregate Close FR deals." },
+      bq_execute_query: { description: "Run SQL." },
+    };
+
+    await applyAnthropicToolDiscovery(tools, "anthropic/claude-sonnet-4-5", {
+      channelId: "C123",
+      threadTs: "171234.000100",
+    });
+
+    expect(tools.mcp__close_fr__aggregation.providerOptions.anthropic.deferLoading).toBe(true);
+    expect(tools.bq_execute_query.providerOptions.anthropic.deferLoading).toBe(true);
+    expect(getDeferredToolManifest(tools).map((entry) => entry.name)).toEqual(["bq_execute_query"]);
+    expect(getDeferredToolManifest(tools).some((entry) => entry.name.startsWith("mcp__"))).toBe(
+      false,
+    );
   });
 });

@@ -21,7 +21,7 @@ The management tools are **not** available in scheduled-job or autonomous turns,
 
 ## Tool naming and discovery
 
-Each remote tool is exposed as `mcp__<slug>__<tool>`. The slug is derived from the URL or display name (lowercase, non-alphanumerics become `_`, always starting with a letter) and made unique per workspace. Tool names are sanitized to `[a-zA-Z0-9_-]`. Tool definitions are cached on the server row (`cached_tools`) and refreshed on connect, from the dashboard, or on demand. MCP tools are always **deferred** — loaded through tool search rather than sitting in the base prompt.
+Each remote tool is exposed as `mcp__<slug>__<tool>`. The slug is derived from the URL or display name (lowercase, non-alphanumerics become `_`, always starting with a letter) and made unique per workspace. Tool names are sanitized to `[a-zA-Z0-9_-]`. Tool definitions are cached on the server row (`cached_tools`) and refreshed on connect, from the dashboard, or on demand. MCP tools are always **deferred** — loaded through tool search rather than sitting in the base prompt. The system prompt lists live servers in an `<mcp_servers>` block (one line per server, no tool names); prefix `tool_search_tool_bm25` queries with the slug (e.g. `close_fr aggregation`) to load that server's tools.
 
 ## Visibility and ownership
 
@@ -56,13 +56,13 @@ The **MCP** page in the dashboard sidebar (`/mcp`) lets you:
 
 - Browse the **marketplace**: the official MCP registry (`registry.modelcontextprotocol.io`) only, HTTPS `streamable-http`/`sse` remotes, cached for 10 minutes. Multi-word search splits the query and filters locally (the registry itself substring-matches one string on the name). A top row pins a few registry names (Close, Stripe, Linear, Notion, Sentry, Mako) and resolves title/URL live — nothing is hand-copied, and names the registry does not return are skipped. Empty titles fall back to a prettified last path segment of the registry name. Installed entries are flagged, and registry text is sanitized as untrusted.
 - Add a server by URL with optional header auth and `http`/`sse` transport.
-- See connection status and the cached tool list, allow or deny individual tools, enable/disable a server, test the connection, refresh tools, start or restart OAuth, and (admins) mark a server trusted.
+- See connection status and the cached tool list, allow or deny individual tools, enable/disable a server, edit the trusted routing hint (shown in the system prompt), test the connection, refresh tools, start or restart OAuth, and (admins) mark a server trusted.
 
 The underlying endpoints are listed under [Dashboard API](/api-reference/overview#mcp-endpoints).
 
 ## Data model
 
-Migrations `0090_mcp_client.sql` and `0091_mcp_denied_tools.sql` add:
+Migrations `0090_mcp_client.sql`, `0091_mcp_denied_tools.sql`, and `0092_mcp_server_hint.sql` add:
 
-- `mcp_servers` — slug, URL, transport, auth type, encrypted header, visibility/owner, `enabled`, `trusted`, `denied_tools`, cached tools.
+- `mcp_servers` — slug, URL, transport, auth type, encrypted header, visibility/owner, `enabled`, `trusted`, `denied_tools`, admin `hint`, cached tools, cached initialize `instructions`.
 - `mcp_connections` — per-user OAuth state, encrypted tokens/client info/PKCE verifier, status, and the Slack channel/thread to notify.
