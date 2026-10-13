@@ -105,25 +105,56 @@ function MarketplaceCard({
   installed: boolean;
   adding: boolean;
   disabled: boolean;
-  onAdd: (entry: McpCatalogEntry) => void;
+  onAdd: (entry: McpCatalogEntry, name?: string) => void;
 }) {
+  const [naming, setNaming] = useState(false);
+  const [label, setLabel] = useState("");
   return (
-    <div className="rounded-lg border p-3 space-y-2">
+    <div className="min-w-0 rounded-lg border p-3 space-y-2">
       <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="font-medium text-sm">{entry.title}</div>
+        <div className="min-w-0 flex-1">
+          <div className="font-medium text-sm break-words">{entry.title}</div>
           <div className="text-xs text-muted-foreground font-mono truncate">{entry.url}</div>
         </div>
-        {installed ? (
-          <Badge variant="success">Installed</Badge>
-        ) : (
-          <Button size="sm" onClick={() => onAdd(entry)} disabled={disabled || adding}>
-            {adding ? "Adding…" : "Add"}
-          </Button>
-        )}
+        <div className="flex shrink-0 items-center gap-2">
+          {installed && <Badge variant="success">Installed</Badge>}
+          {installed ? (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => setNaming((v) => !v)}
+              disabled={disabled || adding}
+            >
+              Add another
+            </Button>
+          ) : (
+            <Button size="sm" onClick={() => onAdd(entry)} disabled={disabled || adding}>
+              {adding ? "Adding…" : "Add"}
+            </Button>
+          )}
+        </div>
       </div>
       {entry.description ? (
-        <p className="text-xs text-muted-foreground line-clamp-2">{entry.description}</p>
+        <p className="text-xs text-muted-foreground line-clamp-2 break-words">
+          {entry.description}
+        </p>
+      ) : null}
+      {installed && naming ? (
+        <div className="flex gap-2">
+          <Input
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder={`Name this connection, e.g. ${entry.title} CH`}
+            aria-label="Connection name"
+          />
+          <Button
+            size="sm"
+            onClick={() => onAdd(entry, label.trim())}
+            disabled={!label.trim() || disabled || adding}
+          >
+            {adding ? "Adding…" : "Connect"}
+          </Button>
+        </div>
       ) : null}
     </div>
   );
@@ -154,7 +185,7 @@ function MarketplacePanel({
   addError: string | null;
   authUrl: string | null;
   adding: boolean;
-  onAdd: (entry: McpCatalogEntry) => void;
+  onAdd: (entry: McpCatalogEntry, name?: string) => void;
 }) {
   const { data, isLoading, isFetchingNextPage, fetchNextPage, hasNextPage, error } =
     useInfiniteQuery({
@@ -233,7 +264,7 @@ function MarketplacePanel({
       {isLoading ? (
         <p className="text-sm text-muted-foreground py-6 text-center">Loading catalog…</p>
       ) : (
-        <div className="max-h-[50vh] overflow-y-auto space-y-4 pr-1">
+        <div className="max-h-[50vh] min-w-0 overflow-y-auto overflow-x-hidden space-y-4 pr-1">
           {featured.length > 0 && (
             <div className="space-y-2">
               <div className="text-sm font-medium">Featured</div>
@@ -423,12 +454,12 @@ function McpPage() {
     setAddingUrl(null);
   }
 
-  function addFromCatalog(entry: McpCatalogEntry) {
+  function addFromCatalog(entry: McpCatalogEntry, name?: string) {
     setAddError(null);
     setAddingUrl(entry.url);
     addMutation.mutate({
       url: entry.url,
-      name: entry.title,
+      name: name || entry.title,
       visibility: newVisibility,
       transport: entry.transport,
     });
@@ -652,11 +683,11 @@ function McpPage() {
           if (!open) resetAdd();
         }}
       >
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-hidden grid-cols-[minmax(0,1fr)]">
           <DialogHeader>
             <DialogTitle>Add MCP server</DialogTitle>
           </DialogHeader>
-          <Tabs defaultValue="url">
+          <Tabs defaultValue="url" className="min-w-0">
             <TabsList>
               <TabsTrigger value="url">Manual URL</TabsTrigger>
               <TabsTrigger value="marketplace">Marketplace</TabsTrigger>
@@ -761,7 +792,7 @@ function McpPage() {
                 </Button>
               </div>
             </TabsContent>
-            <TabsContent value="marketplace" className="space-y-4 pt-3">
+            <TabsContent value="marketplace" className="min-w-0 space-y-4 pt-3">
               <MarketplacePanel
                 isAdmin={isAdmin}
                 visibility={newVisibility}
