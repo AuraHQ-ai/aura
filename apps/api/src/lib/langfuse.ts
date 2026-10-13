@@ -32,9 +32,20 @@ import {
   type SpanProcessor,
 } from "@opentelemetry/sdk-trace-node";
 import { LangfuseSpanProcessor } from "@langfuse/otel";
-import { propagateAttributes, startActiveObservation } from "@langfuse/tracing";
+import {
+  propagateAttributes,
+  startActiveObservation,
+  startObservation,
+  type LangfuseGenerationAttributes,
+} from "@langfuse/tracing";
 import type { Context } from "@opentelemetry/api";
 import { logger } from "./logger.js";
+
+/** Minimal handle so callers can finish a generation without importing Langfuse types. */
+export interface GenerationObservationHandle {
+  update: (attributes: LangfuseGenerationAttributes) => unknown;
+  end: () => void;
+}
 
 let provider: NodeTracerProvider | null = null;
 let spanProcessor: LangfuseSpanProcessor | null = null;
@@ -224,6 +235,43 @@ export function initLangfuseTracing(): boolean {
 /** Whether Langfuse tracing is active. */
 export function isLangfuseEnabled(): boolean {
   return spanProcessor !== null;
+}
+
+/**
+ * Start a Langfuse generation observation under the current OpenTelemetry
+ * context so it nests in the active turn's trace when one exists. No-op (null)
+ * when tracing is off. Never throws — observability must not break callers.
+ */
+export function startGenerationObservation(
+  name: string,
+  attributes: Pick<LangfuseGenerationAttributes, "model" | "input" | "metadata">,
+): GenerationObservationHandle | null {
+  if (!spanProcessor) return null;
+  try {
+    return startObservation(name, attributes, {
+      asType: "generation",
+    });
+  } catch (error) {
+    logger.debug("Langfuse generation observation start failed", { error, name });
+    return null;
+  }
+}
+
+/**
+ * Finish a generation started by {@link startGenerationObservation}. Safe no-op
+ * when the handle is null or Langfuse throws on update/end.
+ */
+export function finishGenerationObservation(
+  observation: GenerationObservationHandle | null,
+  attributes: LangfuseGenerationAttributes,
+): void {
+  if (!observation) return;
+  try {
+    observation.update(attributes);
+    observation.end();
+  } catch (error) {
+    logger.debug("Langfuse generation observation end failed", { error });
+  }
 }
 
 /**

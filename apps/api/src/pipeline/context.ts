@@ -6,7 +6,11 @@ import type { AppContextEntity } from "../lib/app-context.js";
 import type { ConversationContext, SlackThreadMessage } from "./slack-context.js";
 import { logger } from "../lib/logger.js";
 import { getConfig } from "../lib/settings.js";
-import { jevShouldRespond, type GateTier } from "./should-respond-jev.js";
+import {
+  jevShouldRespond,
+  SHOULD_RESPOND_GATEWAY_PROVIDER_OPTIONS,
+  type GateTier,
+} from "./should-respond-jev.js";
 import { aiTelemetry, withTrace } from "../lib/langfuse.js";
 import { resolveChannelById } from "../tools/slack.js";
 
@@ -296,6 +300,38 @@ When in doubt, respond=false. Being quiet is better than being noisy.
 
 Return respond=true for RESPOND, respond=false for SKIP.`;
 
+export type ShouldRespondEngine =
+  | "jev"
+  | "haiku_fallback"
+  | "tier_fallback"
+  | "haiku";
+
+export interface ShouldRespondGateLog {
+  engine: ShouldRespondEngine;
+  tier: GateTier;
+  probability?: number;
+  threshold?: number;
+  respond: boolean;
+  latencyMs: number;
+}
+
+/** One structured info line per gate decision. */
+export function logShouldRespondGate(decision: ShouldRespondGateLog): void {
+  const fields: Record<string, unknown> = {
+    engine: decision.engine,
+    tier: decision.tier,
+    respond: decision.respond,
+    latencyMs: decision.latencyMs,
+  };
+  if (typeof decision.probability === "number") {
+    fields.probability = decision.probability;
+  }
+  if (typeof decision.threshold === "number") {
+    fields.threshold = decision.threshold;
+  }
+  logger.info("should-respond gate", fields);
+}
+
 /**
  * Ask the fast model (Haiku) whether Aura should respond to a message.
  *
@@ -314,6 +350,9 @@ async function llmShouldRespond(
   isParticipant: boolean,
   coldObservation: boolean = false,
 ): Promise<boolean> {
+  const gateStartedAt = Date.now();
+  const tier: GateTier = coldObservation ? "cold" : isParticipant ? "participant" : "recently_active";
+  let engine: Exclude<ShouldRespondEngine, "jev" | "tier_fallback"> = "haiku";
   try {
     // Build a concise view of the last few messages
     const messages =
@@ -337,12 +376,10 @@ async function llmShouldRespond(
 
     const userMessage = `Recent conversation:\n${conversationText}\n\nLatest message from ${senderName}:\n${context.text}\n\nShould Aura respond?`;
 
-    const tier: GateTier = coldObservation ? "cold" : isParticipant ? "participant" : "recently_active";
-
     // Engine switch (settings key `should_respond_engine`): "jev" (default) or
     // "haiku". Flip to "haiku" in the settings table to roll back without a deploy.
-    const engine = (await getConfig("should_respond_engine", "jev")).trim().toLowerCase();
-    if (engine !== "haiku") {
+    const configuredEngine = (await getConfig("should_respond_engine", "jev")).trim().toLowerCase();
+    if (configuredEngine !== "haiku") {
       try {
         const jev = await withTrace(
           {
@@ -361,19 +398,21 @@ async function llmShouldRespond(
               { telemetry: aiTelemetry("should-respond-jev", { tier }) },
             ),
         );
-        logger.debug("Jev shouldRespond gate", {
-          shouldReply: jev.respond,
+        logShouldRespondGate({
+          engine: "jev",
+          tier,
           probability: jev.probability,
           threshold: jev.threshold,
-          tier,
-          userId: context.userId,
-          channelId: context.channelId,
+          respond: jev.respond,
+          latencyMs: jev.latencyMs,
         });
         return jev.respond;
       } catch (jevError: any) {
         // Jev is a single external dependency in the hot path: fall through to
         // the typed haiku gate below rather than straight to the tier fallback.
+        engine = "haiku_fallback";
         logger.warn("Jev gate failed, falling back to fast-model gate", {
+          fallback: "haiku_fallback",
           error: jevError?.message,
           tier,
         });
@@ -385,6 +424,7 @@ async function llmShouldRespond(
     // rest of the conversation in Langfuse's Sessions view. The gate runs before
     // the user's display name is resolved and for messages that may get no
     // response, so it stays its own trace rather than nesting under slack-chat.
+    const haikuStartedAt = Date.now();
     const result = await withTrace(
       {
         sessionId: context.threadTs ?? context.messageTs ?? context.channelId,
@@ -399,6 +439,7 @@ async function llmShouldRespond(
           output: Output.object({ schema: shouldRespondSchema }),
           maxOutputTokens: 256,
           temperature: 0,
+          providerOptions: SHOULD_RESPOND_GATEWAY_PROVIDER_OPTIONS,
           telemetry: aiTelemetry("should-respond"),
         }),
     );
@@ -407,11 +448,11 @@ async function llmShouldRespond(
     // and routes through the fallback tiers below instead of reading as "SKIP".
     const shouldReply = result.output.respond;
 
-    logger.debug("LLM shouldRespond gate", {
-      shouldReply,
-      userId: context.userId,
-      channelId: context.channelId,
-      tier: coldObservation ? "cold_observation" : isParticipant ? "participant" : "recently_active",
+    logShouldRespondGate({
+      engine,
+      tier,
+      respond: shouldReply,
+      latencyMs: Date.now() - haikuStartedAt,
     });
 
     return shouldReply;
@@ -419,11 +460,16 @@ async function llmShouldRespond(
     // Tier 2 (participant): fail open — better to over-respond than miss.
     // Tier 3 (recently active) / Tier 4 (cold observation): fail closed.
     const fallback = isParticipant && !coldObservation;
-    logger.error("LLM shouldRespond gate failed", {
+    logger.warn("LLM shouldRespond gate failed, falling back to tier", {
+      fallback: "tier_fallback",
       error: error.message,
-      fallback: fallback ? "RESPOND" : "SKIP",
-      isParticipant,
-      coldObservation,
+      tier,
+    });
+    logShouldRespondGate({
+      engine: "tier_fallback",
+      tier,
+      respond: fallback,
+      latencyMs: Date.now() - gateStartedAt,
     });
     return fallback;
   }
