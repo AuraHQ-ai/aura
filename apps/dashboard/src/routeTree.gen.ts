@@ -18,6 +18,7 @@ import { Route as ResourcesIndexRouteImport } from "./routes/resources/index"
 import { Route as NotesIndexRouteImport } from "./routes/notes/index"
 import { Route as MemoriesIndexRouteImport } from "./routes/memories/index"
 import { Route as JobsIndexRouteImport } from "./routes/jobs/index"
+import { Route as McpIndexRouteImport } from "./routes/mcp/index"
 import { Route as EvalsIndexRouteImport } from "./routes/evals/index"
 import { Route as ErrorsIndexRouteImport } from "./routes/errors/index"
 import { Route as CredentialsIndexRouteImport } from "./routes/credentials/index"
@@ -81,6 +82,11 @@ const MemoriesIndexRoute = MemoriesIndexRouteImport.update({
 const JobsIndexRoute = JobsIndexRouteImport.update({
   id: "/jobs/",
   path: "/jobs/",
+  getParentRoute: () => rootRouteImport,
+} as any)
+const McpIndexRoute = McpIndexRouteImport.update({
+  id: "/mcp/",
+  path: "/mcp/",
   getParentRoute: () => rootRouteImport,
 } as any)
 const EvalsIndexRoute = EvalsIndexRouteImport.update({
@@ -203,6 +209,7 @@ export interface FileRoutesByFullPath {
   "/errors/": typeof ErrorsIndexRoute
   "/evals/": typeof EvalsIndexRoute
   "/jobs/": typeof JobsIndexRoute
+  "/mcp/": typeof McpIndexRoute
   "/memories/": typeof MemoriesIndexRoute
   "/notes/": typeof NotesIndexRoute
   "/resources/": typeof ResourcesIndexRoute
@@ -233,6 +240,7 @@ export interface FileRoutesByTo {
   "/errors": typeof ErrorsIndexRoute
   "/evals": typeof EvalsIndexRoute
   "/jobs": typeof JobsIndexRoute
+  "/mcp": typeof McpIndexRoute
   "/memories": typeof MemoriesIndexRoute
   "/notes": typeof NotesIndexRoute
   "/resources": typeof ResourcesIndexRoute
@@ -264,6 +272,7 @@ export interface FileRoutesById {
   "/errors/": typeof ErrorsIndexRoute
   "/evals/": typeof EvalsIndexRoute
   "/jobs/": typeof JobsIndexRoute
+  "/mcp/": typeof McpIndexRoute
   "/memories/": typeof MemoriesIndexRoute
   "/notes/": typeof NotesIndexRoute
   "/resources/": typeof ResourcesIndexRoute
@@ -296,6 +305,7 @@ export interface FileRouteTypes {
     | "/errors/"
     | "/evals/"
     | "/jobs/"
+    | "/mcp/"
     | "/memories/"
     | "/notes/"
     | "/resources/"
@@ -326,6 +336,7 @@ export interface FileRouteTypes {
     | "/errors"
     | "/evals"
     | "/jobs"
+    | "/mcp"
     | "/memories"
     | "/notes"
     | "/resources"
@@ -356,6 +367,7 @@ export interface FileRouteTypes {
     | "/errors/"
     | "/evals/"
     | "/jobs/"
+    | "/mcp/"
     | "/memories/"
     | "/notes/"
     | "/resources/"
@@ -387,6 +399,7 @@ export interface RootRouteChildren {
   ErrorsIndexRoute: typeof ErrorsIndexRoute
   EvalsIndexRoute: typeof EvalsIndexRoute
   JobsIndexRoute: typeof JobsIndexRoute
+  McpIndexRoute: typeof McpIndexRoute
   MemoriesIndexRoute: typeof MemoriesIndexRoute
   NotesIndexRoute: typeof NotesIndexRoute
   ResourcesIndexRoute: typeof ResourcesIndexRoute
@@ -459,6 +472,13 @@ declare module "@tanstack/react-router" {
       path: "/jobs"
       fullPath: "/jobs/"
       preLoaderRoute: typeof JobsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    "/mcp/": {
+      id: "/mcp/"
+      path: "/mcp"
+      fullPath: "/mcp/"
+      preLoaderRoute: typeof McpIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     "/evals/": {
@@ -619,6 +639,7 @@ const rootRouteChildren: RootRouteChildren = {
   ErrorsIndexRoute: ErrorsIndexRoute,
   EvalsIndexRoute: EvalsIndexRoute,
   JobsIndexRoute: JobsIndexRoute,
+  McpIndexRoute: McpIndexRoute,
   MemoriesIndexRoute: MemoriesIndexRoute,
   NotesIndexRoute: NotesIndexRoute,
   ResourcesIndexRoute: ResourcesIndexRoute,

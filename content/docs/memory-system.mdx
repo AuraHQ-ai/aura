@@ -104,7 +104,21 @@ The top candidates from RRF are passed through [Cohere's `rerank-v3.5`](https://
 
 ### Stage 3: Privacy Filtering & Scoring
 
-After reranking, memories are filtered based on channel privacy rules and sorted by a composite score combining rerank relevance, recency, and entity boost, with a mild confidence tiebreaker so lower-trust assistant-sourced memories don't crowd out equally relevant user-stated facts.
+After reranking, memories are filtered based on channel privacy rules and sorted by a composite score combining rerank relevance, recency, and entity boost, with a mild **confidence tiebreaker** (0.6 confidence vs 0.8 nudges score by ~2pp) and a **source trust multiplier** (see below) so lower-trust memories don't crowd out equally relevant higher-trust ones. The same trust multiplier also applies to the legacy (non-Cohere) scoring path used when `COHERE_API_KEY` is absent.
+
+### Source trust tiers
+
+Every memory's source is classified into one of five trust tiers, derived at retrieval time from existing provenance columns (`extraction_source_role`, `source_channel_type`, `related_user_ids`) -- no schema change or backfill required. Tiers apply a score multiplier before the top-K cut:
+
+| Tier | Multiplier | Source |
+|------|-----------|--------|
+| `founder_dm` | 1.00 | DM/MPIM/dashboard chat where a related user is in `AURA_ADMIN_USER_IDS` |
+| `user_dm` | 0.95 | DM/MPIM/dashboard chat with any other user |
+| `team_channel` | 0.90 | Private channel |
+| `public_channel` | 0.85 | Public channel |
+| `assistant_generated` | 0.70 | Extracted from Aura's own assistant turn, regardless of channel |
+
+Assistant-sourced memories are always pinned to the lowest tier -- a confabulated claim Aura made about herself ("I don't have access to X") shouldn't carry the same retrieval authority as something a human actually said, or it can be re-extracted and re-asserted in a self-reinforcing loop. A `disputed`-status memory gets an additional 0.6x multiplier on top of its tier, keeping it in the candidate pool (it may still be the best answer) but ranking it below an undisputed memory of equal relevance. Trust weighting is deliberately mild (0.70-1.00) -- it's a ranking prior, not a hard filter.
 
 ## Conversation Retrieval
 

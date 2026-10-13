@@ -1669,6 +1669,105 @@ export const githubPullRequests = pgTable(
 export type GithubPullRequest = typeof githubPullRequests.$inferSelect;
 export type NewGithubPullRequest = typeof githubPullRequests.$inferInsert;
 
+// ── MCP servers + per-user connections (issue #1543, phase 1) ───────────────
+// Tenant isolation matches the rest of the schema: workspace_id on every row
+// and composite unique indexes. App-level checks (not Postgres RLS) enforce
+// visibility — same convention as credentials / oauth_tokens / jobs.
+
+export const mcpServers = pgTable(
+  "mcp_servers",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    slug: text("slug").notNull(),
+    name: text("name").notNull(),
+    url: text("url").notNull(),
+    transport: text("transport").notNull().default("http"),
+    authType: text("auth_type").notNull().default("none"),
+    headerName: text("header_name"),
+    encryptedHeaderValue: text("encrypted_header_value"),
+    visibility: text("visibility").notNull().default("personal"),
+    ownerId: text("owner_id"),
+    enabled: boolean("enabled").notNull().default(true),
+    trusted: boolean("trusted").notNull().default(false),
+    deniedTools: jsonb("denied_tools").$type<string[]>().notNull().default([]),
+    cachedTools: jsonb("cached_tools").$type<McpCachedTool[] | null>(),
+    toolsCachedAt: timestamptz("tools_cached_at"),
+    createdBy: text("created_by"),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("mcp_servers_workspace_slug_idx").on(table.workspaceId, table.slug),
+    index("mcp_servers_workspace_visibility_idx").on(table.workspaceId, table.visibility),
+    check("mcp_servers_transport_check", sql`${table.transport} IN ('http','sse')`),
+    check("mcp_servers_auth_type_check", sql`${table.authType} IN ('none','header','oauth')`),
+    check("mcp_servers_visibility_check", sql`${table.visibility} IN ('workspace','personal')`),
+  ],
+);
+
+export const mcpConnections = pgTable(
+  "mcp_connections",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .default(sql`gen_random_uuid()`),
+    workspaceId: workspaceId().references(() => workspaces.id),
+    serverId: uuid("server_id")
+      .notNull()
+      .references(() => mcpServers.id, { onDelete: "cascade" }),
+    userId: text("user_id").notNull(),
+    status: text("status").notNull().default("pending_auth"),
+    encryptedTokens: text("encrypted_tokens"),
+    encryptedClientInfo: text("encrypted_client_info"),
+    encryptedCodeVerifier: text("encrypted_code_verifier"),
+    encryptedAsInfo: text("encrypted_as_info"),
+    oauthState: text("oauth_state"),
+    expiresAt: timestamptz("expires_at"),
+    channelId: text("channel_id"),
+    threadTs: text("thread_ts"),
+    dynamicallyRegistered: boolean("dynamically_registered").notNull().default(false),
+    lastError: text("last_error"),
+    createdAt: timestamptz("created_at").notNull().defaultNow(),
+    updatedAt: timestamptz("updated_at").notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("mcp_connections_workspace_server_user_idx").on(
+      table.workspaceId,
+      table.serverId,
+      table.userId,
+    ),
+    uniqueIndex("mcp_connections_workspace_oauth_state_idx").on(
+      table.workspaceId,
+      table.oauthState,
+    ),
+    index("mcp_connections_user_idx").on(table.userId),
+    check(
+      "mcp_connections_status_check",
+      sql`${table.status} IN ('pending_auth','connected','error','expired')`,
+    ),
+  ],
+);
+
+export interface McpCachedTool {
+  name: string;
+  description?: string;
+  inputSchema?: Record<string, unknown>;
+  annotations?: {
+    readOnlyHint?: boolean;
+    destructiveHint?: boolean;
+    idempotentHint?: boolean;
+    openWorldHint?: boolean;
+  };
+}
+
+export type McpServer = typeof mcpServers.$inferSelect;
+export type NewMcpServer = typeof mcpServers.$inferInsert;
+export type McpConnection = typeof mcpConnections.$inferSelect;
+export type NewMcpConnection = typeof mcpConnections.$inferInsert;
+
 export type EvalResponseScore = typeof evalResponseScores.$inferSelect;
 export type NewEvalResponseScore = typeof evalResponseScores.$inferInsert;
 export type ConversationTrace = typeof conversationTraces.$inferSelect;

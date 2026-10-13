@@ -12,6 +12,8 @@ When work can be split into independent pieces, Aura uses subagents to run them 
 1. Aura identifies independent subtasks in the current work
 2. She dispatches multiple subagents simultaneously using `run_subagent`
 3. Each subagent runs with its own tool access and context
+
+Give each `run_subagent` call a required `label`: a concise, verb-first description of the specific fan-out task shown on the Slack tool card (max 60 characters).
 4. Results are collected and synthesized
 
 ## When to Use

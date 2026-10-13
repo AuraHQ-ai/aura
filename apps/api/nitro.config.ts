@@ -16,6 +16,15 @@ export default defineNitroConfig({
   routes: {
     "/**": "./src/nitro-app.ts",
   },
+  // `@ai-sdk/provider-utils` (>=5.0.51) loads `undici` via
+  // `module.createRequire(getCurrentModulePath())("undici")` inside
+  // `createSafeNodeFetch()`. Nitro/nft cannot see that runtime require, so
+  // without an explicit trace the package is missing from the Vercel
+  // function and MCP OAuth / URL downloads fail with
+  // `Cannot find module 'undici'` (require stack: /var/task/index.js).
+  // `undici*` full-traces the package (all files, not just statically
+  // reached ones) so createRequire can resolve it next to the bundle.
+  traceDeps: ["undici*"],
   vercel: {
     functions: {
       // Keep parity with the previous filesystem-functions deploy.

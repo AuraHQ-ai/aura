@@ -28,7 +28,7 @@ export function createJobTools(
   return {
     create_job: defineTool({
       description:
-        "Create a one-shot task, recurring job, or follow-up. This is the single tool for scheduling anything: reminders ('remind me in 2 hours'), monitoring, digests, follow-ups ('check this tomorrow'), and autonomous work ('do this every morning'). One-shots fire once at execute_in time; recurring jobs run on a cron schedule (e.g. '0 9 * * 1-5' for weekdays 9 AM) with optional frequency limits. Always include the user's timezone for recurring jobs. You can create jobs for yourself too. When you spot a new type of recurring work, codify it as a job with a playbook and frequency limits.",
+        "Create a one-shot task, recurring job, or follow-up. This is the single tool for scheduling anything: reminders ('remind me in 2 hours'), monitoring, digests, follow-ups ('check this tomorrow'), and autonomous work ('do this every morning'). One-shots fire once at execute_in time; recurring jobs run on a cron schedule (e.g. '0 9 * * 1-5' for weekdays 9 AM) with optional frequency limits. Always include the user's timezone for recurring jobs. You must set prompt_mode at creation: 'task' for mechanical/fixed-playbook work, 'full' only when the output needs Aura's voice, language nuance, or self-reflection. You can create jobs for yourself too. When you spot a new type of recurring work, codify it as a job with a playbook and frequency limits.",
       inputSchema: z.object({
         name: z
           .string()
@@ -101,9 +101,8 @@ export function createJobTools(
           ),
         prompt_mode: z
           .enum(["full", "task"])
-          .optional()
           .describe(
-            "'task' runs the job with a minimal ~2k-token task prompt (no personality, self-directive, or notes index) — fewer places for context rot in mechanical jobs. Memory stays unified either way. Omit or 'full' for the standard prompt.",
+            "Required. 'task' runs the job with a minimal ~2k-token task prompt (no personality, self-directive, or notes index) — cheaper and fewer places for context rot. 'full' loads Aura's ~40k-token personality prefix. There is no silent default: omitting this field used to leave NULL, which resolved to the full prompt and burned tokens on mechanical jobs. Memory stays unified either way. Rule of thumb: mechanical/fixed-playbook work → 'task'; only jobs whose output carries Aura's voice, language nuance, or self-reflection need 'full'.",
           ),
       }),
       inputExamples: [
@@ -113,6 +112,7 @@ export function createJobTools(
             execute_in: "2 hours",
             timezone: "UTC",
             priority: "normal",
+            prompt_mode: "task",
           },
         },
         {
@@ -124,6 +124,7 @@ export function createJobTools(
             timezone: "Europe/Zurich",
             priority: "normal",
             max_per_day: 1,
+            prompt_mode: "task",
           },
         },
       ],
@@ -274,7 +275,7 @@ export function createJobTools(
           updateSet.priority = priority;
           if (model !== undefined) updateSet.model = model;
           if (env_allowlist !== undefined) updateSet.envAllowlist = env_allowlist;
-          if (prompt_mode !== undefined) updateSet.promptMode = prompt_mode;
+          updateSet.promptMode = prompt_mode;
 
           await db
             .insert(jobs)
@@ -293,7 +294,7 @@ export function createJobTools(
               priority,
               model: model ?? null,
               envAllowlist: env_allowlist ?? null,
-              promptMode: prompt_mode ?? null,
+              promptMode: prompt_mode,
               updatedAt: new Date(),
             })
             .onConflictDoUpdate({
@@ -305,6 +306,7 @@ export function createJobTools(
           const recurStr = recurring
             ? ` (recurring: ${recurring} ${timezone})`
             : " (one-shot)";
+          const modelLabel = model ?? "medium (default)";
 
           logger.info("create_job tool called", {
             name: jobName,
@@ -312,11 +314,13 @@ export function createJobTools(
             executeAt: timeStr,
             recurring,
             requestedBy,
+            model: modelLabel,
+            promptMode: prompt_mode,
           });
 
           return {
             ok: true,
-            message: `Job "${jobName}" created${recurStr}. First execution: ${timeStr}.${channelId ? ` Posts to ${channelLabel}.` : ""}`,
+            message: `Job "${jobName}" created${recurStr}. First execution: ${timeStr}.${channelId ? ` Posts to ${channelLabel}.` : ""} model: ${modelLabel}, prompt: ${prompt_mode}.`,
             name: jobName,
             execute_at: timeStr,
           };
