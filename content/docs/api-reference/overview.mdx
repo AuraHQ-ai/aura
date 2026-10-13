@@ -105,6 +105,10 @@ Server-side tools invoked by ElevenLabs voice agents mid-call, and the post-call
 
 Google OAuth flow for connecting a user's Gmail/Calendar/Drive account to Aura.
 
+### `GET /api/mcp/oauth/callback`
+
+Redirect target for MCP server OAuth. Looks up the pending connection by `state`, exchanges the `code`, caches the server's tools, and notifies the originating Slack thread. Returns a small HTML success/failure page. See [MCP Servers](/tools/mcp).
+
 ## Dashboard API
 
 All dashboard data routes live under `/api/dashboard/*`, served by an OpenAPIHono app with full Zod schema validation. Authentication endpoints:
@@ -202,3 +206,22 @@ Upserts a setting. **Write-only semantics for secret keys:** submitting an empty
 `GET /api/dashboard/models` returns the model catalog grouped into five categories — `main`, `fast`, `medium`, `embedding`, and `escalation` — plus a `defaults` field (always empty; active models are driven by the settings table). The per-category lists contain the **full catalog synced from the Vercel AI Gateway**, filtered only by capability metadata: models typed `embedding`, `image`, `video`, or `reranking` are excluded from the chat categories, and the `embedding` category lists embedding models. Models with unknown type appear everywhere rather than being hidden by a guessed blocklist.
 
 Category overrides persist as ordinary settings via `PUT /api/dashboard/settings/:key` with keys `model_main`, `model_fast`, `model_medium`, `model_embedding`, and `model_escalation`. Resolution order everywhere is: DB setting override first, then the hardcoded `LAST_RESORT_MODELS` constant in `apps/api/src/lib/ai.ts`.
+
+### MCP endpoints
+
+Routes under `/api/dashboard/mcp` manage MCP servers (see [MCP Servers](/tools/mcp)). Visibility rules apply: members see workspace servers plus their own personal ones; managing workspace servers requires admin.
+
+| Method & path | Purpose |
+| --- | --- |
+| `GET /mcp` | List visible servers. |
+| `GET /mcp/marketplace` | Featured and registry servers (`search`, `cursor`, `limit` query params) with installed state. |
+| `POST /mcp` | Add a server (`url`, optional `name`, `visibility`, `transport`, `headerName`, `headerValue`). Returns `connected`, `needs_auth` (with `authUrl`) or `error` status. |
+| `GET /mcp/:id` | Server details plus cached tools. |
+| `PATCH /mcp/:id` | Update `name`, `enabled`, `deniedTools`, header auth. |
+| `DELETE /mcp/:id` | Remove a server and its connections. |
+| `PATCH /mcp/:id/enabled` | Enable or disable. |
+| `PATCH /mcp/:id/trusted` | Mark trusted (admin only). |
+| `GET /mcp/:id/tools`, `PATCH /mcp/:id/tools` | List tools / change allowed and denied tools. |
+| `POST /mcp/:id/auth` | Start or restart OAuth. |
+| `POST /mcp/:id/test` | Test the connection. |
+| `POST /mcp/:id/refresh` | Re-fetch and cache the tool list. |
