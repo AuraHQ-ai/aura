@@ -1,18 +1,19 @@
 import { beforeAll, describe, expect, it, vi } from "vitest";
 
+vi.mock("../lib/ai.js", () => ({
+  getFastModel: vi.fn(),
+  withCacheControl: vi.fn(),
+}));
+vi.mock("../tools/slack.js", () => ({
+  resolveChannelById: vi.fn(),
+}));
+
 let isChannelGatedOut: (
   context: { isDm: boolean; isMentioned: boolean; channelId: string },
   gatedChannels: Set<string>,
 ) => boolean;
 
 beforeAll(async () => {
-  vi.mock("../lib/ai.js", () => ({
-    getFastModel: vi.fn(),
-    withCacheControl: vi.fn(),
-  }));
-  vi.mock("../tools/slack.js", () => ({
-    resolveChannelById: vi.fn(),
-  }));
   ({ isChannelGatedOut } = await import("./context.js"));
 });
 
