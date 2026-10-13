@@ -11,6 +11,7 @@ import {
   type JobModelCategory,
 } from "./ai.js";
 import { createSlackTools } from "../tools/slack.js";
+import { closeMcpClients } from "../tools/mcp.js";
 import { getDeferredToolManifest } from "../tools/deferred.js";
 import { appendDeferredToolsBlock } from "../personality/system-prompt.js";
 import {
@@ -95,6 +96,9 @@ export async function createInteractiveAgent(
       ...(options.channelId ? { channelId: options.channelId } : {}),
       ...(options.invocationId ? { invocationId: options.invocationId } : {}),
     }),
+    onFinish: async () => {
+      await closeMcpClients(tools);
+    },
     prepareStep: createInteractivePrepareStep({
       stablePrefix: options.stablePrefix,
       environmentContext,
@@ -176,6 +180,9 @@ export async function createHeadlessAgent(options: HeadlessAgentOptions) {
       modelId,
       ...(options.invocationId ? { invocationId: options.invocationId } : {}),
     }),
+    onFinish: async () => {
+      await closeMcpClients(tools);
+    },
     prepareStep: createHeadlessPrepareStep({
       stablePrefix: systemPrompt,
       modelId,

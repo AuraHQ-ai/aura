@@ -14,6 +14,7 @@ import { buildCachedSystemMessages, getEscalationModel } from "../lib/ai.js";
 import { getDeferredToolManifest } from "../tools/deferred.js";
 import { appendDeferredToolsBlock } from "../personality/system-prompt.js";
 import { aiTelemetry, withTrace } from "../lib/langfuse.js";
+import { closeMcpClients } from "../tools/mcp.js";
 
 /**
  * Channel-agnostic agentic stream.
@@ -116,13 +117,13 @@ export function createAgenticStream(options: AgenticStreamOptions) {
           channelId: options.channelId ?? "unknown",
           ...(options.invocationId ? { invocationId: options.invocationId } : {}),
         }),
-        onEnd: options.onFinish
-          ? (event) =>
-              options.onFinish?.({
-                ...event,
-                stepModelIds: [...stepModelIds],
-              })
-          : undefined,
+        onEnd: (event) => {
+          void closeMcpClients(options.tools);
+          options.onFinish?.({
+            ...event,
+            stepModelIds: [...stepModelIds],
+          });
+        },
       }),
   );
 }
