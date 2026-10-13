@@ -1011,6 +1011,36 @@ function supersededResult(
 }
 
 /**
+ * Tool-thrash detection runs inside a step: tool-thrash.ts imports the logger
+ * (node:fs), which cannot be bundled into the workflow sandbox.
+ */
+async function checkToolThrash(params: {
+  steps: StepRecord[];
+  modelId?: string;
+  channelId?: string;
+  userId?: string;
+  step: number;
+}): Promise<{ note: string } | null> {
+  "use step";
+  const {
+    detectToolThrashFromSteps,
+    formatToolThrashUserMessage,
+    logToolThrashBreaker,
+  } = await import("../src/pipeline/tool-thrash.js");
+  const trip = detectToolThrashFromSteps(params.steps);
+  if (!trip) return null;
+  logToolThrashBreaker({
+    trip,
+    modelId: params.modelId,
+    channelId: params.channelId,
+    userId: params.userId,
+    path: "interactive",
+    step: params.step,
+  });
+  return { note: formatToolThrashUserMessage(trip) };
+}
+
+/**
  * Close the Slack stream (or deliver via postMessage when streaming was
  * unsupported) and run the same background persistence as the legacy path.
  */
@@ -1262,22 +1292,15 @@ export async function slackRespondWorkflow(input: SlackRespondWorkflowInput) {
       escalate = true;
     }
 
-    const {
-      detectToolThrashFromSteps,
-      formatToolThrashUserMessage,
-      logToolThrashBreaker,
-    } = await import("../src/pipeline/tool-thrash.js");
-    const thrash = detectToolThrashFromSteps(steps);
-    if (thrash) {
-      logToolThrashBreaker({
-        trip: thrash,
-        modelId: r.stepModelId || input.modelId,
-        channelId: input.channelId,
-        userId: input.userId,
-        path: "interactive",
-        step: stepIndex,
-      });
-      const note = formatToolThrashUserMessage(thrash);
+    const thrashCheck = await checkToolThrash({
+      steps,
+      modelId: r.stepModelId || input.modelId,
+      channelId: input.channelId,
+      userId: input.userId,
+      step: stepIndex,
+    });
+    if (thrashCheck) {
+      const note = thrashCheck.note;
       fullText = fullText.trim() ? `${fullText}\n\n${note}` : note;
       await finalizeSlackRespond({
         input,
