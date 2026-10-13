@@ -2,8 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const writeToSandboxMock = vi.hoisted(() =>
   vi.fn(
-    async (filename: string, _data: Buffer, _userId: string) =>
-      `/home/user/downloads/${filename}`,
+    async (filename: string, _data: Buffer, _userId: string) => `/home/user/downloads/${filename}`,
   ),
 );
 const resolveSlackUserIdMock = vi.hoisted(() => vi.fn());
@@ -83,11 +82,7 @@ describe("download_email_attachment save_to_disk sandbox identity", () => {
       saved_to_disk: true,
       path: "/home/user/downloads/ubiflow-invoice.pdf",
     });
-    expect(getUserEmailAttachmentMock).toHaveBeenCalledWith(
-      MAILBOX_OWNER_ID,
-      "msg-1",
-      "att-1",
-    );
+    expect(getUserEmailAttachmentMock).toHaveBeenCalledWith(MAILBOX_OWNER_ID, "msg-1", "att-1");
     expect(writeToSandboxMock).toHaveBeenCalledTimes(1);
     expect(writeToSandboxMock).toHaveBeenCalledWith(
       "ubiflow-invoice.pdf",

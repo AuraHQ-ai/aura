@@ -25,7 +25,5 @@ console.log(`Regenerated ${benchReadme} from ${history.length} run(s).`);
 if (mainReadme) {
   console.log(`Regenerated snapshot in ${mainReadme}.`);
 } else {
-  console.log(
-    "Skipped root README snapshot — no BENCH_SNAPSHOT markers found (add them first).",
-  );
+  console.log("Skipped root README snapshot — no BENCH_SNAPSHOT markers found (add them first).");
 }

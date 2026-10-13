@@ -30,16 +30,12 @@ const SPA_FALLBACK = {
   check: true,
 };
 
-const alreadyPatched = config.routes.some(
-  (route) => route && route.dest === "/index.html",
-);
+const alreadyPatched = config.routes.some((route) => route && route.dest === "/index.html");
 
 if (!alreadyPatched) {
   // Insert right before the final catch-all (which routes to the server
   // function), so static assets and API routes keep their behavior.
-  const catchAllIndex = config.routes.findIndex(
-    (route) => route && route.src === "/(.*)",
-  );
+  const catchAllIndex = config.routes.findIndex((route) => route && route.src === "/(.*)");
   if (catchAllIndex === -1) {
     config.routes.push(SPA_FALLBACK);
   } else {

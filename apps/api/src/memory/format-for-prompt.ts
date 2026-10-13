@@ -27,13 +27,8 @@ export function formatMemoriesForPrompt(memories: Memory[], now?: Date): string 
       // destroys the day-level precision that duration questions ("how many
       // days ago…") need. The ISO date lets the reader compute exact elapsed
       // time; the relative phrase stays for natural phrasing.
-      const on = Number.isNaN(created.getTime())
-        ? ""
-        : `${created.toISOString().slice(0, 10)}, `;
-      const users =
-        m.relatedUserIds.length > 0
-          ? ` [about: ${m.relatedUserIds.join(", ")}]`
-          : "";
+      const on = Number.isNaN(created.getTime()) ? "" : `${created.toISOString().slice(0, 10)}, `;
+      const users = m.relatedUserIds.length > 0 ? ` [about: ${m.relatedUserIds.join(", ")}]` : "";
       return `- [${m.type}] ${m.content} (${on}${timeAgo})${users}`;
     })
     .join("\n");

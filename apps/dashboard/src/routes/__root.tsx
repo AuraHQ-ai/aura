@@ -9,13 +9,7 @@ import { useState, useCallback } from "react";
 
 const PUBLIC_ROUTES = ["/login", "/unauthorized"];
 
-function Header({
-  chatOpen,
-  toggleChat,
-}: {
-  chatOpen: boolean;
-  toggleChat: () => void;
-}) {
+function Header({ chatOpen, toggleChat }: { chatOpen: boolean; toggleChat: () => void }) {
   return (
     <header className="flex h-12 items-center justify-between border-b px-4">
       <div className="flex items-center gap-2">
@@ -89,7 +83,11 @@ function RootLayout() {
           <>
             <Separator className="w-[3px] bg-border hover:bg-accent transition-colors" />
             <Panel id="chat" minSize="20%" defaultSize="30%">
-              <ChatPanel onClose={toggleChat} userId={session?.slackUserId} userName={session?.name} />
+              <ChatPanel
+                onClose={toggleChat}
+                userId={session?.slackUserId}
+                userName={session?.name}
+              />
             </Panel>
           </>
         )}

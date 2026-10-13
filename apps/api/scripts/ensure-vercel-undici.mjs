@@ -10,13 +10,7 @@
  *   2. If a function is still missing it, copy from the apps/api install.
  *   3. Fail the build if any function still cannot resolve `undici`.
  */
-import {
-  cpSync,
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  statSync,
-} from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 
@@ -78,16 +72,10 @@ export function functionCanResolveUndici(funcDir) {
   }
 }
 
-export function ensureUndiciInVercelOutput({
-  functionsRoot,
-  apiRoot,
-  copyIfMissing = true,
-}) {
+export function ensureUndiciInVercelOutput({ functionsRoot, apiRoot, copyIfMissing = true }) {
   const funcs = listFuncDirs(functionsRoot);
   if (funcs.length === 0) {
-    throw new Error(
-      `No Vercel function dirs (*.func) found under ${functionsRoot}`,
-    );
+    throw new Error(`No Vercel function dirs (*.func) found under ${functionsRoot}`);
   }
 
   const source = resolveUndiciSource(apiRoot);

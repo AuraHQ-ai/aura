@@ -61,9 +61,7 @@ const dbMock = vi.hoisted(() => {
         return query;
       }),
       where: vi.fn((condition: Predicate) => {
-        state.rows = state.rows.map((row) =>
-          condition(row) ? { ...row, ...setArg } : row,
-        );
+        state.rows = state.rows.map((row) => (condition(row) ? { ...row, ...setArg } : row));
         return Promise.resolve();
       }),
     };
@@ -108,10 +106,8 @@ const schemaMock = vi.hoisted(() => {
 
 const drizzleMock = vi.hoisted(() => {
   const keyOf = (column: { key: string }) => column.key;
-  const predicate = (
-    kind: string,
-    fn: (row: Record<string, unknown>) => boolean,
-  ): Predicate => Object.assign(fn, { kind });
+  const predicate = (kind: string, fn: (row: Record<string, unknown>) => boolean): Predicate =>
+    Object.assign(fn, { kind });
 
   return {
     eq: vi.fn((column: { key: string }, value: unknown) =>
@@ -128,19 +124,13 @@ const drizzleMock = vi.hoisted(() => {
     ),
     and: vi.fn((...conditions: Array<Predicate | undefined>) => {
       const activeConditions = conditions.filter(Boolean) as Predicate[];
-      return predicate("and", (row) =>
-        activeConditions.every((condition) => condition(row)),
-      );
+      return predicate("and", (row) => activeConditions.every((condition) => condition(row)));
     }),
     or: vi.fn((...conditions: Array<Predicate | undefined>) => {
       const activeConditions = conditions.filter(Boolean) as Predicate[];
-      return predicate("or", (row) =>
-        activeConditions.some((condition) => condition(row)),
-      );
+      return predicate("or", (row) => activeConditions.some((condition) => condition(row)));
     }),
-    not: vi.fn((condition: Predicate) =>
-      predicate("not", (row) => !condition(row)),
-    ),
+    not: vi.fn((condition: Predicate) => predicate("not", (row) => !condition(row))),
     desc: vi.fn((column: { key: string }) => ({ column })),
     sql: vi.fn(),
   };
@@ -222,8 +212,7 @@ function baseJob(overrides: Record<string, unknown> = {}) {
 
 async function listJobs(input: Record<string, unknown> = {}) {
   const { createJobTools } = await import("./jobs.js");
-  const tool = createJobTools(undefined, { timezone: "UTC" } as any)
-    .list_jobs as any;
+  const tool = createJobTools(undefined, { timezone: "UTC" } as any).list_jobs as any;
 
   return tool.execute(tool.inputSchema.parse(input));
 }
@@ -363,9 +352,24 @@ describe("list_jobs", () => {
       createdAt: new Date("2026-02-16T00:00:00.000Z"),
     });
     dbMock.rows = [
-      baseJob({ id: "job-1", name: "one-shot-1", status: "pending", createdAt: new Date("2026-05-19T00:00:00.000Z") }),
-      baseJob({ id: "job-2", name: "one-shot-2", status: "pending", createdAt: new Date("2026-05-18T00:00:00.000Z") }),
-      baseJob({ id: "job-3", name: "one-shot-3", status: "pending", createdAt: new Date("2026-05-17T00:00:00.000Z") }),
+      baseJob({
+        id: "job-1",
+        name: "one-shot-1",
+        status: "pending",
+        createdAt: new Date("2026-05-19T00:00:00.000Z"),
+      }),
+      baseJob({
+        id: "job-2",
+        name: "one-shot-2",
+        status: "pending",
+        createdAt: new Date("2026-05-18T00:00:00.000Z"),
+      }),
+      baseJob({
+        id: "job-3",
+        name: "one-shot-3",
+        status: "pending",
+        createdAt: new Date("2026-05-17T00:00:00.000Z"),
+      }),
       legacyRecurring,
     ];
 
@@ -389,8 +393,18 @@ describe("list_jobs", () => {
         cronSchedule: "0 9 * * *",
         createdAt: new Date("2026-05-20T00:00:00.000Z"),
       }),
-      baseJob({ id: "job-1", name: "one-shot-1", status: "pending", createdAt: new Date("2026-05-19T00:00:00.000Z") }),
-      baseJob({ id: "job-2", name: "one-shot-2", status: "pending", createdAt: new Date("2026-05-18T00:00:00.000Z") }),
+      baseJob({
+        id: "job-1",
+        name: "one-shot-1",
+        status: "pending",
+        createdAt: new Date("2026-05-19T00:00:00.000Z"),
+      }),
+      baseJob({
+        id: "job-2",
+        name: "one-shot-2",
+        status: "pending",
+        createdAt: new Date("2026-05-18T00:00:00.000Z"),
+      }),
     ];
 
     const result = await listJobs({ status: "all", limit: 2 });
@@ -422,9 +436,7 @@ describe("list_jobs", () => {
       count: 1,
     });
 
-    await expect(
-      listJobs({ status: "all", include_archived: true }),
-    ).resolves.toMatchObject({
+    await expect(listJobs({ status: "all", include_archived: true })).resolves.toMatchObject({
       ok: true,
       jobs: [
         expect.objectContaining({ name: "live-job" }),
@@ -435,13 +447,9 @@ describe("list_jobs", () => {
   });
 });
 
-async function updateJob(
-  input: Record<string, unknown>,
-  context: Record<string, unknown> = {},
-) {
+async function updateJob(input: Record<string, unknown>, context: Record<string, unknown> = {}) {
   const { createJobTools } = await import("./jobs.js");
-  const tool = createJobTools(undefined, { timezone: "UTC", ...context } as any)
-    .update_job as any;
+  const tool = createJobTools(undefined, { timezone: "UTC", ...context } as any).update_job as any;
 
   return tool.execute(tool.inputSchema.parse(input));
 }
@@ -450,7 +458,10 @@ describe("update_job recurring status guard", () => {
   it("rejects completed status for recurring jobs", async () => {
     dbMock.rows = [baseJob({ name: "weekly-check", cronSchedule: "0 9 * * 1" })];
     const result = await updateJob({ name: "weekly-check", updates: { status: "completed" } });
-    expect(result).toMatchObject({ ok: false, error: expect.stringContaining("cannot be marked completed") });
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("cannot be marked completed"),
+    });
   });
 });
 
@@ -571,9 +582,11 @@ describe("create_job prompt_mode", () => {
 
     expect(parsed.success).toBe(false);
     if (!parsed.success) {
-      expect(parsed.error.issues.some((issue: { path: PropertyKey[] }) =>
-        issue.path.includes("prompt_mode"),
-      )).toBe(true);
+      expect(
+        parsed.error.issues.some((issue: { path: PropertyKey[] }) =>
+          issue.path.includes("prompt_mode"),
+        ),
+      ).toBe(true);
     }
   });
 
@@ -598,4 +611,3 @@ describe("create_job prompt_mode", () => {
     },
   );
 });
-

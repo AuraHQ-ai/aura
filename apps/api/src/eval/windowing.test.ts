@@ -9,7 +9,11 @@ import {
   type TurnSourceTrace,
 } from "./windowing.js";
 
-function trace(id: string, minute: number, overrides: Partial<TurnSourceTrace> = {}): TurnSourceTrace {
+function trace(
+  id: string,
+  minute: number,
+  overrides: Partial<TurnSourceTrace> = {},
+): TurnSourceTrace {
   return {
     id,
     threadTs: "1700000000.000100",
@@ -33,7 +37,12 @@ function textPart(id: string, messageId: string, orderIndex: number, text: strin
   return { id, messageId, type: "text", orderIndex, textValue: text, toolName: null };
 }
 
-function toolPart(id: string, messageId: string, orderIndex: number, toolName: string): TurnSourcePart {
+function toolPart(
+  id: string,
+  messageId: string,
+  orderIndex: number,
+  toolName: string,
+): TurnSourcePart {
   return { id, messageId, type: "tool-invocation", orderIndex, textValue: null, toolName };
 }
 
@@ -135,10 +144,7 @@ describe("buildTurns", () => {
 
   it("uses the first text part as the judged part id when a step has several", () => {
     const traces = [trace("t1", 0)];
-    const messages = [
-      message("u1", "t1", "user", 0, "hi"),
-      message("a1", "t1", "assistant", 1),
-    ];
+    const messages = [message("u1", "t1", "user", 0, "hi"), message("a1", "t1", "assistant", 1)];
     const parts = [
       textPart("pt-first", "a1", 0, "part one"),
       textPart("pt-second", "a1", 2, "part two"),
@@ -228,10 +234,7 @@ describe("renderWindowTranscript", () => {
 
   it("truncates very long turns in the middle", () => {
     const longTurn = { ...assistantTurn(1), text: "x".repeat(10_000) };
-    const transcript = renderWindowTranscript(
-      { turns: [longTurn], ownedPartIds: ["p1"] },
-      1_000,
-    );
+    const transcript = renderWindowTranscript({ turns: [longTurn], ownedPartIds: ["p1"] }, 1_000);
     expect(transcript).toContain("[truncated");
     expect(transcript.length).toBeLessThan(2_000);
   });

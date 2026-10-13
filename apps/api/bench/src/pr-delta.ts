@@ -167,10 +167,7 @@ function indexScores(scores: HistoryScore[]): Map<string, HistoryScore> {
  * comparable prior). Produces per-cell before/after/Δ for QA + recall, an
  * overall delta, and a regressions list (Δ <= -REGRESSION_THRESHOLD).
  */
-export function diffEntries(
-  current: HistoryEntry,
-  baseline: HistoryEntry | null,
-): BaselineDiff {
+export function diffEntries(current: HistoryEntry, baseline: HistoryEntry | null): BaselineDiff {
   const cur = indexScores(current.scores);
   const base = baseline ? indexScores(baseline.scores) : new Map<string, HistoryScore>();
 
@@ -287,7 +284,9 @@ export function renderPrComment(diff: BaselineDiff, meta: CommentMeta): string {
   }
   lines.push("");
 
-  lines.push("| Dataset | Category | QA before | QA after | QA Δ | recall before | recall after | recall Δ | n |");
+  lines.push(
+    "| Dataset | Category | QA before | QA after | QA Δ | recall before | recall after | recall Δ | n |",
+  );
   lines.push("|---|---|---:|---:|---:|---:|---:|---:|---:|");
   for (const c of diff.cells) {
     lines.push(

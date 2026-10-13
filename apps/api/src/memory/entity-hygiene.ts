@@ -39,7 +39,10 @@ function generateOrgAliases(canonicalName: string): string[] {
   }
 
   // Punctuation-stripped
-  const noPunctuation = canonicalName.replace(/[^a-zA-Z0-9\s]/g, "").toLowerCase().trim();
+  const noPunctuation = canonicalName
+    .replace(/[^a-zA-Z0-9\s]/g, "")
+    .toLowerCase()
+    .trim();
   if (noPunctuation && noPunctuation !== canonicalName.toLowerCase()) {
     aliases.add(noPunctuation);
   }
@@ -54,14 +57,21 @@ function generateOrgAliases(canonicalName: string): string[] {
 export async function enrichEntityAliases(workspaceId: string): Promise<number> {
   let totalInserted = 0;
 
-  type EntityRow = { id: string; canonical_name: string; type: EntityType; slack_user_id: string | null };
+  type EntityRow = {
+    id: string;
+    canonical_name: string;
+    type: EntityType;
+    slack_user_id: string | null;
+  };
 
-  const allEntities = ((await db.execute(sql`
+  const allEntities = (
+    (await db.execute(sql`
     SELECT id, canonical_name, type, slack_user_id
     FROM entities
     WHERE workspace_id = ${workspaceId}
     ORDER BY canonical_name
-  `)) as any).rows as EntityRow[];
+  `)) as any
+  ).rows as EntityRow[];
 
   // Pre-fetch Slack display names for person entities with slack_user_id
   const slackUserIds = allEntities
@@ -70,12 +80,17 @@ export async function enrichEntityAliases(workspaceId: string): Promise<number> 
 
   const slackDisplayNames = new Map<string, string>();
   if (slackUserIds.length > 0) {
-    const userRows = ((await db.execute(sql`
+    const userRows = (
+      (await db.execute(sql`
       SELECT slack_user_id, display_name
       FROM users
       WHERE workspace_id = ${workspaceId}
-        AND slack_user_id IN (${sql.join(slackUserIds.map(id => sql`${id}`), sql`, `)})
-    `)) as any).rows as Array<{ slack_user_id: string; display_name: string }>;
+        AND slack_user_id IN (${sql.join(
+          slackUserIds.map((id) => sql`${id}`),
+          sql`, `,
+        )})
+    `)) as any
+    ).rows as Array<{ slack_user_id: string; display_name: string }>;
     for (const row of userRows) {
       slackDisplayNames.set(row.slack_user_id, row.display_name);
     }
@@ -97,7 +112,11 @@ export async function enrichEntityAliases(workspaceId: string): Promise<number> 
           }
         }
       }
-    } else if (entity.type === "company" || entity.type === "project" || entity.type === "product") {
+    } else if (
+      entity.type === "company" ||
+      entity.type === "project" ||
+      entity.type === "product"
+    ) {
       newAliases = generateOrgAliases(entity.canonical_name);
     }
 
@@ -120,7 +139,9 @@ export async function enrichEntityAliases(workspaceId: string): Promise<number> 
     }
   }
 
-  logger.info(`Alias enrichment complete: ${totalInserted} new aliases for ${allEntities.length} entities`);
+  logger.info(
+    `Alias enrichment complete: ${totalInserted} new aliases for ${allEntities.length} entities`,
+  );
   return totalInserted;
 }
 
@@ -134,7 +155,10 @@ export async function mergeEntities(winnerId: string, loserIds: string[]): Promi
   const safeLoserIds = loserIds.filter((id) => id !== winnerId);
   if (safeLoserIds.length === 0) return;
 
-  const loserIdList = sql.join(safeLoserIds.map(id => sql`${id}`), sql`, `);
+  const loserIdList = sql.join(
+    safeLoserIds.map((id) => sql`${id}`),
+    sql`, `,
+  );
 
   await withTransaction(async (tx) => {
     // 1. Repoint memory_entities from losers → winner (insert-then-delete
@@ -220,7 +244,8 @@ interface DuplicateGroup {
  */
 export async function findDuplicateEntityGroups(workspaceId: string): Promise<DuplicateGroup[]> {
   // Step 1: Find exact case-insensitive duplicates
-  const exactDupes = ((await db.execute(sql`
+  const exactDupes = (
+    (await db.execute(sql`
     SELECT
       lower(e.canonical_name) AS canonical_lower,
       e.id,
@@ -237,7 +262,8 @@ export async function findDuplicateEntityGroups(workspaceId: string): Promise<Du
         HAVING COUNT(*) > 1
       )
     ORDER BY lower(e.canonical_name), e.created_at
-  `)) as any).rows as Array<{
+  `)) as any
+  ).rows as Array<{
     canonical_lower: string;
     id: string;
     canonical_name: string;
@@ -259,7 +285,8 @@ export async function findDuplicateEntityGroups(workspaceId: string): Promise<Du
   }
 
   // Step 2: Find fuzzy duplicates (trigram similarity > 0.6)
-  const fuzzyDupes = ((await db.execute(sql`
+  const fuzzyDupes = (
+    (await db.execute(sql`
     SELECT
       e1.id AS id1, e1.canonical_name AS name1, e1.type AS type1,
       e2.id AS id2, e2.canonical_name AS name2, e2.type AS type2,
@@ -274,7 +301,8 @@ export async function findDuplicateEntityGroups(workspaceId: string): Promise<Du
       AND lower(e1.canonical_name) != lower(e2.canonical_name)
     ORDER BY sim DESC
     LIMIT 200
-  `)) as any).rows as Array<{
+  `)) as any
+  ).rows as Array<{
     id1: string;
     name1: string;
     type1: string;

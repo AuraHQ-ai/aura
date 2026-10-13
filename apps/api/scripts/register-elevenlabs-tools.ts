@@ -166,8 +166,7 @@ async function main() {
 
   // 2. Fetch current agent config
   const agent = await apiCall("GET", `/convai/agents/${AGENT_ID}`);
-  const currentToolIds: string[] =
-    agent.conversation_config?.agent?.prompt?.tool_ids ?? [];
+  const currentToolIds: string[] = agent.conversation_config?.agent?.prompt?.tool_ids ?? [];
 
   // Merge tool_ids (deduplicated)
   const mergedIds = [...new Set([...currentToolIds, ...toolIds])];
@@ -184,7 +183,9 @@ async function main() {
     },
   });
 
-  console.log(`\nAgent ${AGENT_ID} now references ${mergedIds.length} tool(s): ${mergedIds.join(", ")}`);
+  console.log(
+    `\nAgent ${AGENT_ID} now references ${mergedIds.length} tool(s): ${mergedIds.join(", ")}`,
+  );
   console.log("Done.");
 }
 

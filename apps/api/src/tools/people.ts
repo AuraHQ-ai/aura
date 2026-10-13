@@ -3,13 +3,7 @@ import { eq, and, sql } from "drizzle-orm";
 import { defineTool } from "../lib/tool.js";
 import { logger } from "../lib/logger.js";
 import { db } from "../db/client.js";
-import {
-  users,
-  addresses,
-  messages,
-  entities,
-  type ScheduleContext,
-} from "@aura/db/schema";
+import { users, addresses, messages, entities, type ScheduleContext } from "@aura/db/schema";
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -61,7 +55,9 @@ function mapRawUser(row: RawUserRow): typeof users.$inferSelect {
     role: row.role,
     interactionCount: row.interaction_count,
     lastInteractionAt: row.last_interaction_at ? new Date(row.last_interaction_at) : null,
-    lastProfileConsolidation: row.last_profile_consolidation ? new Date(row.last_profile_consolidation) : null,
+    lastProfileConsolidation: row.last_profile_consolidation
+      ? new Date(row.last_profile_consolidation)
+      : null,
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
   } as typeof users.$inferSelect;
@@ -176,11 +172,7 @@ async function enrichPerson(user: typeof users.$inferSelect): Promise<PersonResu
 
 async function findPeople(query: string): Promise<(typeof users.$inferSelect)[]> {
   if (SLACK_ID_RE.test(query)) {
-    return db
-      .select()
-      .from(users)
-      .where(eq(users.slackUserId, query))
-      .limit(1);
+    return db.select().from(users).where(eq(users.slackUserId, query)).limit(1);
   }
 
   if (query.includes("@")) {
@@ -219,9 +211,7 @@ export function createPeopleTools(context?: ScheduleContext) {
       inputSchema: z.object({
         query: z
           .string()
-          .describe(
-            "Name, Slack user ID (e.g. 'U0678NQJ2'), or email to search for",
-          ),
+          .describe("Name, Slack user ID (e.g. 'U0678NQJ2'), or email to search for"),
       }),
       execute: async ({ query }) => {
         try {
@@ -248,9 +238,7 @@ export function createPeopleTools(context?: ScheduleContext) {
         status: "Looking up person...",
         detail: (i) => i.query?.slice(0, 40),
         output: (r) =>
-          r.ok === false
-            ? r.error
-            : `${r.count} match${r.count === 1 ? "" : "es"} found`,
+          r.ok === false ? r.error : `${r.count} match${r.count === 1 ? "" : "es"} found`,
       },
     }),
 
@@ -261,11 +249,7 @@ export function createPeopleTools(context?: ScheduleContext) {
         "add or remove addresses, and use phone/email shorthands to upsert primary contact info. " +
         "Always use get_person first to verify identity before updating.",
       inputSchema: z.object({
-        person_id: z
-          .string()
-          .uuid()
-          .optional()
-          .describe("UUID of the user to update"),
+        person_id: z.string().uuid().optional().describe("UUID of the user to update"),
         query: z
           .string()
           .optional()
@@ -282,24 +266,14 @@ export function createPeopleTools(context?: ScheduleContext) {
               .string()
               .regex(/^\d{4}-\d{2}-\d{2}$/, "Must be YYYY-MM-DD")
               .optional(),
-            manager_id: z
-              .string()
-              .optional()
-              .describe("Slack user ID or name of the manager"),
-            notes: z
-              .string()
-              .optional()
-              .describe("Free-text notes/context about this person"),
+            manager_id: z.string().optional().describe("Slack user ID or name of the manager"),
+            notes: z.string().optional().describe("Free-text notes/context about this person"),
             phone: z
               .string()
               .regex(E164_RE, "Must be E.164 format, e.g. +14155551234")
               .optional()
               .describe("Upsert primary phone address"),
-            email: z
-              .string()
-              .email()
-              .optional()
-              .describe("Upsert primary email address"),
+            email: z.string().email().optional().describe("Upsert primary email address"),
           })
           .optional()
           .describe("Fields to update on the user record"),
@@ -322,7 +296,10 @@ export function createPeopleTools(context?: ScheduleContext) {
       execute: async ({ person_id, query, fields, add_address, remove_address }) => {
         try {
           if (!person_id && !query) {
-            return { ok: false as const, error: "Provide either person_id or query to identify the person" };
+            return {
+              ok: false as const,
+              error: "Provide either person_id or query to identify the person",
+            };
           }
 
           let resolvedId: string;
@@ -358,7 +335,8 @@ export function createPeopleTools(context?: ScheduleContext) {
             if (fields.display_name !== undefined) updateSet.displayName = fields.display_name;
             if (fields.job_title !== undefined) updateSet.jobTitle = fields.job_title;
             if (fields.gender !== undefined) updateSet.gender = fields.gender;
-            if (fields.preferred_language !== undefined) updateSet.preferredLanguage = fields.preferred_language;
+            if (fields.preferred_language !== undefined)
+              updateSet.preferredLanguage = fields.preferred_language;
             if (fields.birthdate !== undefined) updateSet.birthdate = new Date(fields.birthdate);
 
             if (fields.manager_id !== undefined) {
@@ -367,7 +345,10 @@ export function createPeopleTools(context?: ScheduleContext) {
               } else {
                 const mgrMatches = await findPeople(fields.manager_id);
                 if (mgrMatches.length === 0) {
-                  return { ok: false as const, error: `Could not resolve manager '${fields.manager_id}'` };
+                  return {
+                    ok: false as const,
+                    error: `Could not resolve manager '${fields.manager_id}'`,
+                  };
                 }
                 if (mgrMatches.length > 1) {
                   const names = mgrMatches.map((p: any) => p.displayName || p.id).join(", ");
@@ -378,7 +359,10 @@ export function createPeopleTools(context?: ScheduleContext) {
                 }
                 const resolvedSlackId = (mgrMatches[0] as any).slackUserId;
                 if (!resolvedSlackId) {
-                  return { ok: false as const, error: `Resolved manager '${fields.manager_id}' has no Slack user ID. Use their Slack user ID directly.` };
+                  return {
+                    ok: false as const,
+                    error: `Resolved manager '${fields.manager_id}' has no Slack user ID. Use their Slack user ID directly.`,
+                  };
                 }
                 updateSet.managerId = resolvedSlackId;
               }
@@ -396,9 +380,7 @@ export function createPeopleTools(context?: ScheduleContext) {
 
           if (add_address) {
             const normalizedValue =
-              add_address.channel === "email"
-                ? add_address.value.toLowerCase()
-                : add_address.value;
+              add_address.channel === "email" ? add_address.value.toLowerCase() : add_address.value;
 
             const existingAddr = await db
               .select()
@@ -412,9 +394,7 @@ export function createPeopleTools(context?: ScheduleContext) {
               .limit(1);
 
             if (existingAddr.length > 0 && existingAddr[0].userId !== resolvedId) {
-              throw new Error(
-                `Address ${normalizedValue} is already assigned to another person`,
-              );
+              throw new Error(`Address ${normalizedValue} is already assigned to another person`);
             }
 
             if (existingAddr.length === 0) {
@@ -449,16 +429,9 @@ export function createPeopleTools(context?: ScheduleContext) {
               );
           }
 
-          await db
-            .update(users)
-            .set(updateSet)
-            .where(eq(users.id, resolvedId));
+          await db.update(users).set(updateSet).where(eq(users.id, resolvedId));
 
-          const [updated] = await db
-            .select()
-            .from(users)
-            .where(eq(users.id, resolvedId))
-            .limit(1);
+          const [updated] = await db.select().from(users).where(eq(users.id, resolvedId)).limit(1);
 
           if (!updated) {
             return { ok: false as const, error: `Person ${resolvedId} not found after update` };
@@ -486,20 +459,13 @@ export function createPeopleTools(context?: ScheduleContext) {
       slack: {
         status: "Updating person record...",
         detail: (i) => i.query?.slice(0, 40) || i.person_id?.slice(0, 8),
-        output: (r) =>
-          r.ok === false
-            ? r.error
-            : `Updated ${r.person?.display_name || "person"}`,
+        output: (r) => (r.ok === false ? r.error : `Updated ${r.person?.display_name || "person"}`),
       },
     }),
   };
 }
 
-async function upsertPrimaryAddress(
-  userId: string,
-  channel: string,
-  value: string,
-): Promise<void> {
+async function upsertPrimaryAddress(userId: string, channel: string, value: string): Promise<void> {
   const existing = await db
     .select()
     .from(addresses)
@@ -526,10 +492,7 @@ async function upsertPrimaryAddress(
         throw new Error(`Address ${value} is already assigned to another person`);
       }
       await db.delete(addresses).where(eq(addresses.id, existing[0].id));
-      await db
-        .update(addresses)
-        .set({ isPrimary: true })
-        .where(eq(addresses.id, conflict[0].id));
+      await db.update(addresses).set({ isPrimary: true }).where(eq(addresses.id, conflict[0].id));
     } else {
       await db
         .update(addresses)
@@ -553,9 +516,7 @@ async function upsertPrimaryAddress(
         throw new Error(`Address ${value} is already assigned to another person`);
       }
     } else {
-      await db
-        .insert(addresses)
-        .values({ userId, channel, value, isPrimary: true });
+      await db.insert(addresses).values({ userId, channel, value, isPrimary: true });
     }
   }
 }

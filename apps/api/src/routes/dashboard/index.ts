@@ -47,10 +47,7 @@ dashboardApp.use("*", async (c, next) => {
   const sessionSecret = process.env.DASHBOARD_SESSION_SECRET;
   if (sessionSecret) {
     try {
-      const { payload } = await jwtVerify(
-        candidate,
-        new TextEncoder().encode(sessionSecret),
-      );
+      const { payload } = await jwtVerify(candidate, new TextEncoder().encode(sessionSecret));
       if (payload.purpose) throw new Error("Invalid token type");
       c.set("userId" as never, payload.slackUserId as never);
       c.set("userName" as never, payload.name as never);

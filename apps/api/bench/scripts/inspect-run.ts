@@ -158,8 +158,7 @@ function resolveRunId(): string | null {
 
 // ── Formatting helpers ───────────────────────────────────────────────────────
 
-const truncate = (s: string, n: number) =>
-  s.length > n ? s.slice(0, n - 1) + "…" : s;
+const truncate = (s: string, n: number) => (s.length > n ? s.slice(0, n - 1) + "…" : s);
 const goldStr = (g: string | string[]) => (Array.isArray(g) ? g.join(" | ") : g);
 const pct = (x: number) => `${(x * 100).toFixed(0)}%`;
 
@@ -302,9 +301,7 @@ async function buildCaseIndex(datasets: string[]) {
   const { loadDataset } = await import("../src/fixtures.js");
   const index = new Map<string, any>();
   const known = new Set(["toy", "longmemeval", "locomo"]);
-  const ids = (datasets.length > 0 ? datasets : ["longmemeval"]).filter((d) =>
-    known.has(d),
-  );
+  const ids = (datasets.length > 0 ? datasets : ["longmemeval"]).filter((d) => known.has(d));
   for (const d of ids) {
     for (const c of await loadDataset(d as any)) index.set(c.id, c);
   }
@@ -317,11 +314,7 @@ function caseEvidenceSessions(benchCase: any): Set<string> {
   return set;
 }
 
-function bucketFor(
-  benchCase: any,
-  mems: DbMemory[],
-  retrievalInstant: Date,
-): Bucket {
+function bucketFor(benchCase: any, mems: DbMemory[], retrievalInstant: Date): Bucket {
   const evidence = caseEvidenceSessions(benchCase);
   const evMems = evidenceMemories(mems, evidence);
   if (evMems.length === 0) return "no-evidence-extracted";
@@ -400,15 +393,9 @@ async function runCase(runId: string, manifest: Manifest, cases: CaseResult[]) {
 
   const { resolveQuestionDate } = await import("../src/fixtures.js");
   const { evaluateRetrieval } = await import("../src/eval-retrieval.js");
-  const { formatMemoriesForPrompt } = await import(
-    "../../src/memory/format-for-prompt.js"
-  );
-  const { formatConversations } = await import(
-    "../../src/personality/system-prompt.js"
-  );
-  const { retrieveConversations } = await import(
-    "../../src/memory/retrieve.js"
-  );
+  const { formatMemoriesForPrompt } = await import("../../src/memory/format-for-prompt.js");
+  const { formatConversations } = await import("../../src/personality/system-prompt.js");
+  const { retrieveConversations } = await import("../../src/memory/retrieve.js");
 
   const index = await buildCaseIndex(manifest.datasets ?? []);
   const benchCase = index.get(caseId);
@@ -440,7 +427,11 @@ async function runCase(runId: string, manifest: Manifest, cases: CaseResult[]) {
   const asOfRes = await evaluateRetrieval(benchCase, workspaceId, k, undefined, retrievalInstant);
   const liveRes = await evaluateRetrieval(benchCase, workspaceId, k, undefined, undefined);
 
-  const fmtCov = (r: { coverage: number | null; coveredSessions: number; evidenceSessions: number }) =>
+  const fmtCov = (r: {
+    coverage: number | null;
+    coveredSessions: number;
+    evidenceSessions: number;
+  }) =>
     r.coverage == null
       ? "n/a (no evidence pointers)"
       : `${pct(r.coverage)} (${r.coveredSessions}/${r.evidenceSessions} sessions)`;
@@ -470,9 +461,7 @@ async function runCase(runId: string, manifest: Manifest, cases: CaseResult[]) {
   const mems = await loadWorkspaceMemories(workspaceId);
   const evidence = caseEvidenceSessions(benchCase);
   const evMems = evidenceMemories(mems, evidence);
-  console.log(
-    `\n── Evidence-session memories in workspace (${evMems.length}) ──────────────`,
-  );
+  console.log(`\n── Evidence-session memories in workspace (${evMems.length}) ──────────────`);
   if (evidence.size === 0) {
     console.log("(case has no evidence pointers)");
   } else if (evMems.length === 0) {

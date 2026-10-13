@@ -83,7 +83,10 @@ dashboardConversationsApp.openapi(listConversationsRoute, async (c) => {
 
     const traceIds = traces.map((t) => t.id);
     let messageCounts: Record<string, number> = {};
-    let cumulativeTokens: Record<string, { inputTokens: number; outputTokens: number; totalTokens: number }> = {};
+    let cumulativeTokens: Record<
+      string,
+      { inputTokens: number; outputTokens: number; totalTokens: number }
+    > = {};
     let firstUserMessages: Record<string, string> = {};
 
     if (traceIds.length > 0) {
@@ -100,11 +103,16 @@ dashboardConversationsApp.openapi(listConversationsRoute, async (c) => {
         .groupBy(conversationMessages.conversationId);
 
       messageCounts = Object.fromEntries(rows.map((r) => [r.conversationId, r.count]));
-      cumulativeTokens = Object.fromEntries(rows.map((r) => [r.conversationId, {
-        inputTokens: r.inputTokens,
-        outputTokens: r.outputTokens,
-        totalTokens: r.totalTokens,
-      }]));
+      cumulativeTokens = Object.fromEntries(
+        rows.map((r) => [
+          r.conversationId,
+          {
+            inputTokens: r.inputTokens,
+            outputTokens: r.outputTokens,
+            totalTokens: r.totalTokens,
+          },
+        ]),
+      );
 
       const previewRows = await db
         .select({
@@ -112,7 +120,9 @@ dashboardConversationsApp.openapi(listConversationsRoute, async (c) => {
           content: conversationMessages.content,
         })
         .from(conversationMessages)
-        .where(sql`${conversationMessages.conversationId} IN ${traceIds} AND ${conversationMessages.role} = 'user'`)
+        .where(
+          sql`${conversationMessages.conversationId} IN ${traceIds} AND ${conversationMessages.role} = 'user'`,
+        )
         .orderBy(conversationMessages.orderIndex);
 
       for (const row of previewRows) {
@@ -144,7 +154,11 @@ dashboardConversationsApp.openapi(listConversationsRoute, async (c) => {
     }
 
     const items = traces.map((trace) => {
-      const traceTokenUsage = trace.tokenUsage as { inputTokens?: number; outputTokens?: number; totalTokens?: number } | null;
+      const traceTokenUsage = trace.tokenUsage as {
+        inputTokens?: number;
+        outputTokens?: number;
+        totalTokens?: number;
+      } | null;
       const cumulative = cumulativeTokens[trace.id];
       const tokenUsage = cumulative && cumulative.totalTokens > 0 ? cumulative : traceTokenUsage;
 
@@ -162,7 +176,7 @@ dashboardConversationsApp.openapi(listConversationsRoute, async (c) => {
         sourceLabel,
         tokenUsage,
         costUsd: trace.costUsd,
-        resolvedName: trace.userId ? userNames[trace.userId] ?? null : null,
+        resolvedName: trace.userId ? (userNames[trace.userId] ?? null) : null,
         messagePreview: firstUserMessages[trace.id] ?? null,
       };
     });
@@ -231,7 +245,9 @@ dashboardConversationsApp.openapi(listThreadsRoute, async (c) => {
 
     const [{ value: total }] = await db
       .select({ value: sql<number>`count(*)::int` })
-      .from(sql`(SELECT 1 FROM ${conversationTraces} WHERE ${where} GROUP BY ${conversationTraces.channelId}, ${conversationTraces.threadTs}) AS grouped`);
+      .from(
+        sql`(SELECT 1 FROM ${conversationTraces} WHERE ${where} GROUP BY ${conversationTraces.channelId}, ${conversationTraces.threadTs}) AS grouped`,
+      );
 
     const threadRows = await db
       .select({
@@ -242,7 +258,9 @@ dashboardConversationsApp.openapi(listThreadsRoute, async (c) => {
         firstTraceAt: sql<Date>`min(${conversationTraces.createdAt})`,
         lastTraceAt: sql<Date>`max(${conversationTraces.createdAt})`,
         firstTraceId: sql<string>`(array_agg(${conversationTraces.id} ORDER BY ${conversationTraces.createdAt} ASC))[1]`,
-        userId: sql<string | null>`(array_agg(${conversationTraces.userId} ORDER BY ${conversationTraces.createdAt} ASC))[1]`,
+        userId: sql<
+          string | null
+        >`(array_agg(${conversationTraces.userId} ORDER BY ${conversationTraces.createdAt} ASC))[1]`,
         sourceType: sql<string>`(array_agg(${conversationTraces.sourceType} ORDER BY ${conversationTraces.createdAt} ASC))[1]`,
       })
       .from(conversationTraces)
@@ -256,9 +274,14 @@ dashboardConversationsApp.openapi(listThreadsRoute, async (c) => {
     let firstUserMessages: Record<string, string> = {};
     if (firstTraceIds.length > 0) {
       const previewRows = await db
-        .select({ conversationId: conversationMessages.conversationId, content: conversationMessages.content })
+        .select({
+          conversationId: conversationMessages.conversationId,
+          content: conversationMessages.content,
+        })
         .from(conversationMessages)
-        .where(sql`${conversationMessages.conversationId} IN ${firstTraceIds} AND ${conversationMessages.role} = 'user'`)
+        .where(
+          sql`${conversationMessages.conversationId} IN ${firstTraceIds} AND ${conversationMessages.role} = 'user'`,
+        )
         .orderBy(conversationMessages.orderIndex);
       for (const row of previewRows) {
         if (!firstUserMessages[row.conversationId] && row.content) {
@@ -268,7 +291,10 @@ dashboardConversationsApp.openapi(listThreadsRoute, async (c) => {
     }
 
     const allChannelThreadKeys = threadRows.map((t) => `${t.channelId}::${t.threadTs}`);
-    let threadTokens: Record<string, { inputTokens: number; outputTokens: number; totalTokens: number }> = {};
+    let threadTokens: Record<
+      string,
+      { inputTokens: number; outputTokens: number; totalTokens: number }
+    > = {};
     if (allChannelThreadKeys.length > 0) {
       const tokenRows = await db
         .select({
@@ -279,8 +305,13 @@ dashboardConversationsApp.openapi(listThreadsRoute, async (c) => {
           totalTokens: sql<number>`coalesce(sum((${conversationMessages.tokenUsage}->>'totalTokens')::int), 0)::int`,
         })
         .from(conversationMessages)
-        .innerJoin(conversationTraces, eq(conversationMessages.conversationId, conversationTraces.id))
-        .where(sql`${conversationTraces.channelId} IS NOT NULL AND ${conversationTraces.threadTs} IS NOT NULL AND concat(${conversationTraces.channelId}, '::', ${conversationTraces.threadTs}) IN ${allChannelThreadKeys}`)
+        .innerJoin(
+          conversationTraces,
+          eq(conversationMessages.conversationId, conversationTraces.id),
+        )
+        .where(
+          sql`${conversationTraces.channelId} IS NOT NULL AND ${conversationTraces.threadTs} IS NOT NULL AND concat(${conversationTraces.channelId}, '::', ${conversationTraces.threadTs}) IN ${allChannelThreadKeys}`,
+        )
         .groupBy(conversationTraces.channelId, conversationTraces.threadTs);
 
       for (const row of tokenRows) {
@@ -316,7 +347,7 @@ dashboardConversationsApp.openapi(listThreadsRoute, async (c) => {
         firstTraceAt: row.firstTraceAt,
         lastTraceAt: row.lastTraceAt,
         userId: row.userId,
-        resolvedName: row.userId ? userNames[row.userId] ?? null : null,
+        resolvedName: row.userId ? (userNames[row.userId] ?? null) : null,
         messagePreview: firstUserMessages[row.firstTraceId] ?? null,
         firstTraceId: row.firstTraceId,
         sourceType: row.sourceType,
@@ -413,10 +444,16 @@ dashboardConversationsApp.openapi(getConversationRoute, async (c) => {
     let jobName: string | null = null;
     let jobId: string | null = null;
     if (trace.jobExecutionId) {
-      const [exec] = await db.select({ jobId: jobExecutions.jobId }).from(jobExecutions).where(eq(jobExecutions.id, trace.jobExecutionId));
+      const [exec] = await db
+        .select({ jobId: jobExecutions.jobId })
+        .from(jobExecutions)
+        .where(eq(jobExecutions.id, trace.jobExecutionId));
       if (exec?.jobId) {
         jobId = exec.jobId;
-        const [job] = await db.select({ name: jobs.name }).from(jobs).where(eq(jobs.id, exec.jobId));
+        const [job] = await db
+          .select({ name: jobs.name })
+          .from(jobs)
+          .where(eq(jobs.id, exec.jobId));
         if (job) jobName = job.name;
       }
     }
@@ -465,7 +502,9 @@ dashboardConversationsApp.openapi(getThreadDetailRoute, async (c) => {
     const traces = await db
       .select()
       .from(conversationTraces)
-      .where(and(eq(conversationTraces.channelId, channelId), eq(conversationTraces.threadTs, threadTs)))
+      .where(
+        and(eq(conversationTraces.channelId, channelId), eq(conversationTraces.threadTs, threadTs)),
+      )
       .orderBy(asc(conversationTraces.createdAt));
 
     if (traces.length === 0) return c.json({ error: "Not found" }, 404);
@@ -486,23 +525,42 @@ dashboardConversationsApp.openapi(getThreadDetailRoute, async (c) => {
     const [previewRow] = await db
       .select({ content: conversationMessages.content })
       .from(conversationMessages)
-      .where(and(eq(conversationMessages.conversationId, firstTraceId), eq(conversationMessages.role, "user")))
+      .where(
+        and(
+          eq(conversationMessages.conversationId, firstTraceId),
+          eq(conversationMessages.role, "user"),
+        ),
+      )
       .orderBy(asc(conversationMessages.orderIndex))
       .limit(1);
 
     const traceIds = traces.map((t) => t.id);
 
-    const allMessages = traceIds.length > 0
-      ? await db.select().from(conversationMessages).where(sql`${conversationMessages.conversationId} IN ${traceIds}`).orderBy(asc(conversationMessages.orderIndex))
-      : [];
+    const allMessages =
+      traceIds.length > 0
+        ? await db
+            .select()
+            .from(conversationMessages)
+            .where(sql`${conversationMessages.conversationId} IN ${traceIds}`)
+            .orderBy(asc(conversationMessages.orderIndex))
+        : [];
 
     const allMsgIds = allMessages.map((m) => m.id);
-    const allParts = allMsgIds.length > 0
-      ? await db.select().from(conversationParts).where(sql`${conversationParts.messageId} IN ${allMsgIds}`).orderBy(asc(conversationParts.orderIndex))
-      : [];
-    const allEvalScores = allMsgIds.length > 0
-      ? await db.select().from(evalResponseScores).where(sql`${evalResponseScores.messageId} IN ${allMsgIds}`)
-      : [];
+    const allParts =
+      allMsgIds.length > 0
+        ? await db
+            .select()
+            .from(conversationParts)
+            .where(sql`${conversationParts.messageId} IN ${allMsgIds}`)
+            .orderBy(asc(conversationParts.orderIndex))
+        : [];
+    const allEvalScores =
+      allMsgIds.length > 0
+        ? await db
+            .select()
+            .from(evalResponseScores)
+            .where(sql`${evalResponseScores.messageId} IN ${allMsgIds}`)
+        : [];
 
     const messagesByConv: Record<string, typeof allMessages> = {};
     for (const msg of allMessages) (messagesByConv[msg.conversationId] ??= []).push(msg);
@@ -511,7 +569,15 @@ dashboardConversationsApp.openapi(getThreadDetailRoute, async (c) => {
     const evalScoreByMsg: Record<string, (typeof allEvalScores)[0]> = {};
     for (const score of allEvalScores) evalScoreByMsg[score.messageId] = score;
 
-    const conversationsByTrace: Record<string, Array<(typeof allMessages)[0] & { parts: typeof allParts; evalScore: (typeof allEvalScores)[0] | null }>> = {};
+    const conversationsByTrace: Record<
+      string,
+      Array<
+        (typeof allMessages)[0] & {
+          parts: typeof allParts;
+          evalScore: (typeof allEvalScores)[0] | null;
+        }
+      >
+    > = {};
     for (const traceId of traceIds) {
       conversationsByTrace[traceId] = (messagesByConv[traceId] ?? []).map((msg) => ({
         ...msg,
@@ -520,7 +586,10 @@ dashboardConversationsApp.openapi(getThreadDetailRoute, async (c) => {
       }));
     }
 
-    let cumulativeTokensByTrace: Record<string, { inputTokens: number; outputTokens: number; totalTokens: number }> = {};
+    let cumulativeTokensByTrace: Record<
+      string,
+      { inputTokens: number; outputTokens: number; totalTokens: number }
+    > = {};
     if (traceIds.length > 0) {
       const tokenRows = await db
         .select({
@@ -534,7 +603,11 @@ dashboardConversationsApp.openapi(getThreadDetailRoute, async (c) => {
         .groupBy(conversationMessages.conversationId);
 
       for (const row of tokenRows) {
-        cumulativeTokensByTrace[row.conversationId] = { inputTokens: row.inputTokens, outputTokens: row.outputTokens, totalTokens: row.totalTokens };
+        cumulativeTokensByTrace[row.conversationId] = {
+          inputTokens: row.inputTokens,
+          outputTokens: row.outputTokens,
+          totalTokens: row.totalTokens,
+        };
       }
     }
 
@@ -546,7 +619,8 @@ dashboardConversationsApp.openapi(getThreadDetailRoute, async (c) => {
         .from(jobExecutions)
         .innerJoin(jobs, eq(jobs.id, jobExecutions.jobId))
         .where(sql`${jobExecutions.id} IN ${jobExecIds}`);
-      for (const row of jobRows) jobInfoByExecId[row.execId] = { jobId: row.jobId, jobName: row.jobName };
+      for (const row of jobRows)
+        jobInfoByExecId[row.execId] = { jobId: row.jobId, jobName: row.jobName };
     }
 
     const conversations = traces.map((trace) => {
@@ -560,7 +634,7 @@ dashboardConversationsApp.openapi(getThreadDetailRoute, async (c) => {
           totalTokens: cumulative.totalTokens,
         };
       }
-      const jobInfo = trace.jobExecutionId ? jobInfoByExecId[trace.jobExecutionId] ?? null : null;
+      const jobInfo = trace.jobExecutionId ? (jobInfoByExecId[trace.jobExecutionId] ?? null) : null;
       return {
         trace: traceWithTokens,
         conversation: conversationsByTrace[trace.id] ?? [],
@@ -579,7 +653,10 @@ dashboardConversationsApp.openapi(getThreadDetailRoute, async (c) => {
           traceCount: traces.length,
           startedAt: traces[0].createdAt,
           endedAt: traces[traces.length - 1].createdAt,
-          participants: participants.map((id) => ({ userId: id, displayName: participantNames[id] ?? null })),
+          participants: participants.map((id) => ({
+            userId: id,
+            displayName: participantNames[id] ?? null,
+          })),
           messagePreview: previewRow?.content ?? null,
         },
       } as any,

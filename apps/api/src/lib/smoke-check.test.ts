@@ -112,9 +112,7 @@ describe("runSmokeChecks", () => {
     const serialized = JSON.stringify(report);
     expect(serialized).not.toContain(secret);
 
-    const byName = Object.fromEntries(
-      report.checks.map((c) => [c.integration, c]),
-    );
+    const byName = Object.fromEntries(report.checks.map((c) => [c.integration, c]));
     expect(byName.leaky.reason).toBe("error");
     expect(byName.leakyTyped.reason).toBe("error_AuthenticationError");
     expect(byName.leakyHttp.reason).toBe("http_401");

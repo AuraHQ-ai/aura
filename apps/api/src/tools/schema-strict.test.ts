@@ -72,18 +72,14 @@ function strictSchemaFailures(schema: unknown, path: string): string[] {
 
   if (s.properties && typeof s.properties === "object") {
     const keys = Object.keys(s.properties as object);
-    const required = Array.isArray(s.required)
-      ? (s.required as unknown[]).map(String)
-      : [];
+    const required = Array.isArray(s.required) ? (s.required as unknown[]).map(String) : [];
     const missing = keys.filter((key) => !required.includes(key));
     if (missing.length > 0) {
       failures.push(
         `${path}: 'required' must include every properties key; missing [${missing.join(", ")}]`,
       );
     }
-    for (const [key, value] of Object.entries(
-      s.properties as Record<string, unknown>,
-    )) {
+    for (const [key, value] of Object.entries(s.properties as Record<string, unknown>)) {
       failures.push(...strictSchemaFailures(value, `${path}.properties.${key}`));
     }
   }
@@ -102,20 +98,13 @@ function strictSchemaFailures(schema: unknown, path: string): string[] {
     const list = s[combinator];
     if (Array.isArray(list)) {
       list.forEach((item, i) => {
-        failures.push(
-          ...strictSchemaFailures(item, `${path}.${combinator}[${i}]`),
-        );
+        failures.push(...strictSchemaFailures(item, `${path}.${combinator}[${i}]`));
       });
     }
   }
 
   if (s.additionalProperties && typeof s.additionalProperties === "object") {
-    failures.push(
-      ...strictSchemaFailures(
-        s.additionalProperties,
-        `${path}.additionalProperties`,
-      ),
-    );
+    failures.push(...strictSchemaFailures(s.additionalProperties, `${path}.additionalProperties`));
   }
 
   return failures;
@@ -160,9 +149,7 @@ describe("registered tool JSON schemas vs strict mode", () => {
     // save_note is the first tool the job flow hits (#1517); it has optional
     // params, so the defineTool default must land as strict: false.
     expect((tools.save_note as { strict?: boolean }).strict).toBe(false);
-    expect(
-      (tools.get_current_datetime as { strict?: boolean }).strict,
-    ).toBe(false);
+    expect((tools.get_current_datetime as { strict?: boolean }).strict).toBe(false);
 
     const offenders: string[] = [];
     for (const [name, t] of Object.entries(tools)) {
@@ -201,8 +188,9 @@ describe("registered tool JSON schemas vs strict mode", () => {
     ];
 
     for (const { name, base } of cases) {
-      const schema = (coreTools as Record<string, { inputSchema: { parse: (v: unknown) => unknown } }>)[name]
-        ?.inputSchema;
+      const schema = (
+        coreTools as Record<string, { inputSchema: { parse: (v: unknown) => unknown } }>
+      )[name]?.inputSchema;
       expect(schema, name).toBeDefined();
       expect(() => schema.parse(base), name).toThrow();
       expect(() => schema.parse({ ...base, label: "x".repeat(61) }), name).toThrow();

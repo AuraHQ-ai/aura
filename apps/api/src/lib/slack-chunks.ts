@@ -139,10 +139,7 @@ export function sanitizeChunk(
 
     case "task_update": {
       const id = input.id;
-      const idStr =
-        typeof id === "string" ? id
-        : typeof id === "number" ? String(id)
-        : undefined;
+      const idStr = typeof id === "string" ? id : typeof id === "number" ? String(id) : undefined;
       if (!idStr) return { reason: "task_update.id missing" };
 
       const status = coerceStatus(input.status);
@@ -220,7 +217,9 @@ export function sanitizeChunks(inputs: readonly unknown[] | undefined | null): S
 
 /** Keep only the text-bearing chunks — the safest possible retry payload. */
 export function markdownOnly(chunks: readonly AnyChunk[]): MarkdownTextChunk[] {
-  return chunks.filter((c): c is MarkdownTextChunk => c.type === "markdown_text" && c.text.length > 0);
+  return chunks.filter(
+    (c): c is MarkdownTextChunk => c.type === "markdown_text" && c.text.length > 0,
+  );
 }
 
 /** Compact, size-capped JSON of a payload for logs / error_events. */

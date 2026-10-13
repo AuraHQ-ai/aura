@@ -53,9 +53,7 @@ async function listMdxFiles(dir: string): Promise<string[]> {
     entries.map(async (entry) => {
       const fullPath = path.join(dir, entry.name);
       if (entry.isDirectory()) return listMdxFiles(fullPath);
-      return fullPath.endsWith(".mdx") || fullPath.endsWith(".md")
-        ? [fullPath]
-        : [];
+      return fullPath.endsWith(".mdx") || fullPath.endsWith(".md") ? [fullPath] : [];
     }),
   );
   return files.flat();
@@ -101,9 +99,7 @@ export async function getAllPosts(): Promise<BlogPostMeta[]> {
     posts.push(meta);
   }
 
-  return posts.sort(
-    (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
-  );
+  return posts.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 }
 
 export async function getPostBySlug(slug: string): Promise<BlogPost | null> {
@@ -145,8 +141,7 @@ export async function getRelatedPosts(
     .filter(({ overlap }) => overlap > 0)
     .sort(
       (a, b) =>
-        b.overlap - a.overlap ||
-        new Date(b.post.date).getTime() - new Date(a.post.date).getTime(),
+        b.overlap - a.overlap || new Date(b.post.date).getTime() - new Date(a.post.date).getTime(),
     )
     .slice(0, limit)
     .map(({ post }) => post);

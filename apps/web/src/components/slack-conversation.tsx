@@ -87,7 +87,7 @@ function parseMrkdwn(text: string, dark: boolean): React.ReactNode[] {
           }}
         >
           {code}
-        </pre>
+        </pre>,
       );
       continue;
     }
@@ -121,14 +121,20 @@ function parseMrkdwn(text: string, dark: boolean): React.ReactNode[] {
       // Markdown table: consecutive lines starting with |
       if (tableLineSet.has(li)) {
         // Find the full range for this table
-        const range = tableRanges.find(r => r.start === li);
+        const range = tableRanges.find((r) => r.start === li);
         if (range) {
-          const tableLines = lines.slice(range.start, range.end + 1)
-            .filter(l => !l.trim().match(/^\|[-\s|:]+\|$/)); // drop separator row
+          const tableLines = lines
+            .slice(range.start, range.end + 1)
+            .filter((l) => !l.trim().match(/^\|[-\s|:]+\|$/)); // drop separator row
           const headerLine = tableLines[0];
           const dataLines = tableLines.slice(1);
           const parseRow = (row: string) =>
-            row.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map(c => c.trim());
+            row
+              .trim()
+              .replace(/^\|/, "")
+              .replace(/\|$/, "")
+              .split("|")
+              .map((c) => c.trim());
           const headers = parseRow(headerLine);
           const rows = dataLines.map(parseRow);
           const borderCol = dark ? "#36393f" : "#e5e5e5";
@@ -174,7 +180,7 @@ function parseMrkdwn(text: string, dark: boolean): React.ReactNode[] {
                   ))}
                 </tbody>
               </table>
-            </div>
+            </div>,
           );
           li = range.end; // skip to end of table
           continue;
@@ -195,7 +201,7 @@ function parseMrkdwn(text: string, dark: boolean): React.ReactNode[] {
             }}
           >
             {parseInline(line.slice(2), key++, dark)}
-          </div>
+          </div>,
         );
         continue;
       }
@@ -205,9 +211,11 @@ function parseMrkdwn(text: string, dark: boolean): React.ReactNode[] {
       if (numMatch) {
         lineNodes.push(
           <div key={`${key++}-n`} style={{ display: "flex", gap: "6px", margin: "1px 0" }}>
-            <span style={{ color: channelColor, fontWeight: 700, minWidth: "16px" }}>{numMatch[1]}.</span>
+            <span style={{ color: channelColor, fontWeight: 700, minWidth: "16px" }}>
+              {numMatch[1]}.
+            </span>
             <span>{parseInline(numMatch[2], key++, dark)}</span>
-          </div>
+          </div>,
         );
         continue;
       }
@@ -219,7 +227,7 @@ function parseMrkdwn(text: string, dark: boolean): React.ReactNode[] {
           <div key={`${key++}-b`} style={{ display: "flex", gap: "8px", margin: "1px 0" }}>
             <span style={{ color: dark ? "#999" : "#777" }}>•</span>
             <span>{parseInline(bulletMatch[1], key++, dark)}</span>
-          </div>
+          </div>,
         );
         continue;
       }
@@ -231,11 +239,7 @@ function parseMrkdwn(text: string, dark: boolean): React.ReactNode[] {
       }
 
       // Normal line
-      lineNodes.push(
-        <div key={`${key++}-l`}>
-          {parseInline(line, key++, dark)}
-        </div>
-      );
+      lineNodes.push(<div key={`${key++}-l`}>{parseInline(line, key++, dark)}</div>);
     }
 
     nodes.push(...lineNodes);
@@ -266,7 +270,11 @@ function parseInline(text: string, baseKey: number, dark: boolean): React.ReactN
     const token = match[0];
 
     if (token.startsWith("*") && token.endsWith("*") && token.length > 2) {
-      parts.push(<strong key={key++} style={{ fontWeight: 700 }}>{token.slice(1, -1)}</strong>);
+      parts.push(
+        <strong key={key++} style={{ fontWeight: 700 }}>
+          {token.slice(1, -1)}
+        </strong>,
+      );
     } else if (token.startsWith("_") && token.endsWith("_") && token.length > 2) {
       parts.push(<em key={key++}>{token.slice(1, -1)}</em>);
     } else if (token.startsWith("~") && token.endsWith("~") && token.length > 2) {
@@ -286,7 +294,7 @@ function parseInline(text: string, baseKey: number, dark: boolean): React.ReactN
           }}
         >
           {token.slice(1, -1)}
-        </code>
+        </code>,
       );
     } else if (token.startsWith("<") && token.endsWith(">")) {
       // Slack link format: <url|label> or <url> or <@mention> or <#channel>
@@ -306,21 +314,27 @@ function parseInline(text: string, baseKey: number, dark: boolean): React.ReactN
             }}
           >
             @{name}
-          </span>
+          </span>,
         );
       } else if (inner.startsWith("#")) {
         const name = inner.slice(1);
         parts.push(
           <span key={key++} style={{ color: channelColor, cursor: "pointer" }}>
             #{name}
-          </span>
+          </span>,
         );
       } else {
         const [url, label] = inner.split("|");
         parts.push(
-          <a key={key++} href={url} style={{ color: channelColor, textDecoration: "none" }} target="_blank" rel="noreferrer">
+          <a
+            key={key++}
+            href={url}
+            style={{ color: channelColor, textDecoration: "none" }}
+            target="_blank"
+            rel="noreferrer"
+          >
             {label || url}
-          </a>
+          </a>,
         );
       }
     } else if (token.startsWith("#") && token.length > 1) {
@@ -328,22 +342,45 @@ function parseInline(text: string, baseKey: number, dark: boolean): React.ReactN
       parts.push(
         <span key={key++} style={{ color: channelColor, cursor: "pointer" }}>
           {token}
-        </span>
+        </span>,
       );
     } else if (token.startsWith(":") && token.endsWith(":")) {
       // emoji -- keep as-is, maybe map common ones later
       const name = token.slice(1, -1);
       const emojiMap: Record<string, string> = {
-        white_check_mark: "✅", check: "✓", x: "❌", eyes: "👀",
-        thumbsup: "👍", thumbsdown: "👎", fire: "🔥", rocket: "🚀",
-        warning: "⚠️", tada: "🎉", chart_with_upwards_trend: "📈",
-        chart_with_downwards_trend: "📉", memo: "📝", bug: "🐛",
-        wrench: "🔧", bulb: "💡", star: "⭐", heart: "❤️",
-        zap: "⚡", lock: "🔒", key: "🔑", mag: "🔍",
-        mailbox_with_mail: "📬", alarm_clock: "⏰", red_circle: "🔴",
-        money_with_wings: "💸", globe_with_meridians: "🌐",
-        closed_lock_with_key: "🔐", clipboard: "📋", new: "🆕",
-        receipt: "🧾", page_facing_up: "📄", robot_face: "🤖",
+        white_check_mark: "✅",
+        check: "✓",
+        x: "❌",
+        eyes: "👀",
+        thumbsup: "👍",
+        thumbsdown: "👎",
+        fire: "🔥",
+        rocket: "🚀",
+        warning: "⚠️",
+        tada: "🎉",
+        chart_with_upwards_trend: "📈",
+        chart_with_downwards_trend: "📉",
+        memo: "📝",
+        bug: "🐛",
+        wrench: "🔧",
+        bulb: "💡",
+        star: "⭐",
+        heart: "❤️",
+        zap: "⚡",
+        lock: "🔒",
+        key: "🔑",
+        mag: "🔍",
+        mailbox_with_mail: "📬",
+        alarm_clock: "⏰",
+        red_circle: "🔴",
+        money_with_wings: "💸",
+        globe_with_meridians: "🌐",
+        closed_lock_with_key: "🔐",
+        clipboard: "📋",
+        new: "🆕",
+        receipt: "🧾",
+        page_facing_up: "📄",
+        robot_face: "🤖",
         moneybag: "💰",
       };
       parts.push(<span key={key++}>{emojiMap[name] || token}</span>);
@@ -439,7 +476,13 @@ function ToolCallBlock({ node, dark }: { node: ToolCallNode; dark: boolean }) {
                   flexShrink: 0,
                 }}
               >
-                <path d="M4 6l4 4 4-4" stroke={textMuted} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+                <path
+                  d="M4 6l4 4 4-4"
+                  stroke={textMuted}
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
               </svg>
             )}
           </button>
@@ -511,7 +554,14 @@ function SlackMessageRow({
       }}
     >
       {/* Avatar column -- 36px wide */}
-      <div style={{ width: "36px", marginRight: "8px", flexShrink: 0, paddingTop: sameAuthor ? "0" : "2px" }}>
+      <div
+        style={{
+          width: "36px",
+          marginRight: "8px",
+          flexShrink: 0,
+          paddingTop: sameAuthor ? "0" : "2px",
+        }}
+      >
         {!sameAuthor && (
           <img
             src={message.avatar}
@@ -559,9 +609,7 @@ function SlackMessageRow({
                 APP
               </span>
             )}
-            <span style={{ fontSize: "11px", color: tsColor }}>
-              {message.timestamp}
-            </span>
+            <span style={{ fontSize: "11px", color: tsColor }}>{message.timestamp}</span>
           </div>
         )}
 
@@ -609,14 +657,15 @@ export function SlackConversation({
   React.useEffect(() => {
     const update = () => {
       const html = document.documentElement;
-      const isDark =
-        html.classList.contains("dark") ||
-        html.getAttribute("data-theme") === "dark";
+      const isDark = html.classList.contains("dark") || html.getAttribute("data-theme") === "dark";
       setThemeDark(isDark);
     };
     update();
     const obs = new MutationObserver(update);
-    obs.observe(document.documentElement, { attributes: true, attributeFilter: ["class", "data-theme"] });
+    obs.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["class", "data-theme"],
+    });
     return () => obs.disconnect();
   }, []);
 

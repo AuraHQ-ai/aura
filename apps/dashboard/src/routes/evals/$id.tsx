@@ -6,11 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Textarea } from "@/components/ui/textarea";
 import { DetailSkeleton } from "@/components/page-skeleton";
-import {
-  VerdictBadge,
-  FailureClassBadge,
-  type EvalScore,
-} from "@/components/eval-verdict-badge";
+import { VerdictBadge, FailureClassBadge, type EvalScore } from "@/components/eval-verdict-badge";
 import { ConversationDetailView, type ConversationData } from "../conversations/$id";
 import { formatDate } from "@/lib/utils";
 import { useEffect, useState } from "react";
@@ -36,9 +32,7 @@ function AdjudicationPanel({ score }: { score: EvalScoreDetail }) {
   const [note, setNote] = useState(score.note ?? "");
   const [goldAnswer, setGoldAnswer] = useState(score.goldAnswer ?? "");
   const [mustDo, setMustDo] = useState((score.rubric?.must_do ?? []).join("\n"));
-  const [mustNotDo, setMustNotDo] = useState(
-    (score.rubric?.must_not_do ?? []).join("\n"),
-  );
+  const [mustNotDo, setMustNotDo] = useState((score.rubric?.must_not_do ?? []).join("\n"));
 
   useEffect(() => {
     setNote(score.note ?? "");
@@ -152,14 +146,12 @@ function AdjudicationPanel({ score }: { score: EvalScoreDetail }) {
             </Button>
           )}
           {mutation.isError && (
-            <span className="text-xs text-destructive">
-              {(mutation.error as Error).message}
-            </span>
+            <span className="text-xs text-destructive">{(mutation.error as Error).message}</span>
           )}
         </div>
         <p className="text-[11px] text-muted-foreground">
-          Ratified <span className="font-mono">failed</span> responses become
-          bench-case candidates for the curated regression bench.
+          Ratified <span className="font-mono">failed</span> responses become bench-case candidates
+          for the curated regression bench.
         </p>
       </CardContent>
     </Card>
@@ -176,26 +168,18 @@ function ScoreSummary({ score }: { score: EvalScoreDetail }) {
         <div className="flex items-center gap-2 flex-wrap">
           <VerdictBadge verdict={score.verdict} scorable={score.scorable} />
           <FailureClassBadge failureClass={score.failureClass} />
-          {score.resolvedInWindow && (
-            <Badge variant="outline">resolved in window</Badge>
-          )}
-          {score.ratifiedBy && (
-            <Badge variant="success">ratified by {score.ratifiedBy}</Badge>
-          )}
+          {score.resolvedInWindow && <Badge variant="outline">resolved in window</Badge>}
+          {score.ratifiedBy && <Badge variant="success">ratified by {score.ratifiedBy}</Badge>}
         </div>
         {score.servingIntent && (
           <div>
-            <span className="text-xs font-medium text-muted-foreground block">
-              Serving intent
-            </span>
+            <span className="text-xs font-medium text-muted-foreground block">Serving intent</span>
             {score.servingIntent}
           </div>
         )}
         {score.note && (
           <div>
-            <span className="text-xs font-medium text-muted-foreground block">
-              Judge note
-            </span>
+            <span className="text-xs font-medium text-muted-foreground block">Judge note</span>
             {score.note}
           </div>
         )}
@@ -205,9 +189,7 @@ function ScoreSummary({ score }: { score: EvalScoreDetail }) {
           </div>
           <div>Scored: {formatDate(score.createdAt)}</div>
           <div>Responded: {formatDate(score.respondedAt)}</div>
-          {score.threadTs && (
-            <div className="font-mono">Thread: {score.threadTs}</div>
-          )}
+          {score.threadTs && <div className="font-mono">Thread: {score.threadTs}</div>}
           <div className="font-mono">Part: {score.partId}</div>
         </div>
       </CardContent>
@@ -218,7 +200,11 @@ function ScoreSummary({ score }: { score: EvalScoreDetail }) {
 function EvalDetailPage() {
   const { id } = Route.useParams();
 
-  const { data: score, isLoading, error } = useQuery({
+  const {
+    data: score,
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ["eval-score", id],
     queryFn: () => apiGet<EvalScoreDetail>(`/eval/${id}`),
   });
@@ -232,9 +218,7 @@ function EvalDetailPage() {
   if (isLoading) return <DetailSkeleton />;
   if (error)
     return (
-      <div className="text-destructive text-sm">
-        Failed to load eval score: {error.message}
-      </div>
+      <div className="text-destructive text-sm">Failed to load eval score: {error.message}</div>
     );
   if (!score) return null;
 
@@ -248,9 +232,7 @@ function EvalDetailPage() {
         </Button>
         <div className="min-w-0 flex-1">
           <h1 className="text-base font-semibold">Response score</h1>
-          <p className="text-xs text-muted-foreground font-mono truncate">
-            {score.id}
-          </p>
+          <p className="text-xs text-muted-foreground font-mono truncate">{score.id}</p>
         </div>
         {score.channelId && score.threadTs && (
           <Button variant="outline" size="sm" asChild>

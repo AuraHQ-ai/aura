@@ -79,10 +79,7 @@ describe("defineTool strict + inputExamples forwarding", () => {
   });
 
   it("forwards inputExamples unchanged into the tool() config", () => {
-    const examples = [
-      { input: { q: "first example" } },
-      { input: { q: "second example" } },
-    ];
+    const examples = [{ input: { q: "first example" } }, { input: { q: "second example" } }];
     const t = defineTool({
       description: "a tool with examples",
       inputSchema: z.object({ q: z.string() }),

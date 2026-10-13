@@ -29,9 +29,7 @@ beforeEach(() => {
 
 describe("encryptCredential / decryptCredential roundtrip", () => {
   it("encrypts and decrypts to the same value", async () => {
-    const { encryptCredential, decryptCredential } = await import(
-      "../credentials.js"
-    );
+    const { encryptCredential, decryptCredential } = await import("../credentials.js");
     const plain = "ghp_abc123_my_super_secret_token";
     const encrypted = encryptCredential(plain);
     expect(encrypted).not.toBe(plain);
@@ -105,14 +103,8 @@ describe("permission hierarchy", () => {
     admin: 3,
   };
 
-  function hasPermission(
-    granted: string,
-    required: "read" | "write",
-  ): boolean {
-    return (
-      (PERMISSION_LEVELS[granted] ?? 0) >=
-      (PERMISSION_LEVELS[required] ?? 0)
-    );
+  function hasPermission(granted: string, required: "read" | "write"): boolean {
+    return (PERMISSION_LEVELS[granted] ?? 0) >= (PERMISSION_LEVELS[required] ?? 0);
   }
 
   it("read grants read access", () => {

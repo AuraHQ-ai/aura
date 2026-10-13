@@ -54,7 +54,9 @@ describe("stripToolCallMarkup (issue #1515)", () => {
   it("strips <invoke> and <function=...> variants", () => {
     expect(stripToolCallMarkup(`Hi ${INVOKE_BLOCK} there`).text).toMatch(/Hi\s+there/);
     expect(
-      stripToolCallMarkup('<function=run_command><parameter=command>ls</parameter></function>').text.trim(),
+      stripToolCallMarkup(
+        "<function=run_command><parameter=command>ls</parameter></function>",
+      ).text.trim(),
     ).toBe("");
   });
 });

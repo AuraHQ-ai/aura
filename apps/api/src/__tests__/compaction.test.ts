@@ -39,10 +39,7 @@ function makeToolMessage(
   };
 }
 
-function makeAssistantWithToolCall(
-  toolName: string,
-  toolCallId: string,
-): ModelMessage {
+function makeAssistantWithToolCall(toolName: string, toolCallId: string): ModelMessage {
   return {
     role: "assistant",
     content: [
@@ -65,9 +62,7 @@ function buildConversation(stepCount: number, resultLength = 1000): ModelMessage
   for (let i = 0; i < stepCount; i++) {
     const id = `call-${i}`;
     messages.push(makeAssistantWithToolCall(`tool_${i}`, id));
-    messages.push(
-      makeToolMessage(`tool_${i}`, id, "x".repeat(resultLength)),
-    );
+    messages.push(makeToolMessage(`tool_${i}`, id, "x".repeat(resultLength)));
   }
 
   return messages;
@@ -141,9 +136,7 @@ describe("compactMessages", () => {
     const messages = buildConversation(30, 1000);
     const result = await compactMessages(messages, 30);
 
-    const assistantMessages = result.messages.filter(
-      (m) => m.role === "assistant",
-    );
+    const assistantMessages = result.messages.filter((m) => m.role === "assistant");
     const originalAssistants = messages.filter((m) => m.role === "assistant");
 
     expect(assistantMessages).toEqual(originalAssistants);
@@ -194,7 +187,11 @@ describe("compactMessages", () => {
     for (let i = 0; i < result.messages.length; i++) {
       const msg = result.messages[i];
       const orig = messages[i];
-      if (msg.role === "tool" && Array.isArray(msg.content) && Array.isArray((orig as any).content)) {
+      if (
+        msg.role === "tool" &&
+        Array.isArray(msg.content) &&
+        Array.isArray((orig as any).content)
+      ) {
         for (let j = 0; j < msg.content.length; j++) {
           const part = msg.content[j] as any;
           const origPart = (orig as any).content[j];
@@ -229,10 +226,7 @@ describe("compactMessages", () => {
   });
 
   it("handles JSON tool results", async () => {
-    const messages: ModelMessage[] = [
-      makeSystemMessage("system"),
-      makeUserMessage("user"),
-    ];
+    const messages: ModelMessage[] = [makeSystemMessage("system"), makeUserMessage("user")];
 
     for (let i = 0; i < 40; i++) {
       const id = `call-${i}`;
@@ -311,18 +305,14 @@ describe("compactMessages", () => {
 
     // Without compaction, per-step input keeps growing linearly to the end
     // (≈ 8k chars per additional step → quadratic cumulative input).
-    const uncompactedGrowth =
-      perStepWithout[STEPS - 1] - perStepWithout[COMPACTION_START_STEP + 4];
-    expect(uncompactedGrowth).toBeGreaterThan(
-      (STEPS - COMPACTION_START_STEP - 5) * RESULT_CHARS,
-    );
+    const uncompactedGrowth = perStepWithout[STEPS - 1] - perStepWithout[COMPACTION_START_STEP + 4];
+    expect(uncompactedGrowth).toBeGreaterThan((STEPS - COMPACTION_START_STEP - 5) * RESULT_CHARS);
 
     // With compaction, once past the threshold + live tail, adding a step
     // swaps one full 8k result for a stub — per-step input growth collapses
     // to roughly the size of the newly added live messages, so the growth
     // over the same window is a small fraction of the uncompacted one.
-    const compactedGrowth =
-      perStepWith[STEPS - 1] - perStepWith[COMPACTION_START_STEP + 4];
+    const compactedGrowth = perStepWith[STEPS - 1] - perStepWith[COMPACTION_START_STEP + 4];
     expect(compactedGrowth).toBeLessThan(uncompactedGrowth * 0.15);
 
     // And the cumulative input over the whole turn is substantially smaller.

@@ -1,12 +1,13 @@
 import type { MDXComponents } from "mdx/types";
 import { SlackConversation } from "@/components/slack-conversation";
-export type { SlackMessage, ContentNode, TextNode, ToolCallNode } from "@/components/slack-conversation";
+export type {
+  SlackMessage,
+  ContentNode,
+  TextNode,
+  ToolCallNode,
+} from "@/components/slack-conversation";
 
-function CodeBlock({
-  children,
-  className,
-  ...props
-}: React.HTMLAttributes<HTMLElement>) {
+function CodeBlock({ children, className, ...props }: React.HTMLAttributes<HTMLElement>) {
   if (!className) {
     return (
       <code
@@ -49,9 +50,13 @@ function Callout({
   return (
     <div className={`my-6 rounded-xl border-l-4 px-6 py-4 ${styles[type]}`}>
       {title && (
-        <p className="mb-2 text-sm font-semibold" style={{ color: "var(--text-primary)" }}>{title}</p>
+        <p className="mb-2 text-sm font-semibold" style={{ color: "var(--text-primary)" }}>
+          {title}
+        </p>
       )}
-      <div className="text-sm" style={{ color: "var(--text-secondary)" }}>{children}</div>
+      <div className="text-sm" style={{ color: "var(--text-secondary)" }}>
+        {children}
+      </div>
     </div>
   );
 }

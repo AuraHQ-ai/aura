@@ -67,10 +67,7 @@ export async function resolveDisplayName(
   try {
     const result = await client.users.info({ user: userId });
     const name =
-      result.user?.profile?.display_name ||
-      result.user?.real_name ||
-      result.user?.name ||
-      userId;
+      result.user?.profile?.display_name || result.user?.real_name || result.user?.name || userId;
     const timezone = result.user?.tz || undefined;
     const entry = { name, timezone };
     userDisplayNameCache.set(userId, entry);
@@ -203,9 +200,7 @@ export async function fetchConversationContext(
       result.thread = threadMessages;
 
       // Check participation: did Aura reply in this thread?
-      result.isAuraParticipant = threadMessages.some(
-        (m) => m.isBot && m.ts !== threadTs,
-      );
+      result.isAuraParticipant = threadMessages.some((m) => m.isBot && m.ts !== threadTs);
 
       // Check if the parent message (first in the array) is Aura's
       if (threadMessages.length > 0 && threadMessages[0].isBot) {
@@ -280,8 +275,7 @@ export async function fetchConversationContext(
 
 /** Format rich tool I/O records into a structured block for context. */
 function formatToolIO(records: ToolIORecord[], isOld = false): string {
-  const trunc = (s: string, max: number) =>
-    s.length > max ? s.slice(0, max) + "..." : s;
+  const trunc = (s: string, max: number) => (s.length > max ? s.slice(0, max) + "..." : s);
 
   const parts = records.map((r) => {
     const error = r.is_error ? " [ERROR]" : "";
@@ -297,7 +291,7 @@ function formatToolCalls(toolCalls: ToolCallSummary[]): string {
   const meaningful = toolCalls.filter((tc) => tc.details || tc.output);
   if (meaningful.length === 0) return "";
   const parts = meaningful.map((tc) => {
-    const label = tc.title.replace(/\.\.\.$/,"");
+    const label = tc.title.replace(/\.\.\.$/, "");
     const detail = tc.details ? `(${tc.details})` : "";
     const result = tc.output ? ` -> ${tc.output}` : "";
     const error = tc.status === "error" ? " [ERROR]" : "";
@@ -307,23 +301,29 @@ function formatToolCalls(toolCalls: ToolCallSummary[]): string {
 }
 
 function escapeXmlAttr(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
 }
 
 /** Build a compact tool summary for the `tools` attribute on `<msg>` tags. */
 function compactToolSummary(m: SlackThreadMessage): string {
   if (m.toolIO?.length) {
     const names = [...new Set(m.toolIO.map((r) => r.name))];
-    const label = names.length <= 3
-      ? names.join(", ")
-      : `${names.slice(0, 3).join(", ")}, +${names.length - 3} more`;
+    const label =
+      names.length <= 3
+        ? names.join(", ")
+        : `${names.slice(0, 3).join(", ")}, +${names.length - 3} more`;
     return ` tools="${escapeXmlAttr(label)}"`;
   }
   if (m.toolCalls?.length) {
     const names = [...new Set(m.toolCalls.map((tc) => tc.title.replace(/\.\.\.$/, "")))];
-    const label = names.length <= 3
-      ? names.join(", ")
-      : `${names.slice(0, 3).join(", ")}, +${names.length - 3} more`;
+    const label =
+      names.length <= 3
+        ? names.join(", ")
+        : `${names.slice(0, 3).join(", ")}, +${names.length - 3} more`;
     return ` tools="${escapeXmlAttr(label)}"`;
   }
   return "";

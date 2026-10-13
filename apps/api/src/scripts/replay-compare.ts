@@ -50,13 +50,12 @@ const { sql, and, eq, asc, inArray } = await import("drizzle-orm");
 const { generateText, Output } = await import("ai");
 const { z } = await import("zod");
 const { db } = await import("../db/client.js");
-const {
-  conversationMessages,
-  conversationParts,
-  conversationTraces,
-} = await import("@aura/db/schema");
-const { getMainModel, getFastModel, getFastModelId, withCacheControl } =
-  await import("../lib/ai.js");
+const { conversationMessages, conversationParts, conversationTraces } = await import(
+  "@aura/db/schema"
+);
+const { getMainModel, getFastModel, getFastModelId, withCacheControl } = await import(
+  "../lib/ai.js"
+);
 const { buildStablePrefix } = await import("../personality/system-prompt.js");
 const { buildTurns } = await import("../eval/windowing.js");
 const { pool } = await import("../lib/pool.js");
@@ -152,10 +151,7 @@ async function buildCaseContext(c: CaseRow): Promise<{
           ),
         )
         .orderBy(asc(conversationTraces.createdAt))
-    : await db
-        .select()
-        .from(conversationTraces)
-        .where(eq(conversationTraces.id, c.trace_id));
+    : await db.select().from(conversationTraces).where(eq(conversationTraces.id, c.trace_id));
   if (traces.length === 0) return null;
 
   const traceIds = traces.map((t) => t.id);
@@ -235,9 +231,7 @@ async function buildCaseContext(c: CaseRow): Promise<{
     .join("\n\n");
 
   const contextBlock = [
-    conversation
-      ? `<conversation_so_far>\n${conversation}\n</conversation_so_far>`
-      : "",
+    conversation ? `<conversation_so_far>\n${conversation}\n</conversation_so_far>` : "",
     evidenceBlock
       ? `<tool_evidence_for_this_turn>\n${evidenceBlock}\n</tool_evidence_for_this_turn>`
       : "",

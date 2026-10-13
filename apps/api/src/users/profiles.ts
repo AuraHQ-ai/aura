@@ -17,11 +17,7 @@ export async function getOrCreateProfile(
   timezone?: string,
 ): Promise<UserProfile> {
   // Try to find existing
-  const existing = await db
-    .select()
-    .from(users)
-    .where(eq(users.slackUserId, slackUserId))
-    .limit(1);
+  const existing = await db.select().from(users).where(eq(users.slackUserId, slackUserId)).limit(1);
 
   if (existing.length > 0) {
     const profile = existing[0];
@@ -169,11 +165,12 @@ export async function updateProfileFromConversation(
         userId: slackUserId,
         tags: ["job:profile-update"],
       },
-      () => generateText({
-      model,
-      telemetry: aiTelemetry("profile-update"),
-      output: Output.object({ schema: profileUpdateSchema }),
-      instructions: `You are analyzing a user's communication style. Based on the conversation below and their existing profile, provide an updated assessment.
+      () =>
+        generateText({
+          model,
+          telemetry: aiTelemetry("profile-update"),
+          output: Output.object({ schema: profileUpdateSchema }),
+          instructions: `You are analyzing a user's communication style. Based on the conversation below and their existing profile, provide an updated assessment.
 
 Existing communication style: ${JSON.stringify(existingStyle)}
 
@@ -182,8 +179,8 @@ Analyze the user's message style:
 - formality: casual, neutral, or formal?
 - emojiUsage: none, light, or heavy?
 - preferredFormat: do they seem to prefer prose, bullets, or mixed?`,
-      prompt: `User message: ${userMessage}\n\nAura's response: ${assistantResponse}`,
-    }),
+          prompt: `User message: ${userMessage}\n\nAura's response: ${assistantResponse}`,
+        }),
     );
 
     if (!object) {
@@ -215,14 +212,8 @@ Analyze the user's message style:
 /**
  * Get a user profile by Slack user ID.
  */
-export async function getProfile(
-  slackUserId: string,
-): Promise<UserProfile | null> {
-  const results = await db
-    .select()
-    .from(users)
-    .where(eq(users.slackUserId, slackUserId))
-    .limit(1);
+export async function getProfile(slackUserId: string): Promise<UserProfile | null> {
+  const results = await db.select().from(users).where(eq(users.slackUserId, slackUserId)).limit(1);
 
   return results[0] || null;
 }

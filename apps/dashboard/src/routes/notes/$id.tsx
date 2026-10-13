@@ -24,7 +24,11 @@ interface NoteDetail {
 function NoteDetailPage() {
   const { id } = Route.useParams();
   const queryClient = useQueryClient();
-  const { data: note, isLoading, error } = useQuery({
+  const {
+    data: note,
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ["notes", id],
     queryFn: () => apiGet<NoteDetail>(`/notes/${id}`),
   });
@@ -56,14 +60,17 @@ function NoteDetailPage() {
   }
 
   if (isLoading) return <DetailSkeleton />;
-  if (error) return <div className="text-destructive text-sm">Failed to load note: {error.message}</div>;
+  if (error)
+    return <div className="text-destructive text-sm">Failed to load note: {error.message}</div>;
   if (!note) return null;
 
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-4">
         <Button variant="ghost" size="icon-sm" asChild>
-          <Link to="/notes"><ArrowLeft className="h-4 w-4" /></Link>
+          <Link to="/notes">
+            <ArrowLeft className="h-4 w-4" />
+          </Link>
         </Button>
         <div className="flex-1">
           {editing ? (

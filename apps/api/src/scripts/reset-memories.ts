@@ -20,22 +20,16 @@ function extractRows(result: unknown): ResultRow[] {
 async function main() {
   console.log("=== Memory Reset Script (full) ===\n");
 
-  const [memCount] = extractRows(
-    await db.execute(sql`SELECT count(*)::int AS c FROM memories`),
-  );
+  const [memCount] = extractRows(await db.execute(sql`SELECT count(*)::int AS c FROM memories`));
   const [meCount] = extractRows(
     await db.execute(sql`SELECT count(*)::int AS c FROM memory_entities`),
   );
   const [eaCount] = extractRows(
     await db.execute(sql`SELECT count(*)::int AS c FROM entity_aliases`),
   );
-  const [eCount] = extractRows(
-    await db.execute(sql`SELECT count(*)::int AS c FROM entities`),
-  );
+  const [eCount] = extractRows(await db.execute(sql`SELECT count(*)::int AS c FROM entities`));
   const [uLinked] = extractRows(
-    await db.execute(
-      sql`SELECT count(*)::int AS c FROM users WHERE entity_id IS NOT NULL`,
-    ),
+    await db.execute(sql`SELECT count(*)::int AS c FROM users WHERE entity_id IS NOT NULL`),
   );
 
   console.log("Before:");
@@ -62,22 +56,16 @@ async function main() {
   await db.execute(sql`DELETE FROM memories`);
   console.log("Deleted all memories");
 
-  const [memAfter] = extractRows(
-    await db.execute(sql`SELECT count(*)::int AS c FROM memories`),
-  );
+  const [memAfter] = extractRows(await db.execute(sql`SELECT count(*)::int AS c FROM memories`));
   const [meAfter] = extractRows(
     await db.execute(sql`SELECT count(*)::int AS c FROM memory_entities`),
   );
   const [eaAfter] = extractRows(
     await db.execute(sql`SELECT count(*)::int AS c FROM entity_aliases`),
   );
-  const [eAfter] = extractRows(
-    await db.execute(sql`SELECT count(*)::int AS c FROM entities`),
-  );
+  const [eAfter] = extractRows(await db.execute(sql`SELECT count(*)::int AS c FROM entities`));
   const [uAfter] = extractRows(
-    await db.execute(
-      sql`SELECT count(*)::int AS c FROM users WHERE entity_id IS NOT NULL`,
-    ),
+    await db.execute(sql`SELECT count(*)::int AS c FROM users WHERE entity_id IS NOT NULL`),
   );
 
   console.log("\nAfter:");

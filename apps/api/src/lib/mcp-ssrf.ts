@@ -27,9 +27,7 @@ export async function assertPublicHttpsUrl(url: string): Promise<URL> {
     throw new McpSsrfError("MCP URL must use https");
   }
   if (await isPrivateUrl(parsed.href)) {
-    throw new McpSsrfError(
-      "MCP URL resolves to a private, loopback, or link-local address",
-    );
+    throw new McpSsrfError("MCP URL resolves to a private, loopback, or link-local address");
   }
   return parsed;
 }

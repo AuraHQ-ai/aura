@@ -41,17 +41,12 @@ describe("sanitizeToolCallIds (issue #1376)", () => {
 
   it("round-trips a colon/space-bearing id, rewriting the call and its result identically", () => {
     const rawId = "srvtoolu:bdrk 016DVFjw";
-    const messages: ModelMessage[] = [
-      { role: "user", content: "hi" },
-      ...pairedTurn(rawId),
-    ];
+    const messages: ModelMessage[] = [{ role: "user", content: "hi" }, ...pairedTurn(rawId)];
 
     const result = sanitizeToolCallIds(messages);
 
     expect(result.changed).toBe(true);
-    expect(result.normalizedIds).toEqual([
-      { raw: rawId, sanitized: "srvtoolu_bdrk_016DVFjw" },
-    ]);
+    expect(result.normalizedIds).toEqual([{ raw: rawId, sanitized: "srvtoolu_bdrk_016DVFjw" }]);
 
     const call = (result.messages[1].content as any[])[0];
     const res = (result.messages[2].content as any[])[0];
@@ -107,12 +102,7 @@ describe("sanitizeToolCallIds (issue #1376)", () => {
     expect(result.droppedOrphanedToolResultIds).toEqual(["call_ghost"]);
     // The emptied tool message is removed entirely.
     expect(result.messages).toHaveLength(4);
-    expect(result.messages.map((m) => m.role)).toEqual([
-      "user",
-      "assistant",
-      "tool",
-      "assistant",
-    ]);
+    expect(result.messages.map((m) => m.role)).toEqual(["user", "assistant", "tool", "assistant"]);
   });
 
   it("drops a tool_use with no matching result in a completed turn, keeping the message's other parts", () => {
@@ -209,9 +199,7 @@ describe("sanitizeToolCallIds (issue #1376)", () => {
     const result = sanitizeToolCallIds(messages);
 
     expect(result.normalizedIds).toEqual([{ raw: rawId, sanitized: "call_multi" }]);
-    const ids = result.messages.flatMap((m) =>
-      (m.content as any[]).map((p) => p.toolCallId),
-    );
+    const ids = result.messages.flatMap((m) => (m.content as any[]).map((p) => p.toolCallId));
     expect(ids).toEqual(["call_multi", "call_multi", "call_multi"]);
   });
 
@@ -221,9 +209,7 @@ describe("sanitizeToolCallIds (issue #1376)", () => {
       { role: "user", content: "hi" },
       {
         role: "assistant",
-        content: [
-          { ...toolCall(id, "tool_search_tool_bm25"), providerExecuted: true },
-        ],
+        content: [{ ...toolCall(id, "tool_search_tool_bm25"), providerExecuted: true }],
       } as ModelMessage,
       { role: "assistant", content: "found it" },
     ];
@@ -267,10 +253,7 @@ describe("sanitizeToolCallIds (issue #1376)", () => {
       { role: "user", content: "hi" },
       {
         role: "assistant",
-        content: [
-          { type: "text", text: "Looking that up." },
-          toolCall("call_unpaired"),
-        ],
+        content: [{ type: "text", text: "Looking that up." }, toolCall("call_unpaired")],
       } as ModelMessage,
       { role: "tool", content: [toolResult("ghost")] } as ModelMessage,
     ];

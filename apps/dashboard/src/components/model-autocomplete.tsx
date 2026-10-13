@@ -1,7 +1,7 @@
-import { useMemo, useState } from "react"
-import { Check, ChevronsUpDown } from "lucide-react"
+import { useMemo, useState } from "react";
+import { Check, ChevronsUpDown } from "lucide-react";
 
-import { Button } from "@/components/ui/button"
+import { Button } from "@/components/ui/button";
 import {
   Command,
   CommandEmpty,
@@ -10,24 +10,20 @@ import {
   CommandItem,
   CommandList,
   CommandSeparator,
-} from "@/components/ui/command"
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover"
-import { cn } from "@/lib/utils"
+} from "@/components/ui/command";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
 
 export interface ModelAutocompleteOption {
-  value: string
-  label: string
-  provider?: string
+  value: string;
+  label: string;
+  provider?: string;
 }
 
 interface ModelAutocompleteGroup {
-  providerKey: string
-  providerLabel: string
-  options: ModelAutocompleteOption[]
+  providerKey: string;
+  providerLabel: string;
+  options: ModelAutocompleteOption[];
 }
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -43,10 +39,10 @@ const PROVIDER_LABELS: Record<string, string> = {
   openrouter: "OpenRouter",
   perplexity: "Perplexity",
   xai: "xAI",
-}
+};
 
 function inferProvider(option: ModelAutocompleteOption): string {
-  return option.provider || option.value.split("/")[0] || "other"
+  return option.provider || option.value.split("/")[0] || "other";
 }
 
 function formatProviderLabel(provider: string): string {
@@ -57,36 +53,34 @@ function formatProviderLabel(provider: string): string {
       .filter(Boolean)
       .map((part) => part[0]?.toUpperCase() + part.slice(1))
       .join(" ")
-  )
+  );
 }
 
-function groupOptions(
-  options: ModelAutocompleteOption[],
-): ModelAutocompleteGroup[] {
-  const deduped = new Map<string, ModelAutocompleteOption>()
+function groupOptions(options: ModelAutocompleteOption[]): ModelAutocompleteGroup[] {
+  const deduped = new Map<string, ModelAutocompleteOption>();
   for (const option of options) {
-    deduped.set(option.value, option)
+    deduped.set(option.value, option);
   }
 
-  const groups = new Map<string, ModelAutocompleteGroup>()
+  const groups = new Map<string, ModelAutocompleteGroup>();
 
   for (const option of deduped.values()) {
-    const providerKey = inferProvider(option)
-    const existing = groups.get(providerKey)
+    const providerKey = inferProvider(option);
+    const existing = groups.get(providerKey);
 
     if (existing) {
-      existing.options.push(option)
-      continue
+      existing.options.push(option);
+      continue;
     }
 
     groups.set(providerKey, {
       providerKey,
       providerLabel: formatProviderLabel(providerKey),
       options: [option],
-    })
+    });
   }
 
-  return Array.from(groups.values())
+  return Array.from(groups.values());
 }
 
 function getSelectedLabel(
@@ -94,25 +88,24 @@ function getSelectedLabel(
   options: ModelAutocompleteOption[],
   pinnedOptions: ModelAutocompleteOption[],
 ) {
-  return [...pinnedOptions, ...options].find((option) => option.value === value)
-    ?.label
+  return [...pinnedOptions, ...options].find((option) => option.value === value)?.label;
 }
 
 export interface ModelAutocompleteProps {
-  value: string
-  onValueChange: (value: string) => void
-  options: ModelAutocompleteOption[]
-  pinnedOptions?: ModelAutocompleteOption[]
-  placeholder?: string
-  searchPlaceholder?: string
-  emptyMessage?: string
-  disabled?: boolean
-  fullWidth?: boolean
-  triggerVariant?: React.ComponentProps<typeof Button>["variant"]
-  triggerClassName?: string
-  contentClassName?: string
-  align?: React.ComponentProps<typeof PopoverContent>["align"]
-  side?: React.ComponentProps<typeof PopoverContent>["side"]
+  value: string;
+  onValueChange: (value: string) => void;
+  options: ModelAutocompleteOption[];
+  pinnedOptions?: ModelAutocompleteOption[];
+  placeholder?: string;
+  searchPlaceholder?: string;
+  emptyMessage?: string;
+  disabled?: boolean;
+  fullWidth?: boolean;
+  triggerVariant?: React.ComponentProps<typeof Button>["variant"];
+  triggerClassName?: string;
+  contentClassName?: string;
+  align?: React.ComponentProps<typeof PopoverContent>["align"];
+  side?: React.ComponentProps<typeof PopoverContent>["side"];
 }
 
 export function ModelAutocomplete({
@@ -131,13 +124,13 @@ export function ModelAutocomplete({
   align = "start",
   side,
 }: ModelAutocompleteProps) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(false);
 
-  const groupedOptions = useMemo(() => groupOptions(options), [options])
+  const groupedOptions = useMemo(() => groupOptions(options), [options]);
   const selectedLabel = useMemo(
     () => getSelectedLabel(value, options, pinnedOptions),
     [value, options, pinnedOptions],
-  )
+  );
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -178,8 +171,8 @@ export function ModelAutocomplete({
                       className="cursor-pointer"
                       value={`${option.label} ${option.value}`}
                       onSelect={() => {
-                        onValueChange(option.value)
-                        setOpen(false)
+                        onValueChange(option.value);
+                        setOpen(false);
                       }}
                     >
                       <Check
@@ -204,15 +197,12 @@ export function ModelAutocomplete({
                     className="cursor-pointer"
                     value={`${option.label} ${option.value} ${group.providerLabel} ${group.providerKey}`}
                     onSelect={() => {
-                      onValueChange(option.value)
-                      setOpen(false)
+                      onValueChange(option.value);
+                      setOpen(false);
                     }}
                   >
                     <Check
-                      className={cn(
-                        "size-4",
-                        value === option.value ? "opacity-100" : "opacity-0",
-                      )}
+                      className={cn("size-4", value === option.value ? "opacity-100" : "opacity-0")}
                     />
                     <span className="truncate">{option.label}</span>
                   </CommandItem>
@@ -223,5 +213,5 @@ export function ModelAutocomplete({
         </Command>
       </PopoverContent>
     </Popover>
-  )
+  );
 }

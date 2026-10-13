@@ -26,9 +26,7 @@ describe("bootstrapAssistantThread", () => {
   it("no-ops when channelId is missing", async () => {
     const { client, asWebClient } = makeClient();
 
-    await expect(
-      bootstrapAssistantThread({ client: asWebClient }),
-    ).resolves.toBeUndefined();
+    await expect(bootstrapAssistantThread({ client: asWebClient })).resolves.toBeUndefined();
 
     expect(client.apiCall).not.toHaveBeenCalled();
   });

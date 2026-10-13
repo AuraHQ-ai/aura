@@ -33,7 +33,18 @@ export async function persistDashboardConversation(params: {
   stepModelIds: string[];
   totalUsage: LanguageModelUsage;
 }): Promise<void> {
-  const { userId, messageId, modelId, threadId, userMessage, assistantText, systemPrompt, steps, stepModelIds, totalUsage } = params;
+  const {
+    userId,
+    messageId,
+    modelId,
+    threadId,
+    userMessage,
+    assistantText,
+    systemPrompt,
+    steps,
+    stepModelIds,
+    totalUsage,
+  } = params;
 
   try {
     logger.info("persistDashboardConversation started", { threadId, messageId });
@@ -117,17 +128,21 @@ export async function persistDashboardConversation(params: {
       await persistConversationSteps(traceId, conversationSteps, orderIndex);
 
       const stepUsages = buildStepUsages(steps, stepModelIds, modelId);
-      await updateConversationTraceUsage(traceId, {
-        inputTokens: totalUsage.inputTokens ?? 0,
-        outputTokens: totalUsage.outputTokens ?? 0,
-        totalTokens: totalUsage.totalTokens ?? 0,
-      }, stepUsages);
+      await updateConversationTraceUsage(
+        traceId,
+        {
+          inputTokens: totalUsage.inputTokens ?? 0,
+          outputTokens: totalUsage.outputTokens ?? 0,
+          totalTokens: totalUsage.totalTokens ?? 0,
+        },
+        stepUsages,
+      );
     }
 
     logger.info("Dashboard conversation persisted", { traceId, threadId });
   } catch (error) {
     logger.error("Failed to persist dashboard conversation", {
-      error: error instanceof Error ? error.stack ?? error.message : String(error),
+      error: error instanceof Error ? (error.stack ?? error.message) : String(error),
       threadId,
     });
   }

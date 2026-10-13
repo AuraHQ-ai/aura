@@ -21,10 +21,7 @@ import { executeJob } from "../cron/execute-job.js";
  * Jobs are the single execution primitive: one-shot reminders, recurring autonomous work,
  * and continuations all live in the same table and are processed by the heartbeat.
  */
-export function createJobTools(
-  client?: WebClient,
-  context?: ScheduleContext,
-) {
+export function createJobTools(client?: WebClient, context?: ScheduleContext) {
   return {
     create_job: defineTool({
       description:
@@ -83,10 +80,7 @@ export function createJobTools(
           .number()
           .optional()
           .describe("Minimum hours between executions (recurring jobs)"),
-        max_per_day: z
-          .number()
-          .optional()
-          .describe("Max executions per day (recurring jobs)"),
+        max_per_day: z.number().optional().describe("Max executions per day (recurring jobs)"),
         model: z
           .enum(["main", "fast", "medium", "escalation"])
           .optional()
@@ -150,7 +144,11 @@ export function createJobTools(
           let channelLabel = "DM-routed";
           if (channel_name) {
             if (!client) {
-              return { ok: false, error: "Channel name resolution requires the Slack connector. Omit channel_name or provide a channel ID directly." };
+              return {
+                ok: false,
+                error:
+                  "Channel name resolution requires the Slack connector. Omit channel_name or provide a channel ID directly.",
+              };
             }
             const channel = await resolveChannelByName(client, channel_name);
             if (!channel) {
@@ -215,7 +213,8 @@ export function createJobTools(
           if (!executeAt && !recurring) {
             return {
               ok: false,
-              error: "One-shot jobs require execute_in. Recurring jobs require a cron expression via recurring.",
+              error:
+                "One-shot jobs require execute_in. Recurring jobs require a cron expression via recurring.",
             };
           }
 
@@ -269,7 +268,7 @@ export function createJobTools(
           updateSet.frequencyConfig = frequencyConfig;
           if (channel_name !== undefined) updateSet.channelId = channelId;
           // For one-shot jobs, capture threadTs for thread routing; recurring jobs always post fresh
-          updateSet.threadTs = !recurring ? (context?.threadTs || null) : null;
+          updateSet.threadTs = !recurring ? context?.threadTs || null : null;
           if (executeAt) updateSet.executeAt = executeAt;
           updateSet.timezone = timezone;
           updateSet.priority = priority;
@@ -287,7 +286,7 @@ export function createJobTools(
               cronSchedule: recurring || null,
               frequencyConfig,
               channelId: channelId || context?.channelId || "",
-              threadTs: !recurring ? (context?.threadTs || null) : null,
+              threadTs: !recurring ? context?.threadTs || null : null,
               executeAt,
               requestedBy,
               timezone,
@@ -303,9 +302,7 @@ export function createJobTools(
             });
 
           const timeStr = executeAt?.toISOString() ?? "next cron window";
-          const recurStr = recurring
-            ? ` (recurring: ${recurring} ${timezone})`
-            : " (one-shot)";
+          const recurStr = recurring ? ` (recurring: ${recurring} ${timezone})` : " (one-shot)";
           const modelLabel = model ?? "medium (default)";
 
           logger.info("create_job tool called", {
@@ -329,7 +326,11 @@ export function createJobTools(
           return { ok: false, error: `Failed to create job: ${error.message}` };
         }
       },
-      slack: { status: "Creating job...", detail: (i) => i.name ?? i.description?.slice(0, 40), output: (r) => r.ok === false ? r.error : `Created '${r.name || 'job'}'` },
+      slack: {
+        status: "Creating job...",
+        detail: (i) => i.name ?? i.description?.slice(0, 40),
+        output: (r) => (r.ok === false ? r.error : `Created '${r.name || "job"}'`),
+      },
     }),
 
     list_jobs: defineTool({
@@ -359,21 +360,13 @@ export function createJobTools(
       }),
       execute: async ({ status, recurring_only, include_archived, limit }) => {
         try {
-          const recurringCondition = and(
-            isNotNull(jobs.cronSchedule),
-            ne(jobs.cronSchedule, ""),
-          )!;
-          const enabledRecurringCondition = and(
-            eq(jobs.enabled, 1),
-            recurringCondition,
-          )!;
+          const recurringCondition = and(isNotNull(jobs.cronSchedule), ne(jobs.cronSchedule, ""))!;
+          const enabledRecurringCondition = and(eq(jobs.enabled, 1), recurringCondition)!;
 
           // Enabled recurring jobs are ALWAYS included and exempt from the
           // limit — applying the limit to them can silently truncate active
           // jobs out of the listing (#1306). Only the archived filter applies.
-          const recurringConditions: Array<ReturnType<typeof eq>> = [
-            enabledRecurringCondition,
-          ];
+          const recurringConditions: Array<ReturnType<typeof eq>> = [enabledRecurringCondition];
           if (!include_archived) {
             recurringConditions.push(isNull(jobs.archivedAt));
           }
@@ -385,9 +378,7 @@ export function createJobTools(
 
           // Everything else (one-shots, disabled recurring) obeys the
           // status/recurring_only filters and the limit.
-          const otherConditions: Array<ReturnType<typeof eq>> = [
-            not(enabledRecurringCondition),
-          ];
+          const otherConditions: Array<ReturnType<typeof eq>> = [not(enabledRecurringCondition)];
           if (status !== "all") {
             otherConditions.push(eq(jobs.status, status));
           }
@@ -406,8 +397,7 @@ export function createJobTools(
 
           const filtered = [...recurringRows, ...otherRows].sort(
             (a, b) =>
-              new Date(b.createdAt as any).getTime() -
-              new Date(a.createdAt as any).getTime(),
+              new Date(b.createdAt as any).getTime() - new Date(a.createdAt as any).getTime(),
           );
 
           const tz = context?.timezone;
@@ -417,7 +407,9 @@ export function createJobTools(
               try {
                 const next = CronExpressionParser.parse(j.cronSchedule, {
                   tz: j.timezone ?? "UTC",
-                }).next().toDate();
+                })
+                  .next()
+                  .toDate();
                 nextRunAt = formatTimestamp(next, tz) || null;
               } catch {
                 nextRunAt = null;
@@ -454,17 +446,17 @@ export function createJobTools(
           return { ok: false, error: `Failed to list jobs: ${error.message}` };
         }
       },
-      slack: { status: "Listing jobs...", output: (r) => r.ok === false ? r.error : `${r.count} jobs` },
+      slack: {
+        status: "Listing jobs...",
+        output: (r) => (r.ok === false ? r.error : `${r.count} jobs`),
+      },
     }),
 
     cancel_job: defineTool({
       description:
         "Cancel a pending or failed one-shot job, or disable a recurring job (preserves its definition for re-enabling later). Pass archive: true to also archive the job — it keeps its execution history but is hidden from list_jobs (re-enable via update_job with enabled: true, which un-archives). Accepts a job ID or name.",
       inputSchema: z.object({
-        job_id: z
-          .string()
-          .optional()
-          .describe("The UUID of the job to cancel"),
+        job_id: z.string().optional().describe("The UUID of the job to cancel"),
         name: z
           .string()
           .optional()
@@ -482,18 +474,15 @@ export function createJobTools(
             return { ok: false, error: "Provide either job_id or name." };
           }
 
-          const condition = job_id
-            ? eq(jobs.id, job_id)
-            : eq(jobs.name, name!);
+          const condition = job_id ? eq(jobs.id, job_id) : eq(jobs.name, name!);
 
-          const rows = await db
-            .select()
-            .from(jobs)
-            .where(condition)
-            .limit(1);
+          const rows = await db.select().from(jobs).where(condition).limit(1);
 
           if (rows.length === 0) {
-            return { ok: false, error: `No job found with ${job_id ? `ID "${job_id}"` : `name "${name}"`}.` };
+            return {
+              ok: false,
+              error: `No job found with ${job_id ? `ID "${job_id}"` : `name "${name}"`}.`,
+            };
           }
 
           const job = rows[0];
@@ -513,10 +502,7 @@ export function createJobTools(
               };
             }
 
-            await db
-              .update(jobs)
-              .set({ enabled: 0, updatedAt: new Date() })
-              .where(condition);
+            await db.update(jobs).set({ enabled: 0, updatedAt: new Date() }).where(condition);
 
             logger.info("cancel_job: disabled recurring job", { name: job.name });
             return {
@@ -552,7 +538,10 @@ export function createJobTools(
           return { ok: false, error: `Failed to cancel job: ${error.message}` };
         }
       },
-      slack: { status: "Cancelling job...", output: (r) => r.ok === false ? r.error : 'Job cancelled' },
+      slack: {
+        status: "Cancelling job...",
+        output: (r) => (r.ok === false ? r.error : "Job cancelled"),
+      },
     }),
 
     update_job: defineTool({
@@ -560,60 +549,56 @@ export function createJobTools(
         "Update an existing job's configuration without recreating it. Preserves job ID and execution history. Use to change playbook, schedule, description, transfer ownership (requested_by), or re-enable a disabled job (setting enabled: true also un-archives an archived job). Accepts job name or ID.",
       inputSchema: z.object({
         job_id: z.string().optional().describe("UUID of the job to update"),
-        name: z
-          .string()
-          .optional()
-          .describe("Name of the job to update (alternative to job_id)"),
-        updates: z.object({
-          description: z.string().optional(),
-          playbook: z.string().optional(),
-          script: z
-            .string()
-            .nullable()
-            .optional()
-            .describe("Shell command or path to a script. Set to null to remove."),
-          recurring: z
-            .string()
-            .optional()
-            .describe("New cron expression, e.g. '0 9 * * 1-5'"),
-          timezone: z.string().optional(),
-          channel_name: z.string().optional(),
-          priority: z.enum(["high", "normal", "low"]).optional(),
-          enabled: z
-            .boolean()
-            .optional()
-            .describe("Re-enable a disabled job by setting to true"),
-          max_per_day: z.number().optional(),
-          min_interval_hours: z.number().optional(),
-          requested_by: z
-            .string()
-            .optional()
-            .describe(
-              "Transfer job ownership to another user (display name, username, or Slack ID). All system notices, retries, and completions route to the new owner. Only the current owner or an admin can transfer.",
-            ),
-          model: z
-            .enum(["main", "fast", "medium", "escalation"])
-            .nullable()
-            .optional()
-            .describe(
-              "Model category to execute with ('fast' for mechanical tasks, 'main' for frontier opt-in). Set to null to reset to the default 'medium' (Sonnet-class) model.",
-            ),
-          env_allowlist: z
-            .array(z.string())
-            .nullable()
-            .optional()
-            .describe(
-              "Restrict the job's sandbox env AND credential-gated typed tools to ONLY these credential env var names (plus core infra vars). Set to null to restore full inheritance.",
-            ),
-          prompt_mode: z
-            .enum(["full", "task"])
-            .nullable()
-            .optional()
-            .describe(
-              "'task' = minimal ~2k-token task prompt (no personality/notes index). Set to null or 'full' for the standard prompt.",
-            ),
-          status: z.enum(["pending", "failed", "completed", "cancelled"]).optional().describe("Administrative status update. Recurring jobs cannot be marked completed."),
-        }).describe("Fields to update. Only provided fields are changed."),
+        name: z.string().optional().describe("Name of the job to update (alternative to job_id)"),
+        updates: z
+          .object({
+            description: z.string().optional(),
+            playbook: z.string().optional(),
+            script: z
+              .string()
+              .nullable()
+              .optional()
+              .describe("Shell command or path to a script. Set to null to remove."),
+            recurring: z.string().optional().describe("New cron expression, e.g. '0 9 * * 1-5'"),
+            timezone: z.string().optional(),
+            channel_name: z.string().optional(),
+            priority: z.enum(["high", "normal", "low"]).optional(),
+            enabled: z.boolean().optional().describe("Re-enable a disabled job by setting to true"),
+            max_per_day: z.number().optional(),
+            min_interval_hours: z.number().optional(),
+            requested_by: z
+              .string()
+              .optional()
+              .describe(
+                "Transfer job ownership to another user (display name, username, or Slack ID). All system notices, retries, and completions route to the new owner. Only the current owner or an admin can transfer.",
+              ),
+            model: z
+              .enum(["main", "fast", "medium", "escalation"])
+              .nullable()
+              .optional()
+              .describe(
+                "Model category to execute with ('fast' for mechanical tasks, 'main' for frontier opt-in). Set to null to reset to the default 'medium' (Sonnet-class) model.",
+              ),
+            env_allowlist: z
+              .array(z.string())
+              .nullable()
+              .optional()
+              .describe(
+                "Restrict the job's sandbox env AND credential-gated typed tools to ONLY these credential env var names (plus core infra vars). Set to null to restore full inheritance.",
+              ),
+            prompt_mode: z
+              .enum(["full", "task"])
+              .nullable()
+              .optional()
+              .describe(
+                "'task' = minimal ~2k-token task prompt (no personality/notes index). Set to null or 'full' for the standard prompt.",
+              ),
+            status: z
+              .enum(["pending", "failed", "completed", "cancelled"])
+              .optional()
+              .describe("Administrative status update. Recurring jobs cannot be marked completed."),
+          })
+          .describe("Fields to update. Only provided fields are changed."),
       }),
       execute: async ({ job_id, name, updates }) => {
         try {
@@ -621,15 +606,9 @@ export function createJobTools(
             return { ok: false as const, error: "Provide either job_id or name." };
           }
 
-          const condition = job_id
-            ? eq(jobs.id, job_id)
-            : eq(jobs.name, name!);
+          const condition = job_id ? eq(jobs.id, job_id) : eq(jobs.name, name!);
 
-          const rows = await db
-            .select()
-            .from(jobs)
-            .where(condition)
-            .limit(1);
+          const rows = await db.select().from(jobs).where(condition).limit(1);
 
           if (rows.length === 0) {
             return {
@@ -650,7 +629,10 @@ export function createJobTools(
           const set: Record<string, unknown> = { updatedAt: new Date() };
 
           if (updates.status === "completed" && (job.cronSchedule || job.frequencyConfig)) {
-            return { ok: false as const, error: `Recurring job "${job.name}" cannot be marked completed; disable or archive it instead.` };
+            return {
+              ok: false as const,
+              error: `Recurring job "${job.name}" cannot be marked completed; disable or archive it instead.`,
+            };
           }
           if (updates.status !== undefined) set.status = updates.status;
 
@@ -692,11 +674,18 @@ export function createJobTools(
           // Resolve channel name to ID
           if (updates.channel_name !== undefined) {
             if (!client) {
-              return { ok: false as const, error: "Channel name resolution requires the Slack connector. Omit channel_name or provide a channel ID directly." };
+              return {
+                ok: false as const,
+                error:
+                  "Channel name resolution requires the Slack connector. Omit channel_name or provide a channel ID directly.",
+              };
             }
             const channel = await resolveChannelByName(client, updates.channel_name);
             if (!channel) {
-              return { ok: false as const, error: `Could not find channel "${updates.channel_name}".` };
+              return {
+                ok: false as const,
+                error: `Could not find channel "${updates.channel_name}".`,
+              };
             }
             set.channelId = channel.id;
           }
@@ -797,7 +786,7 @@ export function createJobTools(
       },
       slack: {
         status: "Updating job...",
-        output: (r) => r.ok === false ? r.error : "Job updated",
+        output: (r) => (r.ok === false ? r.error : "Job updated"),
       },
     }),
 
@@ -808,43 +797,25 @@ export function createJobTools(
       inputSchema: z.object({
         task: z
           .string()
-          .describe(
-            "What to do. Be specific — this is the prompt for headless execution.",
-          ),
+          .describe("What to do. Be specific — this is the prompt for headless execution."),
         callback_channel: z
           .string()
           .optional()
-          .describe(
-            "Channel to post results in when done. Defaults to current channel.",
-          ),
+          .describe("Channel to post results in when done. Defaults to current channel."),
         callback_thread_ts: z
           .string()
           .optional()
-          .describe(
-            "Thread to post results in. Defaults to current thread.",
-          ),
-        name: z
-          .string()
-          .optional()
-          .describe("Job name for tracking."),
-        playbook: z
-          .string()
-          .optional()
-          .describe("Detailed execution guide (markdown)."),
+          .describe("Thread to post results in. Defaults to current thread."),
+        name: z.string().optional().describe("Job name for tracking."),
+        playbook: z.string().optional().describe("Detailed execution guide (markdown)."),
       }),
-      execute: async ({
-        task,
-        callback_channel,
-        callback_thread_ts,
-        name,
-        playbook,
-      }) => {
-
+      execute: async ({ task, callback_channel, callback_thread_ts, name, playbook }) => {
         try {
           const cbChannel = callback_channel || context?.channelId;
           const cbThread = callback_thread_ts || context?.threadTs;
 
-          const jobName = name || `headless-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          const jobName =
+            name || `headless-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
           const [job] = await db
             .insert(jobs)
             .values({
@@ -873,12 +844,15 @@ export function createJobTools(
                   });
                 }
               } catch (err: any) {
-                logger.error("dispatch_headless: immediate execution failed, will retry at next heartbeat", {
-                  jobId: job.id,
-                  error: err.message,
-                });
+                logger.error(
+                  "dispatch_headless: immediate execution failed, will retry at next heartbeat",
+                  {
+                    jobId: job.id,
+                    error: err.message,
+                  },
+                );
               }
-            })()
+            })(),
           );
 
           logger.info("dispatch_headless tool called", {
@@ -904,7 +878,11 @@ export function createJobTools(
           };
         }
       },
-      slack: { status: "Dispatching background task...", detail: (i) => i.name ?? i.task?.slice(0, 40), output: (r) => r.ok === false ? r.error : `Dispatched '${r.jobName || 'task'}'` },
+      slack: {
+        status: "Dispatching background task...",
+        detail: (i) => i.name ?? i.task?.slice(0, 40),
+        output: (r) => (r.ok === false ? r.error : `Dispatched '${r.jobName || "task"}'`),
+      },
     }),
 
     read_job_trace: defineTool({
@@ -912,16 +890,8 @@ export function createJobTools(
         "Read execution traces of jobs — reasoning steps, tool calls, results, token usage. Use to inspect what headless execution did, debug failed jobs, or review past autonomous work.",
       inputSchema: z.object({
         job_id: z.string().optional().describe("Specific job ID"),
-        job_name: z
-          .string()
-          .optional()
-          .describe("Job name to find latest execution(s) of"),
-        limit: z
-          .number()
-          .default(1)
-          .describe(
-            "Number of recent executions to return (default 1)",
-          ),
+        job_name: z.string().optional().describe("Job name to find latest execution(s) of"),
+        limit: z.number().default(1).describe("Number of recent executions to return (default 1)"),
         include_steps: z
           .boolean()
           .default(false)
@@ -951,10 +921,7 @@ export function createJobTools(
           }
 
           const query = db.select().from(jobExecutions);
-          const executions = await (condition
-            ? query.where(condition)
-            : query
-          )
+          const executions = await (condition ? query.where(condition) : query)
             .orderBy(desc(jobExecutions.startedAt))
             .limit(limit);
 
@@ -974,9 +941,7 @@ export function createJobTools(
               startedAt: e.startedAt?.toISOString(),
               finishedAt: e.finishedAt?.toISOString(),
               durationMs:
-                e.finishedAt && e.startedAt
-                  ? e.finishedAt.getTime() - e.startedAt.getTime()
-                  : null,
+                e.finishedAt && e.startedAt ? e.finishedAt.getTime() - e.startedAt.getTime() : null,
               summary: e.summary,
               tokenUsage: e.tokenUsage,
               error: e.error,
@@ -988,13 +953,8 @@ export function createJobTools(
                       ? (e.steps as unknown[]).length
                       : e.steps &&
                           typeof e.steps === "object" &&
-                          Array.isArray(
-                            (e.steps as Record<string, unknown>).steps,
-                          )
-                        ? (
-                            (e.steps as Record<string, unknown>)
-                              .steps as unknown[]
-                          ).length
+                          Array.isArray((e.steps as Record<string, unknown>).steps)
+                        ? ((e.steps as Record<string, unknown>).steps as unknown[]).length
                         : null,
                   }),
             })),
@@ -1009,7 +969,10 @@ export function createJobTools(
           };
         }
       },
-      slack: { status: "Reading job trace...", output: (r) => r.ok === false ? r.error : `${r.executions?.length ?? 0} executions` },
+      slack: {
+        status: "Reading job trace...",
+        output: (r) => (r.ok === false ? r.error : `${r.executions?.length ?? 0} executions`),
+      },
     }),
   };
 }

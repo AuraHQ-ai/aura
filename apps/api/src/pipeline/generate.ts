@@ -60,10 +60,9 @@ export function createAgenticStream(options: AgenticStreamOptions) {
   const stepModelIds: string[] = [];
   // Deferred-tool manifest is environment-level, so it rides in the cached
   // environment layer ahead of the conversation — not the volatile runtime tail.
-  const environmentContext = appendDeferredToolsBlock(
-    options.environmentContext,
-    getDeferredToolManifest(options.tools),
-  ) ?? options.environmentContext;
+  const environmentContext =
+    appendDeferredToolsBlock(options.environmentContext, getDeferredToolManifest(options.tools)) ??
+    options.environmentContext;
   const prepareStep = createInteractivePrepareStep({
     stablePrefix: options.stablePrefix,
     environmentContext,
@@ -97,10 +96,7 @@ export function createAgenticStream(options: AgenticStreamOptions) {
       sessionId: options.threadTs ?? options.channelId ?? undefined,
       userId: options.userId,
       userName: options.userName,
-      tags: [
-        `channel:${options.channelId ?? "unknown"}`,
-        `model:${options.modelId}`,
-      ],
+      tags: [`channel:${options.channelId ?? "unknown"}`, `model:${options.modelId}`],
       ...(options.userId ? { metadata: { slackUserId: options.userId } } : {}),
     },
     () =>

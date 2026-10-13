@@ -235,9 +235,7 @@ function doSelect(): void {
     // buckets (never below their floor of 1), or grow them if we're short.
     const sumAlloc = () => [...alloc.values()].reduce((s, n) => s + n, 0);
     while (sumAlloc() > target) {
-      const b = [...alloc.entries()]
-        .filter(([, n]) => n > 1)
-        .sort((a, b2) => b2[1] - a[1])[0];
+      const b = [...alloc.entries()].filter(([, n]) => n > 1).sort((a, b2) => b2[1] - a[1])[0];
       if (!b) break;
       alloc.set(b[0], b[1] - 1);
     }
@@ -276,7 +274,9 @@ function doSelect(): void {
   fs.writeFileSync(MANIFEST, JSON.stringify(manifest, null, 2) + "\n");
 
   // ── Report: tracking + coverage ──────────────────────────────────────────
-  console.log(`Selected ${selection.length} case(s) from run ${runId} (seed=${seed}, perCategory=${perCategory}).`);
+  console.log(
+    `Selected ${selection.length} case(s) from run ${runId} (seed=${seed}, perCategory=${perCategory}).`,
+  );
   console.log(`Wrote manifest: ${MANIFEST}\n`);
   console.log("Per-category QA — subset vs full (projection from source-run verdicts):");
   console.log("  category      subset   full    Δpp     n");
@@ -297,7 +297,7 @@ function doSelect(): void {
     fN += p.fullN;
   }
   console.log(
-    `  ${"OVERALL".padEnd(13)} ${((sQaSum / sN) * 100).toFixed(1).padStart(5)}%  ${((fQaSum / fN) * 100).toFixed(1).padStart(5)}%  ${(((sQaSum / sN) - (fQaSum / fN)) * 100 >= 0 ? "+" : "") + (((sQaSum / sN) - (fQaSum / fN)) * 100).toFixed(1).padStart(4)}   ${sN}/${fN}`,
+    `  ${"OVERALL".padEnd(13)} ${((sQaSum / sN) * 100).toFixed(1).padStart(5)}%  ${((fQaSum / fN) * 100).toFixed(1).padStart(5)}%  ${((sQaSum / sN - fQaSum / fN) * 100 >= 0 ? "+" : "") + ((sQaSum / sN - fQaSum / fN) * 100).toFixed(1).padStart(4)}   ${sN}/${fN}`,
   );
 
   console.log("\nFailure-bucket coverage in the subset (must hit every mode):");
@@ -327,7 +327,9 @@ async function doEmit(): Promise<void> {
     else missing.push(e.id);
   }
   if (missing.length > 0) {
-    console.warn(`Warning: ${missing.length} manifest id(s) not found in the current corpus (skipped).`);
+    console.warn(
+      `Warning: ${missing.length} manifest id(s) not found in the current corpus (skipped).`,
+    );
   }
 
   const outPath = resolve(getFlag("out") ?? "/tmp/locomo-fast-corpus.json");

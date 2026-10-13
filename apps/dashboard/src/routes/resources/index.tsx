@@ -19,12 +19,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { TableRowsSkeleton } from "@/components/page-skeleton";
 import { Pagination } from "@/components/pagination";
 import { cn, formatDate, truncate } from "@/lib/utils";
@@ -60,9 +55,7 @@ function ResourcesPage() {
       if (statusFilter !== "all") params.set("status", statusFilter);
       params.set("page", String(page));
       params.set("limit", String(PAGE_SIZE));
-      return apiGet<{ items: Resource[]; total: number }>(
-        `/resources?${params}`,
-      );
+      return apiGet<{ items: Resource[]; total: number }>(`/resources?${params}`);
     },
     placeholderData: keepPreviousData,
   });
@@ -77,9 +70,7 @@ function ResourcesPage() {
 
   if (error && !data)
     return (
-      <div className="text-destructive text-sm">
-        Failed to load resources: {error.message}
-      </div>
+      <div className="text-destructive text-sm">Failed to load resources: {error.message}</div>
     );
 
   const resources = data?.items ?? [];
@@ -89,9 +80,7 @@ function ResourcesPage() {
     <div className="flex flex-col gap-4 flex-1 min-h-0">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold tracking-tight">Resources</h1>
-        <span className="text-sm text-muted-foreground">
-          {isLoading ? "…" : `${total} total`}
-        </span>
+        <span className="text-sm text-muted-foreground">{isLoading ? "…" : `${total} total`}</span>
       </div>
 
       <div className="flex items-center gap-2 flex-wrap">
@@ -144,7 +133,12 @@ function ResourcesPage() {
         </Select>
       </div>
 
-      <div className={cn("flex-1 min-h-0 rounded-xl border overflow-auto transition-opacity", isFetching && !isLoading && "opacity-50")}>
+      <div
+        className={cn(
+          "flex-1 min-h-0 rounded-xl border overflow-auto transition-opacity",
+          isFetching && !isLoading && "opacity-50",
+        )}
+      >
         <Table className="min-w-[680px]">
           <TableHeader>
             <TableRow>
@@ -161,10 +155,7 @@ function ResourcesPage() {
               <TableRowsSkeleton columns={6} />
             ) : resources.length === 0 ? (
               <TableRow>
-                <TableCell
-                  colSpan={6}
-                  className="text-center text-muted-foreground py-8"
-                >
+                <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
                   No resources found
                 </TableCell>
               </TableRow>
@@ -203,11 +194,7 @@ function ResourcesPage() {
                     {formatDate(resource.updatedAt)}
                   </TableCell>
                   <TableCell>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() => setDeleteId(resource.id)}
-                    >
+                    <Button variant="ghost" size="icon-sm" onClick={() => setDeleteId(resource.id)}>
                       <Trash2 className="h-4 w-4 text-destructive" />
                     </Button>
                   </TableCell>
@@ -225,9 +212,7 @@ function ResourcesPage() {
           <DialogHeader>
             <DialogTitle>Delete Resource</DialogTitle>
           </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            This action cannot be undone.
-          </p>
+          <p className="text-sm text-muted-foreground">This action cannot be undone.</p>
           <div className="flex justify-end gap-2">
             <Button variant="outline" onClick={() => setDeleteId(null)}>
               Cancel

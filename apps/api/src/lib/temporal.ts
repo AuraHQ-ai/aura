@@ -25,11 +25,7 @@ export function getCurrentTimeContext(timezone?: string): string {
   const tz = timezone || "UTC";
   const now = new Date();
 
-  const formatted = formatInTimeZone(
-    now,
-    tz,
-    "EEEE, MMMM d, yyyy h:mm a",
-  );
+  const formatted = formatInTimeZone(now, tz, "EEEE, MMMM d, yyyy h:mm a");
 
   return `Current time: ${formatted} (${tz})\nThis week: ${getWeekCalendar(now, tz)}`;
 }
@@ -157,9 +153,7 @@ export function parseRelativeTime(input: string): number | null {
     return tomorrow.getTime() - Date.now();
   }
 
-  const match = cleaned.match(
-    /^(\d+)\s*(min(?:ute)?s?|h(?:our)?s?|d(?:ay)?s?|w(?:eek)?s?)$/,
-  );
+  const match = cleaned.match(/^(\d+)\s*(min(?:ute)?s?|h(?:our)?s?|d(?:ay)?s?|w(?:eek)?s?)$/);
   if (!match) return null;
 
   const num = parseInt(match[1]);

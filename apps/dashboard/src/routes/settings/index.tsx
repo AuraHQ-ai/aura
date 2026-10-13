@@ -5,7 +5,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ModelAutocomplete, type ModelAutocompleteOption } from "@/components/model-autocomplete";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { PageSkeleton } from "@/components/page-skeleton";
 import { ThemeSelect } from "@/components/theme-toggle";
@@ -35,7 +42,13 @@ interface ModelCatalog {
   medium: ModelOption[];
   embedding: ModelOption[];
   escalation: ModelOption[];
-  defaults: { main?: string; fast?: string; medium?: string; embedding?: string; escalation?: string };
+  defaults: {
+    main?: string;
+    fast?: string;
+    medium?: string;
+    embedding?: string;
+    escalation?: string;
+  };
   catalog: Array<{
     value: string;
     label: string;
@@ -86,7 +99,11 @@ const MASKED_VALUE = "••••••••";
 function SettingsPage() {
   const queryClient = useQueryClient();
 
-  const { data: settings, isLoading: loadingSettings, error: settingsError } = useQuery({
+  const {
+    data: settings,
+    isLoading: loadingSettings,
+    error: settingsError,
+  } = useQuery({
     queryKey: ["settings"],
     queryFn: () => apiGet<Setting[]>("/settings"),
   });
@@ -174,16 +191,22 @@ function SettingsPage() {
     [models?.catalog],
   );
   const enrichOptions = useMemo(
-    () => (options: ModelOption[]): ModelAutocompleteOption[] =>
-      options.map((option) => ({
-        ...option,
-        provider: providerByModelId.get(option.value),
-      })),
+    () =>
+      (options: ModelOption[]): ModelAutocompleteOption[] =>
+        options.map((option) => ({
+          ...option,
+          provider: providerByModelId.get(option.value),
+        })),
     [providerByModelId],
   );
 
   if (loadingSettings) return <PageSkeleton rows={8} />;
-  if (settingsError) return <div className="text-destructive text-sm">Failed to load settings: {settingsError.message}</div>;
+  if (settingsError)
+    return (
+      <div className="text-destructive text-sm">
+        Failed to load settings: {settingsError.message}
+      </div>
+    );
 
   const allSettings = settings ?? [];
 
@@ -202,7 +225,9 @@ function SettingsPage() {
       <h1 className="text-lg font-semibold tracking-tight">Settings</h1>
 
       <Card>
-        <CardHeader><CardTitle className="text-base">Appearance</CardTitle></CardHeader>
+        <CardHeader>
+          <CardTitle className="text-base">Appearance</CardTitle>
+        </CardHeader>
         <CardContent className="space-y-3">
           <div className="max-w-xs space-y-1.5">
             <label className="text-sm font-medium">Theme</label>
@@ -215,7 +240,9 @@ function SettingsPage() {
       </Card>
 
       <Card>
-        <CardHeader><CardTitle className="text-base">Model Selection</CardTitle></CardHeader>
+        <CardHeader>
+          <CardTitle className="text-base">Model Selection</CardTitle>
+        </CardHeader>
         <CardContent className="space-y-3">
           <div className="flex items-center justify-between gap-3">
             <p className="text-sm text-muted-foreground">
@@ -253,19 +280,26 @@ function SettingsPage() {
               </div>
             ))}
           </div>
-          <Button onClick={() => saveModelsMutation.mutate()} disabled={saveModelsMutation.isPending} size="sm">
-            <Save className="h-4 w-4" /> {saveModelsMutation.isPending ? "Saving..." : "Save Models"}
+          <Button
+            onClick={() => saveModelsMutation.mutate()}
+            disabled={saveModelsMutation.isPending}
+            size="sm"
+          >
+            <Save className="h-4 w-4" />{" "}
+            {saveModelsMutation.isPending ? "Saving..." : "Save Models"}
           </Button>
         </CardContent>
       </Card>
 
       <Card>
-        <CardHeader><CardTitle className="text-base">Ops Notifications</CardTitle></CardHeader>
+        <CardHeader>
+          <CardTitle className="text-base">Ops Notifications</CardTitle>
+        </CardHeader>
         <CardContent className="space-y-3">
           <p className="text-sm text-muted-foreground">
             Where internal job lifecycle notices (retries, escalations, disable notices,
-            retry-exhausted alerts) are sent. Without an ops channel or founder, these
-            fall back to the job requester's DM.
+            retry-exhausted alerts) are sent. Without an ops channel or founder, these fall back to
+            the job requester's DM.
           </p>
           <div className="grid gap-3 sm:grid-cols-2">
             {OPS_NOTIFICATION_KEYS.map((field) => (
@@ -285,8 +319,13 @@ function SettingsPage() {
               </div>
             ))}
           </div>
-          <Button onClick={() => saveOpsMutation.mutate()} disabled={saveOpsMutation.isPending} size="sm">
-            <Save className="h-4 w-4" /> {saveOpsMutation.isPending ? "Saving..." : "Save Ops Notifications"}
+          <Button
+            onClick={() => saveOpsMutation.mutate()}
+            disabled={saveOpsMutation.isPending}
+            size="sm"
+          >
+            <Save className="h-4 w-4" />{" "}
+            {saveOpsMutation.isPending ? "Saving..." : "Save Ops Notifications"}
           </Button>
         </CardContent>
       </Card>
@@ -320,13 +359,19 @@ function SettingsPage() {
                 </TableCell>
                 <TableCell className="text-sm">
                   {s.redacted ? (
-                    <span className="text-muted-foreground font-mono">{s.hasValue ? MASKED_VALUE : "—"}</span>
+                    <span className="text-muted-foreground font-mono">
+                      {s.hasValue ? MASKED_VALUE : "—"}
+                    </span>
                   ) : (
                     s.value
                   )}
                 </TableCell>
-                <TableCell className="text-muted-foreground text-sm">{formatDate(s.updatedAt)}</TableCell>
-                <TableCell className="text-muted-foreground text-sm">{s.updatedBy || "—"}</TableCell>
+                <TableCell className="text-muted-foreground text-sm">
+                  {formatDate(s.updatedAt)}
+                </TableCell>
+                <TableCell className="text-muted-foreground text-sm">
+                  {s.updatedBy || "—"}
+                </TableCell>
                 <TableCell>
                   <Button variant="ghost" size="icon-sm" onClick={() => openEdit(s)}>
                     <Pencil className="h-3.5 w-3.5" />
@@ -336,7 +381,9 @@ function SettingsPage() {
             ))}
             {regularSettings.length === 0 && (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-muted-foreground py-8">No settings</TableCell>
+                <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
+                  No settings
+                </TableCell>
               </TableRow>
             )}
           </TableBody>
@@ -372,9 +419,15 @@ function SettingsPage() {
                 {runtimeSettings.map((s) => (
                   <TableRow key={s.key}>
                     <TableCell className="font-mono text-sm">{s.key}</TableCell>
-                    <TableCell className="text-sm text-muted-foreground font-mono truncate max-w-xs">{s.value}</TableCell>
-                    <TableCell className="text-muted-foreground text-sm">{formatDate(s.updatedAt)}</TableCell>
-                    <TableCell className="text-muted-foreground text-sm">{s.updatedBy || "—"}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground font-mono truncate max-w-xs">
+                      {s.value}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-sm">
+                      {formatDate(s.updatedAt)}
+                    </TableCell>
+                    <TableCell className="text-muted-foreground text-sm">
+                      {s.updatedBy || "—"}
+                    </TableCell>
                     <TableCell>
                       <Button variant="ghost" size="icon-sm" onClick={() => openEdit(s)}>
                         <Pencil className="h-3.5 w-3.5" />
@@ -403,13 +456,19 @@ function SettingsPage() {
                 disabled={isEditing}
               />
               {!isEditing && (
-                <p className="text-xs text-muted-foreground">Lowercase letters, numbers, and underscores</p>
+                <p className="text-xs text-muted-foreground">
+                  Lowercase letters, numbers, and underscores
+                </p>
               )}
             </div>
             <div className="space-y-1.5">
               <label className="text-sm font-medium">Value</label>
               <Input
-                placeholder={editingRedacted ? "Enter new value to overwrite (leave blank to keep current)" : "Setting value"}
+                placeholder={
+                  editingRedacted
+                    ? "Enter new value to overwrite (leave blank to keep current)"
+                    : "Setting value"
+                }
                 value={formValue}
                 onChange={(e) => setFormValue(e.target.value)}
                 type={editingRedacted ? "password" : "text"}
@@ -422,7 +481,9 @@ function SettingsPage() {
               )}
             </div>
             <div className="flex justify-end gap-2">
-              <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
+              <Button variant="outline" onClick={() => setDialogOpen(false)}>
+                Cancel
+              </Button>
               <Button
                 onClick={() => saveSettingMutation.mutate()}
                 disabled={!formKey || saveSettingMutation.isPending}

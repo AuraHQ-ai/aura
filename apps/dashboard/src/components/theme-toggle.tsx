@@ -20,10 +20,7 @@ export function ThemeSelect({ className }: { className?: string }) {
 
   return (
     <Select value={value} onValueChange={(nextTheme) => setTheme(nextTheme)}>
-      <SelectTrigger
-        className={cn("w-full", className)}
-        aria-label="Theme preference"
-      >
+      <SelectTrigger className={cn("w-full", className)} aria-label="Theme preference">
         <SelectValue placeholder="Select theme" />
       </SelectTrigger>
       <SelectContent align="end">
@@ -38,9 +35,5 @@ export function ThemeSelect({ className }: { className?: string }) {
 }
 
 export function ThemeToggle() {
-  return (
-    <ThemeSelect
-      className="w-[180px]"
-    />
-  );
+  return <ThemeSelect className="w-[180px]" />;
 }

@@ -61,7 +61,14 @@ describe("sanitizeAssistantPartOrder", () => {
         role: "assistant",
         parts: [
           { type: "step-start" },
-          { type: "dynamic-tool", toolName: "t", toolCallId: "c1", state: "output-available", input: {}, output: {} },
+          {
+            type: "dynamic-tool",
+            toolName: "t",
+            toolCallId: "c1",
+            state: "output-available",
+            input: {},
+            output: {},
+          },
           { type: "text", text: "answer" },
         ],
       } as unknown as UIMessage,

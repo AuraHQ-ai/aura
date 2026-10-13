@@ -88,14 +88,22 @@ describe("redactSettingValue", () => {
   });
 
   it("redacts secret keys and replaces value with masked placeholder", () => {
-    const result = redactSettingValue({ ...baseSetting, key: "google_refresh_token", value: "secret123" });
+    const result = redactSettingValue({
+      ...baseSetting,
+      key: "google_refresh_token",
+      value: "secret123",
+    });
     expect(result.value).toBe(MASKED_VALUE);
     expect(result.redacted).toBe(true);
     expect(result.hasValue).toBe(true);
   });
 
   it("sets hasValue=false for secret keys with empty stored value", () => {
-    const result = redactSettingValue({ ...baseSetting, key: "elevenlabs_webhook_secret", value: "" });
+    const result = redactSettingValue({
+      ...baseSetting,
+      key: "elevenlabs_webhook_secret",
+      value: "",
+    });
     expect(result.value).toBe(MASKED_VALUE);
     expect(result.redacted).toBe(true);
     expect(result.hasValue).toBe(false);
@@ -114,10 +122,16 @@ vi.mock("../db/client.js", () => ({ db: {} }));
 
 const { dashboardSettingsApp } = await import("../routes/dashboard/settings.js");
 
-function makeDbSetting(overrides: Partial<{
-  key: string; value: string; description: string | null;
-  updatedAt: Date; updatedBy: string | null; workspaceId: string;
-}> = {}) {
+function makeDbSetting(
+  overrides: Partial<{
+    key: string;
+    value: string;
+    description: string | null;
+    updatedAt: Date;
+    updatedBy: string | null;
+    workspaceId: string;
+  }> = {},
+) {
   return {
     key: "some_key",
     value: "some_value",

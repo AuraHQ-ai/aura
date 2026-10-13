@@ -66,10 +66,7 @@ describe("ensureUndiciInVercelOutput", () => {
     mkdirSync(join(root, "nested", "workflow.func"), { recursive: true });
     mkdirSync(join(root, "__server.func"), { recursive: true });
     const dirs = helpers.listFuncDirs(root).sort();
-    expect(dirs).toEqual([
-      join(root, "__server.func"),
-      join(root, "nested", "workflow.func"),
-    ]);
+    expect(dirs).toEqual([join(root, "__server.func"), join(root, "nested", "workflow.func")]);
   });
 
   it("copies undici into functions that Nitro missed and then resolves it", () => {

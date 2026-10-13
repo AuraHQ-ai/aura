@@ -170,10 +170,9 @@ vi.mock("../lib/error-logger.js", () => ({
 
 const slackMessagingMocks = vi.hoisted(() => ({
   safePostMessage: vi.fn(
-    async (
-      _client: unknown,
-      _options: { channel: string; thread_ts?: string; text: string },
-    ) => ({ ok: true }),
+    async (_client: unknown, _options: { channel: string; thread_ts?: string; text: string }) => ({
+      ok: true,
+    }),
   ),
 }));
 
@@ -320,12 +319,12 @@ describe("spawnTurnContinuationJob", () => {
     expect(description).toContain(
       "Anything you stated as remaining or promised for later in that text is still owed",
     );
-    expect(description).toContain(
-      "treat it as a checklist and deliver ALL of it",
-    );
+    expect(description).toContain("treat it as a checklist and deliver ALL of it");
     // The generic boilerplate is preserved in front of the appended message.
     expect(description).toMatch(/^\[CONTINUE:turn-deadline-/);
-    expect(description).toContain("complete the remaining work and post the results in the same thread.");
+    expect(description).toContain(
+      "complete the remaining work and post the results in the same thread.",
+    );
   });
 
   it("keeps only the tail of a very long truncated message", async () => {
@@ -410,9 +409,7 @@ describe("spawnTurnContinuationJob depth cap (issue #1320)", () => {
     });
 
     expect(ok).toBe(true);
-    expect(dbMock.insertValues[0].description).toMatch(
-      /^\[CONTINUE:turn-deadline-abcd1234:d2\] /,
-    );
+    expect(dbMock.insertValues[0].description).toMatch(/^\[CONTINUE:turn-deadline-abcd1234:d2\] /);
   });
 
   it("still spawns at exactly the max depth", async () => {
@@ -584,9 +581,7 @@ describe("spawnTurnContinuationJob live-continuation invariant (issue #1418)", (
     expect(await spawnTurnContinuationJob(spawnArgs())).toBe(false);
 
     // A running continuation is still live and must block siblings.
-    const retryLive = liveContinuationsByThread().get(
-      threadKey(parent.channelId, parent.threadTs),
-    );
+    const retryLive = liveContinuationsByThread().get(threadKey(parent.channelId, parent.threadTs));
     expect(retryLive).toHaveLength(1);
     retryLive![0].status = "running";
     expect(
@@ -637,4 +632,3 @@ describe("spawnTurnContinuationJob live-continuation invariant (issue #1418)", (
     expect(dbMock.insertValues).toHaveLength(2);
   });
 });
-

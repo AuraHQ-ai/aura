@@ -32,8 +32,7 @@ const CLOSED_FUNCTION_RE = /<function\s*=[^>]*>[\s\S]*?<\/function>/gi;
 const UNCLOSED_TOOL_CALL_RE = /<tool_call\b[^>]*>[\s\S]*$/i;
 const UNCLOSED_INVOKE_RE = /<invoke\b[^>]*>[\s\S]*$/i;
 const UNCLOSED_FUNCTION_RE = /<function\s*=[^>]*>[\s\S]*$/i;
-const LEFTOVER_ARG_TAGS_RE =
-  /<\/?(?:arg_key|arg_value|parameter)\b[^>]*>/gi;
+const LEFTOVER_ARG_TAGS_RE = /<\/?(?:arg_key|arg_value|parameter)\b[^>]*>/gi;
 
 const TOOL_NAME_RE = /^[a-zA-Z_][a-zA-Z0-9_]{0,127}$/;
 
@@ -45,8 +44,7 @@ const MIN_SUFFIX_LEN = 4;
  * fragment on the next text-delta. Requires an underscore so ordinary words
  * like "read" are not held back.
  */
-const TRAILING_TOOL_TOKEN_RE =
-  /(_[A-Za-z0-9_]*|[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]*)$/;
+const TRAILING_TOOL_TOKEN_RE = /(_[A-Za-z0-9_]*|[A-Za-z][A-Za-z0-9]*_[A-Za-z0-9_]*)$/;
 
 export interface StripToolCallMarkupResult {
   text: string;
@@ -90,7 +88,10 @@ function collectSamples(text: string, regex: RegExp, into: string[]): void {
 /** True when `text` contains ChatML-style tool-call XML. */
 export function containsToolCallMarkup(text: string): boolean {
   if (!text) return false;
-  return MARKUP_OPENER_RE.test(text) || /<\/(?:tool_call|invoke|function|arg_key|arg_value)\b/i.test(text);
+  return (
+    MARKUP_OPENER_RE.test(text) ||
+    /<\/(?:tool_call|invoke|function|arg_key|arg_value)\b/i.test(text)
+  );
 }
 
 /**
@@ -104,10 +105,7 @@ export function isLeakedMarkupToolName(toolName: string): boolean {
   return /[<>]/.test(toolName) || containsToolCallMarkup(toolName);
 }
 
-function isKnownTool(
-  tools: Record<string, unknown> | null | undefined,
-  name: string,
-): boolean {
+function isKnownTool(tools: Record<string, unknown> | null | undefined, name: string): boolean {
   return Boolean(
     tools &&
       TOOL_NAME_RE.test(name) &&
@@ -317,8 +315,7 @@ function coerceArgValue(raw: string): unknown {
 
 function parseArgKeyValuePairs(body: string): Record<string, unknown> {
   const input: Record<string, unknown> = {};
-  const pairRe =
-    /<arg_key>\s*([^<]+?)\s*<\/arg_key>\s*<arg_value>([\s\S]*?)(?:<\/arg_value>|$)/gi;
+  const pairRe = /<arg_key>\s*([^<]+?)\s*<\/arg_key>\s*<arg_value>([\s\S]*?)(?:<\/arg_value>|$)/gi;
   for (const match of body.matchAll(pairRe)) {
     const key = match[1]?.trim();
     if (key) input[key] = coerceArgValue(match[2] ?? "");
@@ -429,9 +426,7 @@ function isToolCallPart(
   );
 }
 
-function isToolResultPart(
-  part: unknown,
-): part is { type: "tool-result"; toolCallId: string } {
+function isToolResultPart(part: unknown): part is { type: "tool-result"; toolCallId: string } {
   return (
     typeof part === "object" &&
     part !== null &&
@@ -522,18 +517,18 @@ export function sanitizeAssistantToolMarkup(
         continue;
       }
 
-      if (message.role === "assistant" && isToolCallPart(part) && isLeakedMarkupToolName(part.toolName)) {
+      if (
+        message.role === "assistant" &&
+        isToolCallPart(part) &&
+        isLeakedMarkupToolName(part.toolName)
+      ) {
         messageChanged = true;
         droppedLeakedToolCallIds.push(part.toolCallId);
         samples.push(truncateSample(part.toolName));
         continue;
       }
 
-      if (
-        message.role === "tool" &&
-        isToolResultPart(part) &&
-        leakedCallIds.has(part.toolCallId)
-      ) {
+      if (message.role === "tool" && isToolResultPart(part) && leakedCallIds.has(part.toolCallId)) {
         messageChanged = true;
         continue;
       }
@@ -637,9 +632,7 @@ export async function repairLeakedToolCall(options: {
  * reaches Slack a token at a time. When `toolNames` is provided, also
  * neutralize bare registry names and `_suffix` fragments (issue #1524).
  */
-export function createToolMarkupBuffer(
-  toolNames?: Iterable<string> | null,
-): ToolMarkupBuffer {
+export function createToolMarkupBuffer(toolNames?: Iterable<string> | null): ToolMarkupBuffer {
   let pending = "";
   let leaked = false;
   const collected: string[] = [];

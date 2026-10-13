@@ -71,9 +71,7 @@ ${rules}`,
  * Generate a synthesized summary for a single entity from its linked memories.
  * Writes the result to entities.summary and sets summary_updated_at.
  */
-export async function generateEntitySummary(
-  entityId: string,
-): Promise<string> {
+export async function generateEntitySummary(entityId: string): Promise<string> {
   const entityRows = await db
     .select({
       id: entities.id,
@@ -109,9 +107,7 @@ export async function generateEntitySummary(
     return "";
   }
 
-  const memoriesText = linkedMemories
-    .map((m) => `- [${m.type}] ${m.content}`)
-    .join("\n");
+  const memoriesText = linkedMemories.map((m) => `- [${m.type}] ${m.content}`).join("\n");
 
   // For person entities, include linked user profile data as context
   let profileContext = "";
@@ -144,13 +140,16 @@ export async function generateEntitySummary(
       if (facts?.team) parts.push(`Team: ${facts.team}`);
       if (facts?.interests && Array.isArray(facts.interests) && facts.interests.length > 0)
         parts.push(`Interests: ${facts.interests.join(", ")}`);
-      if (facts?.personalDetails && Array.isArray(facts.personalDetails) && facts.personalDetails.length > 0)
+      if (
+        facts?.personalDetails &&
+        Array.isArray(facts.personalDetails) &&
+        facts.personalDetails.length > 0
+      )
         parts.push(`Details: ${facts.personalDetails.join(", ")}`);
       if (u.timezone) parts.push(`Timezone: ${u.timezone}`);
       if (u.gender) {
         const hint =
-          PRONOUN_HINTS[u.gender.toLowerCase()] ??
-          `${u.gender} (use appropriate pronouns)`;
+          PRONOUN_HINTS[u.gender.toLowerCase()] ?? `${u.gender} (use appropriate pronouns)`;
         parts.push(`Pronouns: ${hint}`);
       }
       if (parts.length > 0) {
@@ -184,13 +183,11 @@ export async function generateEntitySummary(
  * Ordering: person > company > channel > technology > product > project,
  * then by memory count DESC within each type (most-referenced entities first).
  */
-export async function regenerateStaleSummaries(
-  opts?: {
-    forceAll?: boolean;
-    concurrency?: number;
-    onProgress?: (completed: number, total: number) => void;
-  },
-): Promise<{ updated: number; skipped: number; totalCandidates: number }> {
+export async function regenerateStaleSummaries(opts?: {
+  forceAll?: boolean;
+  concurrency?: number;
+  onProgress?: (completed: number, total: number) => void;
+}): Promise<{ updated: number; skipped: number; totalCandidates: number }> {
   const forceAll = opts?.forceAll ?? false;
 
   type StaleRow = {
@@ -232,9 +229,7 @@ export async function regenerateStaleSummaries(
   ).rows as StaleRow[];
 
   const total = staleEntities.length;
-  logger.info(
-    `Entity summaries: found ${total} entities to ${forceAll ? "regenerate" : "update"}`,
-  );
+  logger.info(`Entity summaries: found ${total} entities to ${forceAll ? "regenerate" : "update"}`);
 
   let updated = 0;
   let skipped = 0;
@@ -267,12 +262,8 @@ export async function regenerateStaleSummaries(
   }
 
   const concurrency = opts?.concurrency ?? SUMMARY_CONCURRENCY;
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, total) }, () => worker()),
-  );
+  await Promise.all(Array.from({ length: Math.min(concurrency, total) }, () => worker()));
 
-  logger.info(
-    `Entity summaries complete: ${updated} updated, ${skipped} skipped`,
-  );
+  logger.info(`Entity summaries complete: ${updated} updated, ${skipped} skipped`);
   return { updated, skipped, totalCandidates: total };
 }

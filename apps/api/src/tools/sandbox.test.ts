@@ -85,15 +85,17 @@ vi.mock("../db/client.js", () => ({
 
 import { buildDetachedLaunchScript, buildDetachedScript, createSandboxTools } from "./sandbox.js";
 
-function mockCommandLifecycle(options: {
-  waitStatus?: "exited" | "not_running" | "timeout";
-  inspectStatus?: "running" | "exited" | "not_found";
-  exitCode?: number;
-  stdout?: string;
-  stderr?: string;
-  stdoutTail?: string;
-  stderrTail?: string;
-} = {}) {
+function mockCommandLifecycle(
+  options: {
+    waitStatus?: "exited" | "not_running" | "timeout";
+    inspectStatus?: "running" | "exited" | "not_found";
+    exitCode?: number;
+    stdout?: string;
+    stderr?: string;
+    stdoutTail?: string;
+    stderrTail?: string;
+  } = {},
+) {
   const {
     waitStatus = "exited",
     inspectStatus = "exited",
@@ -175,9 +177,7 @@ describe("sandbox command tools", () => {
   it("defaults timeout_seconds to 90 seconds", async () => {
     const tool = createSandboxTools({ userId: "U123" } as any).run_command as any;
     expect(() => tool.inputSchema.parse({ command: "true" })).toThrow();
-    expect(() =>
-      tool.inputSchema.parse({ command: "true", label: "x".repeat(61) }),
-    ).toThrow();
+    expect(() => tool.inputSchema.parse({ command: "true", label: "x".repeat(61) })).toThrow();
     const input = parseRun(tool, { command: "true" });
     expect(input).toMatchObject({ command: "true", label: "running test command" });
 
@@ -192,13 +192,15 @@ describe("sandbox command tools", () => {
         timeoutMs: 10_000,
       }),
     );
-    const waitCall = sandboxMocks.commandRun.mock.calls.find(([, options]) =>
-      options?.envs?.AURA_INLINE_TIMEOUT_SECONDS
+    const waitCall = sandboxMocks.commandRun.mock.calls.find(
+      ([, options]) => options?.envs?.AURA_INLINE_TIMEOUT_SECONDS,
     );
-    expect(waitCall?.[1]).toEqual(expect.objectContaining({
-      timeoutMs: 92_000,
-      envs: expect.objectContaining({ AURA_INLINE_TIMEOUT_SECONDS: "90" }),
-    }));
+    expect(waitCall?.[1]).toEqual(
+      expect.objectContaining({
+        timeoutMs: 92_000,
+        envs: expect.objectContaining({ AURA_INLINE_TIMEOUT_SECONDS: "90" }),
+      }),
+    );
   });
 
   it("allows explicit timeouts above 90 seconds up to the 750 second ceiling", async () => {
@@ -208,25 +210,23 @@ describe("sandbox command tools", () => {
     expect(input.timeout_seconds).toBe(200);
 
     await tool.execute(input);
-    const waitCall = sandboxMocks.commandRun.mock.calls.find(([, options]) =>
-      options?.envs?.AURA_INLINE_TIMEOUT_SECONDS
+    const waitCall = sandboxMocks.commandRun.mock.calls.find(
+      ([, options]) => options?.envs?.AURA_INLINE_TIMEOUT_SECONDS,
     );
-    expect(waitCall?.[1]).toEqual(expect.objectContaining({
-      timeoutMs: 202_000,
-      envs: expect.objectContaining({ AURA_INLINE_TIMEOUT_SECONDS: "200" }),
-    }));
-    expect(() =>
-      parseRun(tool, { command: "sleep too long", timeout_seconds: 751 })
-    ).toThrow();
+    expect(waitCall?.[1]).toEqual(
+      expect.objectContaining({
+        timeoutMs: 202_000,
+        envs: expect.objectContaining({ AURA_INLINE_TIMEOUT_SECONDS: "200" }),
+      }),
+    );
+    expect(() => parseRun(tool, { command: "sleep too long", timeout_seconds: 751 })).toThrow();
   });
 
   it("returns id and pid guidance when inline timeout is exceeded", async () => {
     mockCommandLifecycle({ waitStatus: "timeout", inspectStatus: "running" });
     const tool = createSandboxTools({ userId: "U123" } as any).run_command as any;
 
-    const result = await tool.execute(
-      parseRun(tool, { command: "sleep 300", timeout_seconds: 1 }),
-    );
+    const result = await tool.execute(parseRun(tool, { command: "sleep 300", timeout_seconds: 1 }));
 
     expect(result.ok).toBe(false);
     expect(result.pid).toBe(4321);
@@ -309,16 +309,18 @@ describe("sandbox command tools", () => {
         }),
       }),
     );
-    expect(dbMocks.insertValues).toHaveBeenCalledWith(expect.objectContaining({
-      id: result.id,
-      pid: 4321,
-      command: "sleep 300",
-      status: "running",
-      requestedBy: "U123",
-      workspaceId: "default",
-      jobId: null,
-      jobExecutionId: null,
-    }));
+    expect(dbMocks.insertValues).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: result.id,
+        pid: 4321,
+        command: "sleep 300",
+        status: "running",
+        requestedBy: "U123",
+        workspaceId: "default",
+        jobId: null,
+        jobExecutionId: null,
+      }),
+    );
     expect(toolMocks.markTurnSuspendedByDetachedCommand).toHaveBeenCalledWith(result.id);
     // The suspend path keeps the original result shape — no polling guidance.
     expect(result.resume).toBeUndefined();
@@ -365,11 +367,13 @@ describe("sandbox command tools", () => {
 
     const result = await tool.execute(parseRun(tool, { command: "sleep 300" }));
 
-    expect(dbMocks.insertValues).toHaveBeenCalledWith(expect.objectContaining({
-      id: result.id,
-      jobId: "job-uuid-1",
-      jobExecutionId: "exec-uuid-1",
-    }));
+    expect(dbMocks.insertValues).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: result.id,
+        jobId: "job-uuid-1",
+        jobExecutionId: "exec-uuid-1",
+      }),
+    );
   });
 
   it("marks the job suspended when a job execution dispatches with a webhook resume (issue #1326)", async () => {
@@ -466,7 +470,9 @@ describe("sandbox command tools", () => {
 
     expect(result.ok).toBe(false);
     expect(result.error).toContain("did not write a pid file");
-    expect(result.error).toContain("launch stderr: nohup: failed to run command 'bash': Permission denied");
+    expect(result.error).toContain(
+      "launch stderr: nohup: failed to run command 'bash': Permission denied",
+    );
   });
 
   it("includes foreground launch stderr when the launcher exits non-zero", async () => {
@@ -575,7 +581,11 @@ describe("detached command wrapper callback", () => {
   it("creates the missing background directory from the launch command", async () => {
     const script = buildDetachedLaunchScript("feedbabe", "printf 'hello'", 1, "/tmp");
 
-    const { stdout } = await execFileAsync("bash", ["-c", `
+    const { stdout } = await execFileAsync(
+      "bash",
+      [
+        "-c",
+        `
 rm -rf /tmp/aura-bg
 (
 ${script}
@@ -592,14 +602,17 @@ printf 'status='
 cat /tmp/aura-bg/feedbabe.status
 printf 'out='
 cat /tmp/aura-bg/feedbabe.out
-`], {
-      env: {
-        ...process.env,
-        AURA_PUBLIC_URL: "",
-        SANDBOX_WEBHOOK_SECRET: "",
+`,
+      ],
+      {
+        env: {
+          ...process.env,
+          AURA_PUBLIC_URL: "",
+          SANDBOX_WEBHOOK_SECRET: "",
+        },
+        timeout: 5_000,
       },
-      timeout: 5_000,
-    });
+    );
 
     expect(stdout).toMatch(/pid=\d+\n/);
     expect(stdout).toContain("status=0\n");
@@ -653,8 +666,7 @@ cat /tmp/aura-bg/feedbabe.out
     expect(received).toHaveLength(1);
     const [request] = received;
     const expectedSignature =
-      "sha256=" +
-      crypto.createHmac("sha256", secret).update(request.body, "utf8").digest("hex");
+      "sha256=" + crypto.createHmac("sha256", secret).update(request.body, "utf8").digest("hex");
     expect(request.signature).toBe(expectedSignature);
     expect(JSON.parse(request.body)).toEqual({
       id: "deadbeef",

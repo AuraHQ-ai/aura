@@ -7,24 +7,65 @@ export async function GET() {
   const posts = (await getAllPosts()).filter((p) => !p.draft);
 
   const blogLines = posts
-    .map(
-      (p) =>
-        `- [${p.title}](https://aurahq.ai/blog/${p.slug}): ${p.excerpt || ""}`
-    )
+    .map((p) => `- [${p.title}](https://aurahq.ai/blog/${p.slug}): ${p.excerpt || ""}`)
     .join("\n");
 
   const docs = [
-    { title: "Getting Started", path: "getting-started", desc: "Deploy Aura into your Slack workspace in under 15 minutes." },
-    { title: "Architecture", path: "architecture", desc: "How Aura's message pipeline, memory system, tools, and self-improvement loop work." },
-    { title: "Memory System", path: "memory-system", desc: "How Aura stores, retrieves, consolidates, and connects knowledge over time." },
-    { title: "Self-Improvement", path: "self-improvement", desc: "How Aura identifies gaps, files issues, and opens PRs against her own codebase." },
-    { title: "Sandbox (E2B)", path: "tools/sandbox", desc: "Isolated Linux VM for running arbitrary code, scripts, and development tools." },
-    { title: "Slack Tools", path: "tools/slack", desc: "How Aura interacts with Slack -- messaging, search, channels, and streaming." },
-    { title: "Email Tools", path: "tools/email", desc: "Gmail integration for reading, searching, and composing email." },
-    { title: "BigQuery Tools", path: "tools/bigquery", desc: "How Aura queries your data warehouse and turns results into insights." },
-    { title: "Vercel Deployment", path: "deployment/vercel", desc: "How Aura runs on Vercel serverless functions with automatic deploys from main." },
-    { title: "Environment Variables", path: "deployment/environment-variables", desc: "Complete list of environment variables for configuring Aura." },
-    { title: "API Reference", path: "api-reference/overview", desc: "Aura's HTTP endpoints for Slack events, health checks, and cron jobs." },
+    {
+      title: "Getting Started",
+      path: "getting-started",
+      desc: "Deploy Aura into your Slack workspace in under 15 minutes.",
+    },
+    {
+      title: "Architecture",
+      path: "architecture",
+      desc: "How Aura's message pipeline, memory system, tools, and self-improvement loop work.",
+    },
+    {
+      title: "Memory System",
+      path: "memory-system",
+      desc: "How Aura stores, retrieves, consolidates, and connects knowledge over time.",
+    },
+    {
+      title: "Self-Improvement",
+      path: "self-improvement",
+      desc: "How Aura identifies gaps, files issues, and opens PRs against her own codebase.",
+    },
+    {
+      title: "Sandbox (E2B)",
+      path: "tools/sandbox",
+      desc: "Isolated Linux VM for running arbitrary code, scripts, and development tools.",
+    },
+    {
+      title: "Slack Tools",
+      path: "tools/slack",
+      desc: "How Aura interacts with Slack -- messaging, search, channels, and streaming.",
+    },
+    {
+      title: "Email Tools",
+      path: "tools/email",
+      desc: "Gmail integration for reading, searching, and composing email.",
+    },
+    {
+      title: "BigQuery Tools",
+      path: "tools/bigquery",
+      desc: "How Aura queries your data warehouse and turns results into insights.",
+    },
+    {
+      title: "Vercel Deployment",
+      path: "deployment/vercel",
+      desc: "How Aura runs on Vercel serverless functions with automatic deploys from main.",
+    },
+    {
+      title: "Environment Variables",
+      path: "deployment/environment-variables",
+      desc: "Complete list of environment variables for configuring Aura.",
+    },
+    {
+      title: "API Reference",
+      path: "api-reference/overview",
+      desc: "Aura's HTTP endpoints for Slack events, health checks, and cron jobs.",
+    },
   ];
 
   const docsLines = docs

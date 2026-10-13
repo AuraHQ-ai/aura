@@ -18,9 +18,7 @@ const dbMock = vi.hoisted(() => {
       state.insertValues.push(valuesArg);
       return {
         onConflictDoNothing: vi.fn(() =>
-          state.insertError
-            ? Promise.reject(state.insertError)
-            : Promise.resolve([]),
+          state.insertError ? Promise.reject(state.insertError) : Promise.resolve([]),
         ),
       };
     }),
@@ -31,9 +29,7 @@ const dbMock = vi.hoisted(() => {
       state.updateSets.push(setArg);
       return {
         where: vi.fn(() =>
-          state.updateError
-            ? Promise.reject(state.updateError)
-            : Promise.resolve([]),
+          state.updateError ? Promise.reject(state.updateError) : Promise.resolve([]),
         ),
       };
     }),
@@ -42,9 +38,7 @@ const dbMock = vi.hoisted(() => {
   state.delete.mockImplementation(() => ({
     where: vi.fn(() => ({
       returning: vi.fn(() =>
-        state.deleteError
-          ? Promise.reject(state.deleteError)
-          : Promise.resolve(state.deleteResult),
+        state.deleteError ? Promise.reject(state.deleteError) : Promise.resolve(state.deleteResult),
       ),
     })),
   }));
@@ -69,11 +63,7 @@ vi.mock("./logger.js", () => ({
   },
 }));
 
-import {
-  startTurnMarker,
-  finishTurnMarker,
-  cleanupOldTurnMarkers,
-} from "./turn-markers.js";
+import { startTurnMarker, finishTurnMarker, cleanupOldTurnMarkers } from "./turn-markers.js";
 import { logger } from "./logger.js";
 
 describe("turn markers", () => {

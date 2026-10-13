@@ -26,19 +26,15 @@ import {
 
 describe("normalizeLangfuseModelSlug", () => {
   it("strips provider prefixes and normalizes dotted model versions", () => {
-    expect(normalizeLangfuseModelSlug("anthropic/claude-opus-4.8")).toBe(
-      "claude-opus-4-8",
+    expect(normalizeLangfuseModelSlug("anthropic/claude-opus-4.8")).toBe("claude-opus-4-8");
+    expect(normalizeLangfuseModelSlug(["anthropic", "claude-haiku-4.5"].join("/"))).toBe(
+      "claude-haiku-4-5",
     );
-    expect(
-      normalizeLangfuseModelSlug(["anthropic", "claude-haiku-4.5"].join("/")),
-    ).toBe("claude-haiku-4-5");
     expect(normalizeLangfuseModelSlug("openai/gpt-5.1")).toBe("gpt-5-1");
   });
 
   it("leaves bare dashed slugs intact", () => {
-    expect(normalizeLangfuseModelSlug("claude-sonnet-4-6")).toBe(
-      "claude-sonnet-4-6",
-    );
+    expect(normalizeLangfuseModelSlug("claude-sonnet-4-6")).toBe("claude-sonnet-4-6");
   });
 
   it("returns undefined for empty values", () => {
@@ -61,9 +57,7 @@ describe("manual generation observations", () => {
   });
 
   it("finishGenerationObservation is a no-op for a null handle", () => {
-    expect(() =>
-      finishGenerationObservation(null, { output: { respond: true } }),
-    ).not.toThrow();
+    expect(() => finishGenerationObservation(null, { output: { respond: true } })).not.toThrow();
   });
 
   it("finishGenerationObservation swallows update/end errors", () => {
@@ -73,8 +67,6 @@ describe("manual generation observations", () => {
       }),
       end: vi.fn(),
     };
-    expect(() =>
-      finishGenerationObservation(handle, { output: { respond: false } }),
-    ).not.toThrow();
+    expect(() => finishGenerationObservation(handle, { output: { respond: false } })).not.toThrow();
   });
 });

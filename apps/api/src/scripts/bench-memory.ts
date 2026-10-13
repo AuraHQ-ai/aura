@@ -134,9 +134,7 @@ function parseStage(name: string): Stage | undefined {
   const v = getFlag(name);
   if (!v) return undefined;
   if (!VALID_STAGES.includes(v as Stage)) {
-    console.error(
-      `Invalid --${name}=${v}. Expected one of: ${VALID_STAGES.join(", ")}`,
-    );
+    console.error(`Invalid --${name}=${v}. Expected one of: ${VALID_STAGES.join(", ")}`);
     process.exit(1);
   }
   return v as Stage;
@@ -158,15 +156,12 @@ const progress = hasFlag("no-progress") ? false : undefined;
 // --resume[=runId] continues a prior run: skip already-scored cases. Bare flag
 // (or empty value) resumes the latest run via the runs/latest pointer.
 const resumeVal = getFlag("resume");
-const resume =
-  resumeVal !== undefined ? resumeVal : hasFlag("resume") ? "" : undefined;
+const resume = resumeVal !== undefined ? resumeVal : hasFlag("resume") ? "" : undefined;
 // CI passes --pr-number (or PR_NUMBER env) so the run row is attributable to a
 // pull request; nightly/manual runs leave it null.
 const prNumberArg = getFlag("pr-number") ?? process.env.PR_NUMBER;
 const prNumber =
-  prNumberArg && Number.isFinite(Number(prNumberArg))
-    ? Number(prNumberArg)
-    : undefined;
+  prNumberArg && Number.isFinite(Number(prNumberArg)) ? Number(prNumberArg) : undefined;
 
 // Cooperative cancellation: first signal asks the runner to drain in-flight
 // cases and persist partial results; a second signal force-quits. GitHub
@@ -191,9 +186,7 @@ process.on("SIGHUP", requestCancel);
 
 // Launch the guided wizard on --interactive/-i, or when this is an interactive
 // terminal and the user passed no meaningful flags. CI always passes flags.
-const meaningfulArgs = argv.filter(
-  (a) => a !== "--prod" && a !== "-i" && a !== "--interactive",
-);
+const meaningfulArgs = argv.filter((a) => a !== "--prod" && a !== "-i" && a !== "--interactive");
 const wantWizard =
   hasFlag("interactive") ||
   argv.includes("-i") ||
@@ -263,26 +256,29 @@ try {
     // Create the parent dir so a missing path doesn't fail the run after all
     // the expensive work is already done.
     mkdirSync(dirname(resolve(jsonOut)), { recursive: true });
-    writeFileSync(jsonOut, JSON.stringify(
-      {
-        runId: output.runId,
-        scores: output.scores,
-        deltas: Object.fromEntries(output.deltas),
-        results: output.results,
-        totalDurationMs: output.totalDurationMs,
-        corpusHash: output.corpusHash,
-        caseSetHash: output.caseSetHash,
-        // Scope + meta so the PR-comment step can build a HistoryEntry and diff
-        // against the base branch without re-querying anything.
-        datasets: [...(cfg.datasets ?? [])],
-        subset: cfg.subset ?? "medium",
-        costUsd: output.costUsd ?? null,
-        models: output.models,
-        prNumber: cfg.prNumber ?? null,
-      },
-      null,
-      2,
-    ));
+    writeFileSync(
+      jsonOut,
+      JSON.stringify(
+        {
+          runId: output.runId,
+          scores: output.scores,
+          deltas: Object.fromEntries(output.deltas),
+          results: output.results,
+          totalDurationMs: output.totalDurationMs,
+          corpusHash: output.corpusHash,
+          caseSetHash: output.caseSetHash,
+          // Scope + meta so the PR-comment step can build a HistoryEntry and diff
+          // against the base branch without re-querying anything.
+          datasets: [...(cfg.datasets ?? [])],
+          subset: cfg.subset ?? "medium",
+          costUsd: output.costUsd ?? null,
+          models: output.models,
+          prNumber: cfg.prNumber ?? null,
+        },
+        null,
+        2,
+      ),
+    );
     console.log(`\nWrote detailed JSONL to ${jsonOut}`);
   }
 

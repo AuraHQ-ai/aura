@@ -27,10 +27,7 @@ export const SUSPENDED_JOB_TIMEOUT_MS = 60 * 60 * 1000;
  * True when a `suspended_until` deadline is set and still in the future —
  * i.e. the row must be excluded from stale-kill sweeps.
  */
-export function isSuspensionActive(
-  suspendedUntil: Date | null | undefined,
-  now: Date,
-): boolean {
+export function isSuspensionActive(suspendedUntil: Date | null | undefined, now: Date): boolean {
   return suspendedUntil != null && suspendedUntil.getTime() > now.getTime();
 }
 
@@ -66,9 +63,7 @@ export async function markJobSuspendedForDetachedCommand({
       await db
         .update(jobExecutions)
         .set({ suspendedUntil })
-        .where(
-          and(eq(jobExecutions.id, jobExecutionId), eq(jobExecutions.status, "running")),
-        );
+        .where(and(eq(jobExecutions.id, jobExecutionId), eq(jobExecutions.status, "running")));
     }
 
     logger.info("job_suspended_awaiting_webhook", {

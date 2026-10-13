@@ -29,16 +29,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 const AuraLogo = ({ className }: { className?: string }) => (
   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 102 90" fill="none" className={className}>
-    <path fill="currentColor" d="m58 0 44 77-8 13H7L0 77 43 0h15ZM6 77l3 5 36-64 9 16 17 30h6L45 8 6 77Zm79-8H34l-3 5h64L55 5h-6l36 64Zm-48-5h28L51 39 37 64Z" />
+    <path
+      fill="currentColor"
+      d="m58 0 44 77-8 13H7L0 77 43 0h15ZM6 77l3 5 36-64 9 16 17 30h6L45 8 6 77Zm79-8H34l-3 5h64L55 5h-6l36 64Zm-48-5h28L51 39 37 64Z"
+    />
   </svg>
 );
 
@@ -81,12 +79,8 @@ function NavContent({ onClose, showLabels }: { onClose?: () => void; showLabels?
             onClick={onClose}
             className={cn(
               "flex items-center rounded-xl transition-colors",
-              showLabels
-                ? "gap-2 px-1.5 py-1.5 text-[13px]"
-                : "justify-center w-11 h-11",
-              isActive
-                ? "bg-foreground/15 text-foreground"
-                : "text-muted-foreground",
+              showLabels ? "gap-2 px-1.5 py-1.5 text-[13px]" : "justify-center w-11 h-11",
+              isActive ? "bg-foreground/15 text-foreground" : "text-muted-foreground",
             )}
           >
             <item.icon className="h-[22px] w-[22px] shrink-0" strokeWidth="1.75" />
@@ -100,9 +94,7 @@ function NavContent({ onClose, showLabels }: { onClose?: () => void; showLabels?
 
         return (
           <Tooltip key={item.href}>
-            <TooltipTrigger asChild>
-              {link}
-            </TooltipTrigger>
+            <TooltipTrigger asChild>{link}</TooltipTrigger>
             <TooltipContent side="right" sideOffset={6}>
               {item.label}
             </TooltipContent>
@@ -122,12 +114,8 @@ function SettingsLink({ onClose, showLabels }: { onClose?: () => void; showLabel
       onClick={onClose}
       className={cn(
         "flex items-center rounded-xl transition-colors",
-        showLabels
-          ? "gap-2 px-1.5 py-1.5 text-[13px]"
-          : "justify-center h-11 w-11",
-        isActive
-          ? "bg-foreground/15 text-foreground"
-          : "text-muted-foreground",
+        showLabels ? "gap-2 px-1.5 py-1.5 text-[13px]" : "justify-center h-11 w-11",
+        isActive ? "bg-foreground/15 text-foreground" : "text-muted-foreground",
       )}
     >
       <Settings className="h-[22px] w-[22px] shrink-0" strokeWidth="1.75" />
@@ -141,9 +129,7 @@ function SettingsLink({ onClose, showLabels }: { onClose?: () => void; showLabel
 
   return (
     <Tooltip>
-      <TooltipTrigger asChild>
-        {link}
-      </TooltipTrigger>
+      <TooltipTrigger asChild>{link}</TooltipTrigger>
       <TooltipContent side="right" sideOffset={6}>
         Settings
       </TooltipContent>
@@ -163,9 +149,7 @@ function UserMenu({ onClose, showLabels }: { onClose?: () => void; showLabels?: 
       type="button"
       className={cn(
         "flex items-center rounded-xl text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
-        showLabels
-          ? "w-full gap-2 px-1.5 py-1.5 text-[13px]"
-          : "h-11 w-11 justify-center",
+        showLabels ? "w-full gap-2 px-1.5 py-1.5 text-[13px]" : "h-11 w-11 justify-center",
       )}
       title={showLabels ? undefined : session.name}
     >
@@ -180,9 +164,7 @@ function UserMenu({ onClose, showLabels }: { onClose?: () => void; showLabels?: 
 
   const menu = (
     <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        {trigger}
-      </DropdownMenuTrigger>
+      <DropdownMenuTrigger asChild>{trigger}</DropdownMenuTrigger>
       <DropdownMenuContent align={showLabels ? "start" : "end"} side={showLabels ? "top" : "right"}>
         <DropdownMenuLabel className="max-w-48 truncate">{session.name}</DropdownMenuLabel>
         <DropdownMenuSeparator />
@@ -210,7 +192,12 @@ function UserMenu({ onClose, showLabels }: { onClose?: () => void; showLabels?: 
 
 function SidebarFooter({ onClose, showLabels }: { onClose?: () => void; showLabels?: boolean }) {
   return (
-    <div className={cn("mt-auto flex w-full flex-col gap-1 pt-3", showLabels ? "px-2" : "items-center")}>
+    <div
+      className={cn(
+        "mt-auto flex w-full flex-col gap-1 pt-3",
+        showLabels ? "px-2" : "items-center",
+      )}
+    >
       <UserMenu onClose={onClose} showLabels={showLabels} />
       <SettingsLink onClose={onClose} showLabels={showLabels} />
     </div>
@@ -219,7 +206,10 @@ function SidebarFooter({ onClose, showLabels }: { onClose?: () => void; showLabe
 
 export function Sidebar() {
   return (
-    <aside className="hidden md:flex md:flex-col w-[52px] shrink-0 border-r" style={{ background: "var(--sidebar-bg)" }}>
+    <aside
+      className="hidden md:flex md:flex-col w-[52px] shrink-0 border-r"
+      style={{ background: "var(--sidebar-bg)" }}
+    >
       <TooltipProvider delayDuration={150}>
         <div className="flex h-full w-full flex-col items-center py-2">
           <NavContent />
@@ -235,10 +225,7 @@ export function MobileNav() {
 
   return (
     <>
-      <button
-        className="md:hidden p-2 hover:bg-muted rounded-md"
-        onClick={() => setOpen(true)}
-      >
+      <button className="md:hidden p-2 hover:bg-muted rounded-md" onClick={() => setOpen(true)}>
         <Menu className="h-5 w-5" />
       </button>
       {open && (

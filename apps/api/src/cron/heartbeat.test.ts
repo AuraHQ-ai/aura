@@ -214,9 +214,8 @@ describe("heartbeat stale running recovery", () => {
     getSettingMock.mockResolvedValue(null);
     sendJobFailureDmMock.mockResolvedValue(true);
     safePostMessageMock.mockResolvedValue({ ok: true });
-    resolveSlackDestinationMock.mockImplementation(
-      async (_client: unknown, destination: string) =>
-        destination.startsWith("U") ? `D_${destination}` : destination,
+    resolveSlackDestinationMock.mockImplementation(async (_client: unknown, destination: string) =>
+      destination.startsWith("U") ? `D_${destination}` : destination,
     );
     // Default: fan-out dispatch fails (non-2xx) so that existing tests which
     // expect executeJobMock to be called continue working via the inline
@@ -299,9 +298,7 @@ describe("heartbeat stale running recovery", () => {
       status: "pending",
       retries: 0,
     });
-    expect((recoveredUpdate?.executeAt as Date).toISOString()).toBe(
-      "2026-05-20T10:00:00.000Z",
-    );
+    expect((recoveredUpdate?.executeAt as Date).toISOString()).toBe("2026-05-20T10:00:00.000Z");
     expect(sendJobFailureDmMock).not.toHaveBeenCalled();
   });
 
@@ -454,9 +451,12 @@ describe("heartbeat stale running recovery", () => {
 
   it("does not fail heartbeat when the supervisor webhook rejects", async () => {
     process.env.AURA_PUBLIC_URL = "https://aura.test";
-    vi.stubGlobal("fetch", vi.fn(async () => {
-      throw new Error("network down");
-    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("network down");
+      }),
+    );
     queueDbResults(
       [],
       [],
@@ -494,11 +494,7 @@ describe("heartbeat stale running recovery", () => {
     process.env.AURA_PUBLIC_URL = "https://aura.test";
     const fetchMock = vi.fn(async () => ({ ok: true }));
     vi.stubGlobal("fetch", fetchMock);
-    queueDbResults(
-      [{ id: "00000000-0000-4000-8000-000000000101" }],
-      [],
-      [],
-    );
+    queueDbResults([{ id: "00000000-0000-4000-8000-000000000101" }], [], []);
 
     const { sweepOrphanedOutcomes } = await import("./heartbeat.js");
     const result = await sweepOrphanedOutcomes();
@@ -768,7 +764,13 @@ describe("heartbeat stale running recovery", () => {
       [], // orphan in_progress outcomes
       [], // dequeued jobs without execution rows
       [], // stuck job executions (sweepStuckJobs)
-      [{ id: "job-stale-recurring", name: "alicia-lista-prospeccion-diaria", workspaceId: "default" }],
+      [
+        {
+          id: "job-stale-recurring",
+          name: "alicia-lista-prospeccion-diaria",
+          workspaceId: "default",
+        },
+      ],
       [], // no stale exhausted jobs
       [], // running execution cleanup
     );
@@ -784,9 +786,7 @@ describe("heartbeat stale running recovery", () => {
     );
     expect(recoverySet).toBeDefined();
     // executeAt = now → due on the very next sweep via the executeAt <= now branch
-    expect((recoverySet!.executeAt as Date).toISOString()).toBe(
-      "2026-05-20T08:59:00.000Z",
-    );
+    expect((recoverySet!.executeAt as Date).toISOString()).toBe("2026-05-20T08:59:00.000Z");
     // lastExecutedAt is the cron-dedup anchor and must NOT be mutated on recovery
     expect(recoverySet).not.toHaveProperty("lastExecutedAt");
   });
@@ -1175,14 +1175,14 @@ describe("heartbeat stale running recovery", () => {
       });
       queueDbResults(
         [dueJob], // pending jobs
-        [],       // expired plan notes
-        [],       // stale plan notes
-        [],       // orphan pending_review
-        [],       // orphan in_progress
-        [],       // dequeued without exec
-        [],       // stuck executions (sweepStuckJobs)
-        [],       // stale running
-        [],       // stale exhausted
+        [], // expired plan notes
+        [], // stale plan notes
+        [], // orphan pending_review
+        [], // orphan in_progress
+        [], // dequeued without exec
+        [], // stuck executions (sweepStuckJobs)
+        [], // stale running
+        [], // stale exhausted
       );
 
       const { heartbeatApp } = await import("./heartbeat.js");
@@ -1217,14 +1217,14 @@ describe("heartbeat stale running recovery", () => {
       });
       queueDbResults(
         [dueJob], // pending jobs
-        [],       // expired plan notes
-        [],       // stale plan notes
-        [],       // orphan pending_review
-        [],       // orphan in_progress
-        [],       // dequeued without exec
-        [],       // stuck executions (sweepStuckJobs)
-        [],       // stale running
-        [],       // stale exhausted
+        [], // expired plan notes
+        [], // stale plan notes
+        [], // orphan pending_review
+        [], // orphan in_progress
+        [], // dequeued without exec
+        [], // stuck executions (sweepStuckJobs)
+        [], // stale running
+        [], // stale exhausted
       );
 
       const { heartbeatApp } = await import("./heartbeat.js");
@@ -1247,9 +1247,7 @@ describe("heartbeat stale running recovery", () => {
       // return sweepStart + 700_000ms (well past the 600s budget).
       const t0 = 1_000;
       let callCount = 0;
-      vi.spyOn(Date, "now").mockImplementation(() =>
-        callCount++ === 0 ? t0 : t0 + 700_000,
-      );
+      vi.spyOn(Date, "now").mockImplementation(() => (callCount++ === 0 ? t0 : t0 + 700_000));
 
       const dueJob = baseJob({
         status: "pending",
@@ -1257,14 +1255,14 @@ describe("heartbeat stale running recovery", () => {
       });
       queueDbResults(
         [dueJob], // pending jobs
-        [],       // expired plan notes
-        [],       // stale plan notes
-        [],       // orphan pending_review
-        [],       // orphan in_progress
-        [],       // dequeued without exec
-        [],       // stuck executions (sweepStuckJobs)
-        [],       // stale running
-        [],       // stale exhausted
+        [], // expired plan notes
+        [], // stale plan notes
+        [], // orphan pending_review
+        [], // orphan in_progress
+        [], // dequeued without exec
+        [], // stuck executions (sweepStuckJobs)
+        [], // stale running
+        [], // stale exhausted
       );
 
       const { heartbeatApp } = await import("./heartbeat.js");
@@ -1293,16 +1291,16 @@ describe("heartbeat stale running recovery", () => {
         executeAt: new Date("2026-05-20T08:00:00.000Z"),
       });
       queueDbResults(
-        [dueJob],  // pending jobs
-        [],        // expired plan notes
-        [],        // stale plan notes
-        [],        // orphan pending_review
-        [],        // orphan in_progress
-        [],        // dequeued without exec
-        [],        // stuck executions (sweepStuckJobs)
+        [dueJob], // pending jobs
+        [], // expired plan notes
+        [], // stale plan notes
+        [], // orphan pending_review
+        [], // orphan in_progress
+        [], // dequeued without exec
+        [], // stuck executions (sweepStuckJobs)
         [{ id: "job-stale", name: "stale-job", workspaceId: "default" }], // stale running → recovered
-        [],        // stale exhausted
-        [],        // running execution cleanup (interruptedExecutions update)
+        [], // stale exhausted
+        [], // running execution cleanup (interruptedExecutions update)
       );
 
       const { heartbeatApp } = await import("./heartbeat.js");
@@ -1446,5 +1444,4 @@ describe("heartbeat stale running recovery", () => {
       );
     });
   });
-
 });

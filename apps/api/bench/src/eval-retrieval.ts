@@ -23,10 +23,7 @@ const DEFAULT_K = 15;
 
 interface RetrievedProvenance {
   sourceThreadTs: string | null;
-  benchProvenance:
-    | { diaIds?: string[]; sessionIds?: string[] }
-    | null
-    | undefined;
+  benchProvenance: { diaIds?: string[]; sessionIds?: string[] } | null | undefined;
 }
 
 export interface RetrievalEvalResult {
@@ -177,7 +174,10 @@ async function loadRetrievedProvenance(
   if (memoryIds.length === 0) return out;
 
   try {
-    const ids = sql.join(memoryIds.map((id) => sql`${id}::uuid`), sql`, `);
+    const ids = sql.join(
+      memoryIds.map((id) => sql`${id}::uuid`),
+      sql`, `,
+    );
     const result = await db.execute(sql`
       SELECT id, source_thread_ts, bench_provenance
       FROM memories

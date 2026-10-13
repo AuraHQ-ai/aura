@@ -1,11 +1,6 @@
 import { defineTool, binaryToModelOutput } from "../lib/tool.js";
 import { z } from "zod";
-import {
-  createSession,
-  connectSession,
-  releaseSession,
-  bufferToBase64,
-} from "../lib/browser.js";
+import { createSession, connectSession, releaseSession, bufferToBase64 } from "../lib/browser.js";
 import { logger } from "../lib/logger.js";
 import type { ScheduleContext } from "@aura/db/schema";
 import type { WebClient } from "@slack/web-api";
@@ -19,10 +14,7 @@ function truncate(text: string, max: number): string {
 }
 
 /** Extract text content from a page */
-async function extractContent(
-  page: any,
-  mode: "text" | "accessibility" | "html",
-): Promise<string> {
+async function extractContent(page: any, mode: "text" | "accessibility" | "html"): Promise<string> {
   switch (mode) {
     case "text":
       return truncate((await page.innerText("body")).trim(), 16000);
@@ -53,344 +45,323 @@ function setupConsoleCollector(page: any): string[] {
 
 // ── Tool Definition ──────────────────────────────────────────────────────────
 
-export function createBrowserTools(context?: ScheduleContext, client?: WebClient): Record<string, any> {
+export function createBrowserTools(
+  context?: ScheduleContext,
+  client?: WebClient,
+): Record<string, any> {
   try {
     return {
       browse: defineTool({
-      description:
-        "Browse a webpage or automate browser interactions using Browserbase (remote Chromium). Two modes: (1) Simple: provide a URL to navigate, take screenshots, and extract content. (2) Code: provide Playwright JS code for multi-step automation (variables `page`, `context`, `browser` are available). Returns screenshot as base64, extracted text/HTML/accessibility tree, and console errors. To share the screenshot in Slack, pass upload_channel (and optionally upload_thread_ts) — the screenshot is uploaded directly and file_id/file_url are returned instead of base64; never copy screenshot base64 into upload_file.",
-      requiredCredentials: ["browserbase_api_key"],
-      // Deliberate override: html extraction below caps at 32k, so the
-      // generic defineTool default (12k) would double-truncate. The
-      // screenshot_base64 field is exempt from the cap (binary payload
-      // consumed by toModelOutput as a native image part).
-      maxResultChars: 32000,
-      inputSchema: z.object({
-        label: z
-          .string()
-          .max(60)
-          .describe(
-            'Human-readable intent for what THIS browse does, shown on the Slack tool card. Verb-first, no trailing period, never generic. Code-mode input is free-form Playwright JS, so this label is the only good title. Examples: "checking pricing page behind login", "extracting checkout error text", "screenshotting the onboarding flow", "verifying login still works"',
-          ),
-        url: z
-          .string()
-          .optional()
-          .describe(
-            "URL to navigate to (simple mode). Mutually exclusive with code.",
-          ),
-        code: z
-          .string()
-          .optional()
-          .describe(
-            "Playwright JS code to execute (code mode). Has access to `page`, `context`, `browser`. Must return a result object or void. Mutually exclusive with url.",
-          ),
-        session_id: z
-          .string()
-          .optional()
-          .describe(
-            "Reuse an existing Browserbase session ID. If omitted, a new session is created with keepAlive=true and the session_id is returned for reuse in follow-up calls. Pass release_session: true on the final call to close it.",
-          ),
-        release_session: z
-          .boolean()
-          .default(false)
-          .describe(
-            "Call REQUEST_RELEASE on the session after this action to close it. Use on the final call in a multi-turn chain. Default false.",
-          ),
-        screenshot: z
-          .boolean()
-          .default(true)
-          .describe("Take a screenshot after navigation (default true)."),
-        upload_channel: z
-          .string()
-          .optional()
-          .describe(
-            "Slack destination to upload the screenshot to: channel name ('general'), channel ID ('C0BNVKS77'), DM channel ID, or username/display name ('Joan'). When set, the screenshot is uploaded to Slack and screenshot_file_id/screenshot_file_url are returned instead of screenshot_base64.",
-          ),
-        upload_thread_ts: z
-          .string()
-          .optional()
-          .describe(
-            "Thread timestamp to attach the uploaded screenshot to. Requires upload_channel.",
-          ),
-        extract: z
-          .enum(["text", "accessibility", "html"])
-          .optional()
-          .describe(
-            "Extract content from the page. 'text' = innerText, 'accessibility' = a11y tree, 'html' = raw HTML.",
-          ),
-        headers: z
-          .record(z.string(), z.string())
-          .optional()
-          .describe("Custom HTTP headers to set before navigation."),
-        stealth: z
-          .boolean()
-          .default(true)
-          .describe("Use stealth fingerprinting (default true)."),
-        timeout_seconds: z
-          .number()
-          .min(5)
-          .max(120)
-          .default(30)
-          .describe(
-            "Timeout for the operation in seconds (default 30, max 120).",
-          ),
-      }),
-      execute: async ({
-        url,
-        code,
-        session_id,
-        release_session,
-        screenshot,
-        upload_channel,
-        upload_thread_ts,
-        extract,
-        headers,
-        stealth,
-        timeout_seconds,
-      }) => {
-        // Validate input
-        if (!url && !code) {
-          return {
-            ok: false,
-            error:
-              "Provide either 'url' (simple mode) or 'code' (code mode).",
-          };
-        }
-        if (url && code) {
-          return {
-            ok: false,
-            error:
-              "Provide either 'url' or 'code', not both.",
-          };
-        }
-
-        let browser: any = null;
-        let currentSessionId = session_id || "";
-        const ownSession = !session_id;
-        let failed = false;
-
-        try {
-          if (session_id) {
-            browser = await connectSession(session_id);
-          } else {
-            // Create a new keepAlive session
-            const session = await createSession({
-              browserSettings: stealth
-                ? { fingerprint: { locales: ["en-US"] } }
-                : undefined,
-            });
-            currentSessionId = session.id;
-            browser = await connectSession(currentSessionId);
+        description:
+          "Browse a webpage or automate browser interactions using Browserbase (remote Chromium). Two modes: (1) Simple: provide a URL to navigate, take screenshots, and extract content. (2) Code: provide Playwright JS code for multi-step automation (variables `page`, `context`, `browser` are available). Returns screenshot as base64, extracted text/HTML/accessibility tree, and console errors. To share the screenshot in Slack, pass upload_channel (and optionally upload_thread_ts) — the screenshot is uploaded directly and file_id/file_url are returned instead of base64; never copy screenshot base64 into upload_file.",
+        requiredCredentials: ["browserbase_api_key"],
+        // Deliberate override: html extraction below caps at 32k, so the
+        // generic defineTool default (12k) would double-truncate. The
+        // screenshot_base64 field is exempt from the cap (binary payload
+        // consumed by toModelOutput as a native image part).
+        maxResultChars: 32000,
+        inputSchema: z.object({
+          label: z
+            .string()
+            .max(60)
+            .describe(
+              'Human-readable intent for what THIS browse does, shown on the Slack tool card. Verb-first, no trailing period, never generic. Code-mode input is free-form Playwright JS, so this label is the only good title. Examples: "checking pricing page behind login", "extracting checkout error text", "screenshotting the onboarding flow", "verifying login still works"',
+            ),
+          url: z
+            .string()
+            .optional()
+            .describe("URL to navigate to (simple mode). Mutually exclusive with code."),
+          code: z
+            .string()
+            .optional()
+            .describe(
+              "Playwright JS code to execute (code mode). Has access to `page`, `context`, `browser`. Must return a result object or void. Mutually exclusive with url.",
+            ),
+          session_id: z
+            .string()
+            .optional()
+            .describe(
+              "Reuse an existing Browserbase session ID. If omitted, a new session is created with keepAlive=true and the session_id is returned for reuse in follow-up calls. Pass release_session: true on the final call to close it.",
+            ),
+          release_session: z
+            .boolean()
+            .default(false)
+            .describe(
+              "Call REQUEST_RELEASE on the session after this action to close it. Use on the final call in a multi-turn chain. Default false.",
+            ),
+          screenshot: z
+            .boolean()
+            .default(true)
+            .describe("Take a screenshot after navigation (default true)."),
+          upload_channel: z
+            .string()
+            .optional()
+            .describe(
+              "Slack destination to upload the screenshot to: channel name ('general'), channel ID ('C0BNVKS77'), DM channel ID, or username/display name ('Joan'). When set, the screenshot is uploaded to Slack and screenshot_file_id/screenshot_file_url are returned instead of screenshot_base64.",
+            ),
+          upload_thread_ts: z
+            .string()
+            .optional()
+            .describe(
+              "Thread timestamp to attach the uploaded screenshot to. Requires upload_channel.",
+            ),
+          extract: z
+            .enum(["text", "accessibility", "html"])
+            .optional()
+            .describe(
+              "Extract content from the page. 'text' = innerText, 'accessibility' = a11y tree, 'html' = raw HTML.",
+            ),
+          headers: z
+            .record(z.string(), z.string())
+            .optional()
+            .describe("Custom HTTP headers to set before navigation."),
+          stealth: z.boolean().default(true).describe("Use stealth fingerprinting (default true)."),
+          timeout_seconds: z
+            .number()
+            .min(5)
+            .max(120)
+            .default(30)
+            .describe("Timeout for the operation in seconds (default 30, max 120)."),
+        }),
+        execute: async ({
+          url,
+          code,
+          session_id,
+          release_session,
+          screenshot,
+          upload_channel,
+          upload_thread_ts,
+          extract,
+          headers,
+          stealth,
+          timeout_seconds,
+        }) => {
+          // Validate input
+          if (!url && !code) {
+            return {
+              ok: false,
+              error: "Provide either 'url' (simple mode) or 'code' (code mode).",
+            };
           }
-          if (!browser) {
-            return { ok: false, error: "Failed to connect to browser session." };
-          }
-          const contexts = browser.contexts();
-          const browserContext: any =
-            contexts.length > 0 ? contexts[0] : await browser.newContext();
-          const pages = browserContext.pages();
-          const page: any =
-            pages.length > 0 ? pages[0] : await browserContext.newPage();
-
-          // Set custom headers if provided
-          if (headers) {
-            await page.setExtraHTTPHeaders(headers);
+          if (url && code) {
+            return {
+              ok: false,
+              error: "Provide either 'url' or 'code', not both.",
+            };
           }
 
-          const consoleErrors = setupConsoleCollector(page);
+          let browser: any = null;
+          let currentSessionId = session_id || "";
+          const ownSession = !session_id;
+          let failed = false;
 
-          const timeoutMs = timeout_seconds * 1000;
-
-          let resultUrl = page.url();
-          let resultTitle = "";
-          let screenshotBase64: string | undefined;
-          let screenshotBuffer: Buffer | undefined;
-          let extractedContent: string | undefined;
-          let codeResult: unknown;
-
-          if (url) {
-            // ── Simple mode ──
-            logger.info("browse tool: navigating", {
-              url,
-              sessionId: currentSessionId,
-            });
-
-            await page.goto(url, {
-              waitUntil: "domcontentloaded",
-              timeout: timeoutMs,
-            });
-
-            // Wait a bit for dynamic content
-            await page.waitForTimeout(1000);
-
-            resultUrl = page.url();
-            resultTitle = await page.title();
-
-            if (screenshot) {
-              const buf = await page.screenshot({
-                type: "png",
-                fullPage: false,
-              });
-              screenshotBuffer = buf;
-              screenshotBase64 = bufferToBase64(buf);
-            }
-
-            if (extract) {
-              extractedContent = await extractContent(page, extract);
-            }
-          } else if (code) {
-            // ── Code mode ──
-            logger.info("browse tool: executing code", {
-              codeLength: code.length,
-              sessionId: currentSessionId,
-            });
-
-            // Create a sandboxed function with page, context, browser available
-            const AsyncFunction = Object.getPrototypeOf(
-              async function () {},
-            ).constructor;
-            const fn = new AsyncFunction(
-              "page",
-              "context",
-              "browser",
-              code,
-            );
-
-            codeResult = await Promise.race([
-              fn(page, browserContext, browser),
-              new Promise((_, reject) =>
-                setTimeout(
-                  () => reject(new Error("Code execution timed out")),
-                  timeoutMs,
-                ),
-              ),
-            ]);
-
-            resultUrl = page.url();
-            resultTitle = await page.title();
-
-            if (screenshot) {
-              const buf = await page.screenshot({
-                type: "png",
-                fullPage: false,
-              });
-              screenshotBuffer = buf;
-              screenshotBase64 = bufferToBase64(buf);
-            }
-
-            if (extract) {
-              extractedContent = await extractContent(page, extract);
-            }
-          }
-
-          const result: Record<string, unknown> = {
-            ok: true,
-            url: resultUrl,
-            title: resultTitle,
-            session_id: currentSessionId,
-            console_errors: consoleErrors.slice(0, 10),
-          };
-
-          if (screenshotBase64 && screenshotBuffer && upload_channel) {
-            // Upload the screenshot to Slack instead of returning a giant
-            // base64 blob for the LLM to (unreliably) pass to upload_file.
-            if (!client) {
-              result.screenshot_base64 = screenshotBase64;
-              result.upload_error =
-                "Screenshot upload is unavailable in this context (no Slack connection); returning base64 instead.";
+          try {
+            if (session_id) {
+              browser = await connectSession(session_id);
             } else {
-              try {
-                const { resolveSlackDestination, uploadFileToSlack } =
-                  await import("./slack.js");
-                const channelId = await resolveSlackDestination(
-                  client,
-                  upload_channel,
-                );
-                if (!channelId) {
-                  result.screenshot_base64 = screenshotBase64;
-                  result.upload_error = `Could not find channel or user "${upload_channel}". Use list_channels to see available channels.`;
-                } else {
-                  const { fileId, fileUrl } = await uploadFileToSlack(client, {
-                    buffer: screenshotBuffer,
-                    filename: "screenshot.png",
-                    title: resultTitle || resultUrl || "Screenshot",
-                    channelId,
-                    threadTs: upload_thread_ts,
-                  });
-                  result.screenshot_file_id = fileId;
-                  result.screenshot_file_url = fileUrl;
-                  result.screenshot_uploaded_to = upload_channel;
-                }
-              } catch (uploadErr: any) {
-                logger.error("browse tool: screenshot upload failed", {
-                  error: uploadErr.message,
-                  channel: upload_channel,
+              // Create a new keepAlive session
+              const session = await createSession({
+                browserSettings: stealth ? { fingerprint: { locales: ["en-US"] } } : undefined,
+              });
+              currentSessionId = session.id;
+              browser = await connectSession(currentSessionId);
+            }
+            if (!browser) {
+              return { ok: false, error: "Failed to connect to browser session." };
+            }
+            const contexts = browser.contexts();
+            const browserContext: any =
+              contexts.length > 0 ? contexts[0] : await browser.newContext();
+            const pages = browserContext.pages();
+            const page: any = pages.length > 0 ? pages[0] : await browserContext.newPage();
+
+            // Set custom headers if provided
+            if (headers) {
+              await page.setExtraHTTPHeaders(headers);
+            }
+
+            const consoleErrors = setupConsoleCollector(page);
+
+            const timeoutMs = timeout_seconds * 1000;
+
+            let resultUrl = page.url();
+            let resultTitle = "";
+            let screenshotBase64: string | undefined;
+            let screenshotBuffer: Buffer | undefined;
+            let extractedContent: string | undefined;
+            let codeResult: unknown;
+
+            if (url) {
+              // ── Simple mode ──
+              logger.info("browse tool: navigating", {
+                url,
+                sessionId: currentSessionId,
+              });
+
+              await page.goto(url, {
+                waitUntil: "domcontentloaded",
+                timeout: timeoutMs,
+              });
+
+              // Wait a bit for dynamic content
+              await page.waitForTimeout(1000);
+
+              resultUrl = page.url();
+              resultTitle = await page.title();
+
+              if (screenshot) {
+                const buf = await page.screenshot({
+                  type: "png",
+                  fullPage: false,
                 });
-                result.screenshot_base64 = screenshotBase64;
-                result.upload_error = `Screenshot upload failed: ${uploadErr.message}. Returning base64 instead.`;
+                screenshotBuffer = buf;
+                screenshotBase64 = bufferToBase64(buf);
+              }
+
+              if (extract) {
+                extractedContent = await extractContent(page, extract);
+              }
+            } else if (code) {
+              // ── Code mode ──
+              logger.info("browse tool: executing code", {
+                codeLength: code.length,
+                sessionId: currentSessionId,
+              });
+
+              // Create a sandboxed function with page, context, browser available
+              const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+              const fn = new AsyncFunction("page", "context", "browser", code);
+
+              codeResult = await Promise.race([
+                fn(page, browserContext, browser),
+                new Promise((_, reject) =>
+                  setTimeout(() => reject(new Error("Code execution timed out")), timeoutMs),
+                ),
+              ]);
+
+              resultUrl = page.url();
+              resultTitle = await page.title();
+
+              if (screenshot) {
+                const buf = await page.screenshot({
+                  type: "png",
+                  fullPage: false,
+                });
+                screenshotBuffer = buf;
+                screenshotBase64 = bufferToBase64(buf);
+              }
+
+              if (extract) {
+                extractedContent = await extractContent(page, extract);
               }
             }
-          } else if (screenshotBase64) {
-            result.screenshot_base64 = screenshotBase64;
-          }
-          if (extractedContent) {
-            result.extracted_content = extractedContent;
-          }
-          if (codeResult !== undefined) {
-            result.code_result =
-              typeof codeResult === "string"
-                ? codeResult
-                : JSON.stringify(codeResult);
-          }
 
-          logger.info("browse tool: completed", {
-            url: resultUrl,
-            title: resultTitle,
-            sessionId: currentSessionId,
-            hasScreenshot: !!screenshotBase64,
-            hasExtract: !!extractedContent,
-            consoleErrors: consoleErrors.length,
-          });
+            const result: Record<string, unknown> = {
+              ok: true,
+              url: resultUrl,
+              title: resultTitle,
+              session_id: currentSessionId,
+              console_errors: consoleErrors.slice(0, 10),
+            };
 
-          return result;
-        } catch (error: any) {
-          failed = true;
-          logger.error("browse tool: failed", {
-            error: error.message,
-            sessionId: currentSessionId,
-          });
-          return {
-            ok: false,
-            error: error.message,
-            session_id: currentSessionId || undefined,
-          };
-        } finally {
-          const shouldRelease = release_session || (ownSession && failed);
-          if (browser) {
-            try {
-              await browser.close();
-            } catch {
-              // ignore close errors
+            if (screenshotBase64 && screenshotBuffer && upload_channel) {
+              // Upload the screenshot to Slack instead of returning a giant
+              // base64 blob for the LLM to (unreliably) pass to upload_file.
+              if (!client) {
+                result.screenshot_base64 = screenshotBase64;
+                result.upload_error =
+                  "Screenshot upload is unavailable in this context (no Slack connection); returning base64 instead.";
+              } else {
+                try {
+                  const { resolveSlackDestination, uploadFileToSlack } = await import("./slack.js");
+                  const channelId = await resolveSlackDestination(client, upload_channel);
+                  if (!channelId) {
+                    result.screenshot_base64 = screenshotBase64;
+                    result.upload_error = `Could not find channel or user "${upload_channel}". Use list_channels to see available channels.`;
+                  } else {
+                    const { fileId, fileUrl } = await uploadFileToSlack(client, {
+                      buffer: screenshotBuffer,
+                      filename: "screenshot.png",
+                      title: resultTitle || resultUrl || "Screenshot",
+                      channelId,
+                      threadTs: upload_thread_ts,
+                    });
+                    result.screenshot_file_id = fileId;
+                    result.screenshot_file_url = fileUrl;
+                    result.screenshot_uploaded_to = upload_channel;
+                  }
+                } catch (uploadErr: any) {
+                  logger.error("browse tool: screenshot upload failed", {
+                    error: uploadErr.message,
+                    channel: upload_channel,
+                  });
+                  result.screenshot_base64 = screenshotBase64;
+                  result.upload_error = `Screenshot upload failed: ${uploadErr.message}. Returning base64 instead.`;
+                }
+              }
+            } else if (screenshotBase64) {
+              result.screenshot_base64 = screenshotBase64;
+            }
+            if (extractedContent) {
+              result.extracted_content = extractedContent;
+            }
+            if (codeResult !== undefined) {
+              result.code_result =
+                typeof codeResult === "string" ? codeResult : JSON.stringify(codeResult);
+            }
+
+            logger.info("browse tool: completed", {
+              url: resultUrl,
+              title: resultTitle,
+              sessionId: currentSessionId,
+              hasScreenshot: !!screenshotBase64,
+              hasExtract: !!extractedContent,
+              consoleErrors: consoleErrors.length,
+            });
+
+            return result;
+          } catch (error: any) {
+            failed = true;
+            logger.error("browse tool: failed", {
+              error: error.message,
+              sessionId: currentSessionId,
+            });
+            return {
+              ok: false,
+              error: error.message,
+              session_id: currentSessionId || undefined,
+            };
+          } finally {
+            const shouldRelease = release_session || (ownSession && failed);
+            if (browser) {
+              try {
+                await browser.close();
+              } catch {
+                // ignore close errors
+              }
+            }
+            if (shouldRelease && currentSessionId) {
+              await releaseSession(currentSessionId);
             }
           }
-          if (shouldRelease && currentSessionId) {
-            await releaseSession(currentSessionId);
+        },
+        toModelOutput({ output }: { output: any }) {
+          if (!output || typeof output !== "object") {
+            return { type: "text" as const, value: JSON.stringify(output) };
           }
-        }
-      },
-      toModelOutput({ output }: { output: any }) {
-        if (!output || typeof output !== "object") {
-          return { type: "text" as const, value: JSON.stringify(output) };
-        }
-        const { screenshot_base64, ...rest } = output as Record<string, unknown>;
-        if (screenshot_base64 && typeof screenshot_base64 === "string") {
-          return binaryToModelOutput({ base64: screenshot_base64, mimeType: "image/png", meta: rest });
-        }
-        return { type: "json" as const, value: output };
-      },
-      slack: { status: "Browsing...", detail: (i) => i.url ?? "running code" },
-    }),
-  };
+          const { screenshot_base64, ...rest } = output as Record<string, unknown>;
+          if (screenshot_base64 && typeof screenshot_base64 === "string") {
+            return binaryToModelOutput({
+              base64: screenshot_base64,
+              mimeType: "image/png",
+              meta: rest,
+            });
+          }
+          return { type: "json" as const, value: output };
+        },
+        slack: { status: "Browsing...", detail: (i) => i.url ?? "running code" },
+      }),
+    };
   } catch (err) {
     logger.error("Failed to create browser tools", { error: String(err) });
     return {};

@@ -73,10 +73,7 @@ export async function sweepStuckJobs(now = new Date()): Promise<StuckJobsSweepRe
           lt(jobExecutions.startedAt, cutoff),
           // Webhook-suspended executions are parked, not hung (issue #1326):
           // leave them alone until their suspension deadline elapses.
-          or(
-            isNull(jobExecutions.suspendedUntil),
-            lte(jobExecutions.suspendedUntil, now),
-          ),
+          or(isNull(jobExecutions.suspendedUntil), lte(jobExecutions.suspendedUntil, now)),
         ),
       )
       .orderBy(jobExecutions.startedAt)
@@ -126,12 +123,7 @@ export async function sweepStuckJobs(now = new Date()): Promise<StuckJobsSweepRe
           finishedAt: now,
           error: errorMsg,
         })
-        .where(
-          and(
-            eq(jobExecutions.id, exec.id),
-            eq(jobExecutions.status, "running"),
-          ),
-        )
+        .where(and(eq(jobExecutions.id, exec.id), eq(jobExecutions.status, "running")))
         .returning({ id: jobExecutions.id });
 
       if (claimed.length === 0) continue; // another sweep claimed it first

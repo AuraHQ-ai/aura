@@ -37,7 +37,10 @@ export async function claimInvocation(
   const rowCount = (result as any).rowCount ?? (result as any).rows?.length ?? 0;
   if (rowCount === 0) {
     logger.info("Invocation claim rejected — newer message already holds lock", {
-      channelId, threadTs, messageTs, invocationId,
+      channelId,
+      threadTs,
+      messageTs,
+      invocationId,
     });
     return null;
   }
@@ -55,9 +58,7 @@ export async function claimInvocation(
 
 async function cleanupStaleLocks(): Promise<void> {
   const cutoff = new Date(Date.now() - STALE_THRESHOLD_MS);
-  const result = await db
-    .delete(conversationLocks)
-    .where(lt(conversationLocks.startedAt, cutoff));
+  const result = await db.delete(conversationLocks).where(lt(conversationLocks.startedAt, cutoff));
   const count = (result as any).rowCount ?? (result as any).count ?? 0;
   if (count > 0) {
     logger.info("Cleaned up stale conversation locks", { deleted: count });
@@ -122,10 +123,7 @@ export async function getSupersedeReason(
       .select({ invocationId: conversationLocks.invocationId })
       .from(conversationLocks)
       .where(
-        and(
-          eq(conversationLocks.channelId, channelId),
-          eq(conversationLocks.threadTs, threadTs),
-        ),
+        and(eq(conversationLocks.channelId, channelId), eq(conversationLocks.threadTs, threadTs)),
       )
       .limit(1);
     if (rows[0]?.invocationId?.startsWith(STOP_INVOCATION_PREFIX)) return "stopped";
@@ -152,10 +150,7 @@ export async function isInvocationCurrent(
     .select({ invocationId: conversationLocks.invocationId })
     .from(conversationLocks)
     .where(
-      and(
-        eq(conversationLocks.channelId, channelId),
-        eq(conversationLocks.threadTs, threadTs),
-      ),
+      and(eq(conversationLocks.channelId, channelId), eq(conversationLocks.threadTs, threadTs)),
     )
     .limit(1);
 

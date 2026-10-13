@@ -63,7 +63,7 @@ export async function createCoreTools(
   };
 
   try {
-    const userCreds = preResolvedCreds ?? await resolveUserCredentials(context?.userId);
+    const userCreds = preResolvedCreds ?? (await resolveUserCredentials(context?.userId));
     const filteredTools = filterToolsByCredentials(allTools, userCreds);
     await applyAnthropicToolDiscovery(filteredTools, modelId, context);
     return registerToolNames(filteredTools);

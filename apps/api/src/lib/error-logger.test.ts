@@ -24,12 +24,8 @@ vi.mock("./logger.js", () => ({
   },
 }));
 
-const {
-  flushLoggerDrops,
-  resetErrorLoggerStateForTest,
-  sanitizeErrorText,
-  logError,
-} = await import("./error-logger.js");
+const { flushLoggerDrops, resetErrorLoggerStateForTest, sanitizeErrorText, logError } =
+  await import("./error-logger.js");
 
 function numericArray(length: number): string {
   return `[${Array.from({ length }, (_, i) => ((i + 1) / 1000).toFixed(4)).join(",")}]`;

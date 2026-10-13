@@ -348,7 +348,9 @@ export function formatSchedulerRecoveryNotice(
   );
 }
 
-export function parseSchedulerIncident(raw: string | null | undefined): SchedulerZeroSuccessIncident | null {
+export function parseSchedulerIncident(
+  raw: string | null | undefined,
+): SchedulerZeroSuccessIncident | null {
   if (!raw?.trim()) return null;
   try {
     const parsed = JSON.parse(raw) as Partial<SchedulerZeroSuccessIncident>;
@@ -378,7 +380,9 @@ async function persistIncident(incident: SchedulerZeroSuccessIncident): Promise<
  *
  * Never throws — the heartbeat must not fail because of this scan.
  */
-export async function scanSchedulerZeroSuccess(now = new Date()): Promise<SchedulerZeroSuccessScanResult> {
+export async function scanSchedulerZeroSuccess(
+  now = new Date(),
+): Promise<SchedulerZeroSuccessScanResult> {
   const result: SchedulerZeroSuccessScanResult = { scanned: 0, alerted: 0, recovered: 0 };
 
   try {
@@ -422,9 +426,7 @@ export async function scanSchedulerZeroSuccess(now = new Date()): Promise<Schedu
         suspendedUntil: jobExecutions.suspendedUntil,
       })
       .from(jobExecutions)
-      .where(
-        and(inArray(jobExecutions.jobId, jobIds), gte(jobExecutions.startedAt, windowStart)),
-      );
+      .where(and(inArray(jobExecutions.jobId, jobIds), gte(jobExecutions.startedAt, windowStart)));
 
     const lastSuccessRows = await db
       .select({
@@ -452,9 +454,7 @@ export async function scanSchedulerZeroSuccess(now = new Date()): Promise<Schedu
       now,
     });
 
-    const incident = parseSchedulerIncident(
-      await getSetting(SCHEDULER_ZERO_SUCCESS_SETTING_KEY),
-    );
+    const incident = parseSchedulerIncident(await getSetting(SCHEDULER_ZERO_SUCCESS_SETTING_KEY));
 
     if (evaluation.isOutage) {
       if (incident?.open) {

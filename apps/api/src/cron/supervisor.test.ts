@@ -305,16 +305,18 @@ describe("supervisor cron", () => {
     getCredentialMock.mockResolvedValue("gh-token");
     sendJobFailureDmMock.mockResolvedValue(true);
     safePostMessageMock.mockResolvedValue({ ok: true });
-    resolveSlackDestinationMock.mockImplementation(
-      async (_client: unknown, destination: string) =>
-        destination.startsWith("U") ? `D_${destination}` : destination,
+    resolveSlackDestinationMock.mockImplementation(async (_client: unknown, destination: string) =>
+      destination.startsWith("U") ? `D_${destination}` : destination,
     );
     fetchMock = vi.fn(
       async (input: RequestInfo | URL, init?: RequestInit): Promise<MockFetchResponse> => {
         const url = String(input);
         const method = init?.method ?? "GET";
 
-        if (method === "GET" && url.startsWith("https://api.github.com/repos/AuraHQ-ai/aura/issues?")) {
+        if (
+          method === "GET" &&
+          url.startsWith("https://api.github.com/repos/AuraHQ-ai/aura/issues?")
+        ) {
           return {
             ok: true,
             json: async () => [],
@@ -336,7 +338,9 @@ describe("supervisor cron", () => {
         ) {
           return {
             ok: true,
-            json: async () => ({ html_url: "https://github.com/AuraHQ-ai/aura/issues/456#issuecomment-1" }),
+            json: async () => ({
+              html_url: "https://github.com/AuraHQ-ai/aura/issues/456#issuecomment-1",
+            }),
             text: async () => "",
           };
         }
@@ -414,83 +418,84 @@ describe("supervisor cron", () => {
     ["report_success", { outcomeStatus: "succeeded", error: null }, { dmCount: 1, opsCount: 0 }],
     ["report_failure", {}, { dmCount: 1, opsCount: 0 }],
     ["retry_as_is", {}, { dmCount: 0, opsCount: 1, jobUpdate: { status: "pending", retries: 0 } }],
-    ["retry_with_fix", {}, { dmCount: 0, opsCount: 1, jobUpdate: { status: "pending", retries: 0 }, issue: true }],
+    [
+      "retry_with_fix",
+      {},
+      { dmCount: 0, opsCount: 1, jobUpdate: { status: "pending", retries: 0 }, issue: true },
+    ],
     ["escalate", {}, { dmCount: 1, opsCount: 1, founder: true }],
     ["disable_job", {}, { dmCount: 0, opsCount: 1, jobUpdate: { enabled: 0 } }],
-  ])(
-    "applies %s with the right side effects",
-    async (decisionName, outcomeOverrides, expected) => {
-      process.env.AURA_OPS_CHANNEL = "C_OPS";
-      if ("founder" in expected && expected.founder) {
-        process.env.FOUNDER_USER_ID = "U_FOUNDER";
-      }
-      generateTextMock.mockResolvedValue({
-        output: {
-          decision: decisionName,
-          reasoning: `reason for ${decisionName}`,
-          user_message: `message for ${decisionName}`,
-        },
-      });
-      queueDbResults([baseOutcome(outcomeOverrides)], [baseJob()], [baseExecution()]);
+  ])("applies %s with the right side effects", async (decisionName, outcomeOverrides, expected) => {
+    process.env.AURA_OPS_CHANNEL = "C_OPS";
+    if ("founder" in expected && expected.founder) {
+      process.env.FOUNDER_USER_ID = "U_FOUNDER";
+    }
+    generateTextMock.mockResolvedValue({
+      output: {
+        decision: decisionName,
+        reasoning: `reason for ${decisionName}`,
+        user_message: `message for ${decisionName}`,
+      },
+    });
+    queueDbResults([baseOutcome(outcomeOverrides)], [baseJob()], [baseExecution()]);
 
-      const response = await invokeSupervisor();
+    const response = await invokeSupervisor();
 
-      expect(response.status).toBe(200);
-      expect(sendJobFailureDmMock).toHaveBeenCalledTimes(expected.dmCount);
-      expect(safePostMessageMock).toHaveBeenCalledTimes(expected.opsCount);
-      if (expected.opsCount > 0) {
-        // Lifecycle notices go to the ops channel with actionable context,
-        // never to the requester's DM.
-        expect(safePostMessageMock).toHaveBeenCalledWith(
-          expect.anything(),
-          expect.objectContaining({
-            channel: "C_OPS",
-            text: expect.stringContaining("<@U_REQUESTER>"),
-          }),
-        );
-        expect(safePostMessageMock).toHaveBeenCalledWith(
-          expect.anything(),
-          expect.objectContaining({
-            text: expect.stringContaining("daily sync"),
-          }),
-        );
-        expect(sendJobFailureDmMock).not.toHaveBeenCalledWith(
-          expect.objectContaining({ requestedBy: "U_REQUESTER" }),
-        );
-      }
-      if ("founder" in expected && expected.founder) {
-        expect(sendJobFailureDmMock).toHaveBeenCalledWith(
-          expect.objectContaining({ requestedBy: "U_FOUNDER" }),
-        );
-      }
-      if ("jobUpdate" in expected && expected.jobUpdate) {
-        expect(jobMutationSets()).toEqual(
-          expect.arrayContaining([expect.objectContaining(expected.jobUpdate)]),
-        );
-      } else {
-        expect(jobMutationSets()).toEqual([]);
-      }
-      if ("issue" in expected && expected.issue) {
-        expect(fetchMock).toHaveBeenCalledWith(
-          "https://api.github.com/repos/AuraHQ-ai/aura/issues",
-          expect.objectContaining({
-            method: "POST",
-            body: expect.stringContaining("last_n_steps"),
-          }),
-        );
-        expect(safePostMessageMock).toHaveBeenCalledWith(
-          expect.anything(),
-          expect.objectContaining({
-            text: expect.stringContaining("https://github.com/AuraHQ-ai/aura/issues/123"),
-          }),
-        );
-      }
-      expect(finalOutcomeUpdate()).toMatchObject({
-        supervisorStatus: "resolved",
-        supervisorDecision: decisionName,
-      });
-    },
-  );
+    expect(response.status).toBe(200);
+    expect(sendJobFailureDmMock).toHaveBeenCalledTimes(expected.dmCount);
+    expect(safePostMessageMock).toHaveBeenCalledTimes(expected.opsCount);
+    if (expected.opsCount > 0) {
+      // Lifecycle notices go to the ops channel with actionable context,
+      // never to the requester's DM.
+      expect(safePostMessageMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          channel: "C_OPS",
+          text: expect.stringContaining("<@U_REQUESTER>"),
+        }),
+      );
+      expect(safePostMessageMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          text: expect.stringContaining("daily sync"),
+        }),
+      );
+      expect(sendJobFailureDmMock).not.toHaveBeenCalledWith(
+        expect.objectContaining({ requestedBy: "U_REQUESTER" }),
+      );
+    }
+    if ("founder" in expected && expected.founder) {
+      expect(sendJobFailureDmMock).toHaveBeenCalledWith(
+        expect.objectContaining({ requestedBy: "U_FOUNDER" }),
+      );
+    }
+    if ("jobUpdate" in expected && expected.jobUpdate) {
+      expect(jobMutationSets()).toEqual(
+        expect.arrayContaining([expect.objectContaining(expected.jobUpdate)]),
+      );
+    } else {
+      expect(jobMutationSets()).toEqual([]);
+    }
+    if ("issue" in expected && expected.issue) {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "https://api.github.com/repos/AuraHQ-ai/aura/issues",
+        expect.objectContaining({
+          method: "POST",
+          body: expect.stringContaining("last_n_steps"),
+        }),
+      );
+      expect(safePostMessageMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          text: expect.stringContaining("https://github.com/AuraHQ-ai/aura/issues/123"),
+        }),
+      );
+    }
+    expect(finalOutcomeUpdate()).toMatchObject({
+      supervisorStatus: "resolved",
+      supervisorDecision: decisionName,
+    });
+  });
 
   it("routes lifecycle notices to the founder DM when only FOUNDER_USER_ID is set", async () => {
     process.env.FOUNDER_USER_ID = "U_FOUNDER";
@@ -719,7 +724,10 @@ describe("supervisor cron", () => {
         const url = String(input);
         const method = init?.method ?? "GET";
 
-        if (method === "GET" && url.startsWith("https://api.github.com/repos/AuraHQ-ai/aura/issues?")) {
+        if (
+          method === "GET" &&
+          url.startsWith("https://api.github.com/repos/AuraHQ-ai/aura/issues?")
+        ) {
           return {
             ok: true,
             json: async () => [
@@ -744,7 +752,9 @@ describe("supervisor cron", () => {
         ) {
           return {
             ok: true,
-            json: async () => ({ html_url: "https://github.com/AuraHQ-ai/aura/issues/456#issuecomment-1" }),
+            json: async () => ({
+              html_url: "https://github.com/AuraHQ-ai/aura/issues/456#issuecomment-1",
+            }),
             text: async () => "",
           };
         }
@@ -824,11 +834,7 @@ describe("supervisor cron", () => {
     },
   ])("$name", async ({ job, executions, expectedDecision, expectedDmCount }) => {
     mockCleanSuccessDecisionPolicy();
-    queueDbResults(
-      [baseOutcome({ outcomeStatus: "succeeded", error: null })],
-      [job],
-      executions,
-    );
+    queueDbResults([baseOutcome({ outcomeStatus: "succeeded", error: null })], [job], executions);
 
     const response = await invokeSupervisor();
     const body = await response.json();
@@ -857,12 +863,16 @@ describe("supervisor cron", () => {
     {
       name: "recurring notify_on_success=false clean success short-circuits to silent_success without the LLM",
       job: baseJob({ cronSchedule: "50 8 * * 1-5", notifyOnSuccess: false }),
-      executions: [baseExecution({ status: "succeeded", error: null, summary: "No changes needed" })],
+      executions: [
+        baseExecution({ status: "succeeded", error: null, summary: "No changes needed" }),
+      ],
     },
     {
       name: "system-generated one-shot clean success short-circuits to silent_success without the LLM",
       job: baseJob({ cronSchedule: null, notifyOnSuccess: false, systemGenerated: true }),
-      executions: [baseExecution({ status: "completed", error: null, summary: "Continuation finished" })],
+      executions: [
+        baseExecution({ status: "completed", error: null, summary: "Continuation finished" }),
+      ],
     },
     {
       name: "continue- name prefix fallback short-circuits pre-migration rows with systemGenerated=false",
@@ -872,7 +882,9 @@ describe("supervisor cron", () => {
         notifyOnSuccess: false,
         systemGenerated: false,
       }),
-      executions: [baseExecution({ status: "completed", error: null, summary: "Continuation finished" })],
+      executions: [
+        baseExecution({ status: "completed", error: null, summary: "Continuation finished" }),
+      ],
     },
   ])("$name", async ({ job, executions }) => {
     queueDbResults([baseOutcome({ outcomeStatus: "succeeded", error: null })], [job], executions);

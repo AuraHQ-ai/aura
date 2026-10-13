@@ -86,7 +86,13 @@ function traceRow(id: string, minute: number) {
   };
 }
 
-function messageRow(id: string, conversationId: string, role: string, orderIndex: number, content: string | null = null) {
+function messageRow(
+  id: string,
+  conversationId: string,
+  role: string,
+  orderIndex: number,
+  content: string | null = null,
+) {
   return { id, conversationId, role, content, orderIndex, createdAt: new Date() };
 }
 
@@ -121,13 +127,17 @@ describe("scoreGroup", () => {
       // traces
       [traceRow("t1", 0)],
       // messages
-      [
-        messageRow("u1", "t1", "user", 1, "do the thing"),
-        messageRow("a1", "t1", "assistant", 2),
-      ],
+      [messageRow("u1", "t1", "user", 1, "do the thing"), messageRow("a1", "t1", "assistant", 2)],
       // parts
       [
-        { id: "pt-a1", messageId: "a1", type: "text", orderIndex: 0, textValue: "Here is the completed analysis.", toolName: null },
+        {
+          id: "pt-a1",
+          messageId: "a1",
+          type: "text",
+          orderIndex: 0,
+          textValue: "Here is the completed analysis.",
+          toolName: null,
+        },
       ],
       // already-scored rows
       [],
@@ -166,8 +176,22 @@ describe("scoreGroup", () => {
         messageRow("a2", "t1", "assistant", 4),
       ],
       [
-        { id: "pt-a1", messageId: "a1", type: "text", orderIndex: 0, textValue: "first answer", toolName: null },
-        { id: "pt-a2", messageId: "a2", type: "text", orderIndex: 0, textValue: "second answer", toolName: null },
+        {
+          id: "pt-a1",
+          messageId: "a1",
+          type: "text",
+          orderIndex: 0,
+          textValue: "first answer",
+          toolName: null,
+        },
+        {
+          id: "pt-a2",
+          messageId: "a2",
+          type: "text",
+          orderIndex: 0,
+          textValue: "second answer",
+          toolName: null,
+        },
       ],
       // a1 already has a verdict
       [{ messageId: "a1" }],
@@ -194,12 +218,16 @@ describe("scoreGroup", () => {
   it("skips the judge entirely when every response is already scored", async () => {
     dbMock.results = [
       [traceRow("t1", 0)],
+      [messageRow("u1", "t1", "user", 1, "ask"), messageRow("a1", "t1", "assistant", 2)],
       [
-        messageRow("u1", "t1", "user", 1, "ask"),
-        messageRow("a1", "t1", "assistant", 2),
-      ],
-      [
-        { id: "pt-a1", messageId: "a1", type: "text", orderIndex: 0, textValue: "answer", toolName: null },
+        {
+          id: "pt-a1",
+          messageId: "a1",
+          type: "text",
+          orderIndex: 0,
+          textValue: "answer",
+          toolName: null,
+        },
       ],
       [{ messageId: "a1" }],
     ];
@@ -214,12 +242,16 @@ describe("scoreGroup", () => {
   it("stops judging when the deadline has passed", async () => {
     dbMock.results = [
       [traceRow("t1", 0)],
+      [messageRow("u1", "t1", "user", 1, "ask"), messageRow("a1", "t1", "assistant", 2)],
       [
-        messageRow("u1", "t1", "user", 1, "ask"),
-        messageRow("a1", "t1", "assistant", 2),
-      ],
-      [
-        { id: "pt-a1", messageId: "a1", type: "text", orderIndex: 0, textValue: "answer", toolName: null },
+        {
+          id: "pt-a1",
+          messageId: "a1",
+          type: "text",
+          orderIndex: 0,
+          textValue: "answer",
+          toolName: null,
+        },
       ],
       [],
     ];
@@ -240,8 +272,22 @@ describe("scoreGroup", () => {
         messageRow("a2", "t1", "assistant", 4),
       ],
       [
-        { id: "pt-a1", messageId: "a1", type: "text", orderIndex: 0, textValue: "On it.", toolName: null },
-        { id: "pt-a2", messageId: "a2", type: "text", orderIndex: 0, textValue: "The migration is ready in PR 123.", toolName: null },
+        {
+          id: "pt-a1",
+          messageId: "a1",
+          type: "text",
+          orderIndex: 0,
+          textValue: "On it.",
+          toolName: null,
+        },
+        {
+          id: "pt-a2",
+          messageId: "a2",
+          type: "text",
+          orderIndex: 0,
+          textValue: "The migration is ready in PR 123.",
+          toolName: null,
+        },
       ],
       [],
     ];
@@ -343,12 +389,9 @@ describe("eval-responses cron handler", () => {
         [],
       ];
 
-      const response = await evalResponsesApp.request(
-        "/api/cron/eval-responses",
-        {
-          headers: { authorization: "Bearer test-secret" },
-        },
-      );
+      const response = await evalResponsesApp.request("/api/cron/eval-responses", {
+        headers: { authorization: "Bearer test-secret" },
+      });
 
       expect(response.status).toBe(200);
       await expect(response.json()).resolves.toMatchObject({

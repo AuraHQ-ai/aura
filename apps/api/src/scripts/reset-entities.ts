@@ -27,13 +27,9 @@ async function main() {
   const [eaCount] = extractRows(
     await db.execute(sql`SELECT count(*)::int AS c FROM entity_aliases`),
   );
-  const [eCount] = extractRows(
-    await db.execute(sql`SELECT count(*)::int AS c FROM entities`),
-  );
+  const [eCount] = extractRows(await db.execute(sql`SELECT count(*)::int AS c FROM entities`));
   const [uLinked] = extractRows(
-    await db.execute(
-      sql`SELECT count(*)::int AS c FROM users WHERE entity_id IS NOT NULL`,
-    ),
+    await db.execute(sql`SELECT count(*)::int AS c FROM users WHERE entity_id IS NOT NULL`),
   );
 
   console.log("Before:");
@@ -66,13 +62,9 @@ async function main() {
   const [eaAfter] = extractRows(
     await db.execute(sql`SELECT count(*)::int AS c FROM entity_aliases`),
   );
-  const [eAfter] = extractRows(
-    await db.execute(sql`SELECT count(*)::int AS c FROM entities`),
-  );
+  const [eAfter] = extractRows(await db.execute(sql`SELECT count(*)::int AS c FROM entities`));
   const [uAfter] = extractRows(
-    await db.execute(
-      sql`SELECT count(*)::int AS c FROM users WHERE entity_id IS NOT NULL`,
-    ),
+    await db.execute(sql`SELECT count(*)::int AS c FROM users WHERE entity_id IS NOT NULL`),
   );
 
   console.log("\nAfter:");

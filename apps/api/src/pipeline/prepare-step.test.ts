@@ -86,10 +86,9 @@ describe("getProviderThinkingOptions", () => {
       catalogRow({ provider: "anthropic", thinkingMode: "adaptive" }),
     );
 
-    await expect(getProviderThinkingOptions("anthropic/claude-opus-4.7", 8000))
-      .resolves.toEqual({
-        anthropic: { thinking: { type: "adaptive" } },
-      });
+    await expect(getProviderThinkingOptions("anthropic/claude-opus-4.7", 8000)).resolves.toEqual({
+      anthropic: { thinking: { type: "adaptive" } },
+    });
   });
 
   it("resolves Anthropic enabled thinking with the requested budget", async () => {
@@ -97,10 +96,9 @@ describe("getProviderThinkingOptions", () => {
       catalogRow({ provider: "anthropic", thinkingMode: "enabled" }),
     );
 
-    await expect(getProviderThinkingOptions("anthropic/claude-opus-4.6", 12000))
-      .resolves.toEqual({
-        anthropic: { thinking: { type: "enabled", budgetTokens: 12000 } },
-      });
+    await expect(getProviderThinkingOptions("anthropic/claude-opus-4.6", 12000)).resolves.toEqual({
+      anthropic: { thinking: { type: "enabled", budgetTokens: 12000 } },
+    });
   });
 
   it("resolves OpenAI reasoning effort", async () => {
@@ -108,10 +106,9 @@ describe("getProviderThinkingOptions", () => {
       catalogRow({ provider: "openai", reasoningEffort: "medium" }),
     );
 
-    await expect(getProviderThinkingOptions("openai/gpt-5.1", 8000))
-      .resolves.toEqual({
-        openai: { reasoningEffort: "medium" },
-      });
+    await expect(getProviderThinkingOptions("openai/gpt-5.1", 8000)).resolves.toEqual({
+      openai: { reasoningEffort: "medium" },
+    });
   });
 
   it("resolves Google dynamic thinking budget to provider dynamic mode", async () => {
@@ -119,10 +116,9 @@ describe("getProviderThinkingOptions", () => {
       catalogRow({ provider: "google", thinkingBudget: "dynamic" }),
     );
 
-    await expect(getProviderThinkingOptions("google/gemini-2.5-pro", 8000))
-      .resolves.toEqual({
-        google: { thinkingConfig: { thinkingBudget: -1 } },
-      });
+    await expect(getProviderThinkingOptions("google/gemini-2.5-pro", 8000)).resolves.toEqual({
+      google: { thinkingConfig: { thinkingBudget: -1 } },
+    });
   });
 
   it("resolves xAI reasoning effort", async () => {
@@ -130,20 +126,17 @@ describe("getProviderThinkingOptions", () => {
       catalogRow({ provider: "xai", reasoningEffort: "low" }),
     );
 
-    await expect(getProviderThinkingOptions("xai/grok-4-fast-reasoning", 8000))
-      .resolves.toEqual({
-        xai: { reasoningEffort: "low" },
-      });
+    await expect(getProviderThinkingOptions("xai/grok-4-fast-reasoning", 8000)).resolves.toEqual({
+      xai: { reasoningEffort: "low" },
+    });
   });
 
   it("falls back to enabled thinking for reasoning Anthropic models with null capabilities", () => {
     expect(
-      resolveProviderThinkingOptions(
-        "anthropic/claude-opus-4.9",
-        null,
-        8000,
-        { found: true, supportsThinking: true },
-      ),
+      resolveProviderThinkingOptions("anthropic/claude-opus-4.9", null, 8000, {
+        found: true,
+        supportsThinking: true,
+      }),
     ).toEqual({
       anthropic: { thinking: { type: "enabled", budgetTokens: 8000 } },
     });
@@ -151,21 +144,17 @@ describe("getProviderThinkingOptions", () => {
 
   it("returns no override for non-reasoning null capabilities and unknown providers", () => {
     expect(
-      resolveProviderThinkingOptions(
-        "anthropic/claude-haiku-4.5",
-        null,
-        8000,
-        { found: true, supportsThinking: false },
-      ),
+      resolveProviderThinkingOptions("anthropic/claude-haiku-4.5", null, 8000, {
+        found: true,
+        supportsThinking: false,
+      }),
     ).toEqual({});
 
     expect(
-      resolveProviderThinkingOptions(
-        "deepseek/deepseek-v3.2-thinking",
-        null,
-        8000,
-        { found: true, supportsThinking: true },
-      ),
+      resolveProviderThinkingOptions("deepseek/deepseek-v3.2-thinking", null, 8000, {
+        found: true,
+        supportsThinking: true,
+      }),
     ).toEqual({});
   });
 });
@@ -396,9 +385,7 @@ describe("createPrepareStep context compaction (issue #1328)", () => {
   });
 
   function buildLongConversation(stepCount: number, resultLength: number): ModelMessage[] {
-    const history: ModelMessage[] = [
-      { role: "user", content: "Investigate the thing." },
-    ];
+    const history: ModelMessage[] = [{ role: "user", content: "Investigate the thing." }];
     for (let i = 0; i < stepCount; i++) {
       const id = `call-${i}`;
       history.push({
@@ -509,9 +496,7 @@ describe("createPrepareStep tool call id sanitization (issue #1376)", () => {
       { role: "user", content: "resume the job" },
       {
         role: "assistant",
-        content: [
-          { type: "tool-call", toolCallId: badId, toolName: "run_command", input: {} },
-        ],
+        content: [{ type: "tool-call", toolCallId: badId, toolName: "run_command", input: {} }],
       } as ModelMessage,
       {
         role: "tool",
@@ -564,9 +549,7 @@ describe("createPrepareStep tool call id sanitization (issue #1376)", () => {
       userId: "U0999",
       context: expect.objectContaining({
         stepNumber: 1,
-        normalizedIds: [
-          { raw: badId, sanitized: expect.stringMatching(/^[a-zA-Z0-9_-]{1,64}$/) },
-        ],
+        normalizedIds: [{ raw: badId, sanitized: expect.stringMatching(/^[a-zA-Z0-9_-]{1,64}$/) }],
       }),
     });
   });
@@ -650,9 +633,7 @@ describe("createPrepareStep leaked tool-call markup (issue #1515)", () => {
     });
 
     const assistant = result?.messages?.find((m) => m.role === "assistant");
-    const text = typeof assistant?.content === "string"
-      ? assistant.content
-      : "";
+    const text = typeof assistant?.content === "string" ? assistant.content : "";
     expect(text).toContain("Sure.");
     expect(text).not.toContain("<tool_call>");
     expect(text).not.toContain("<arg_key>");
@@ -691,7 +672,10 @@ describe("createPrepareStep leaked tool-call markup (issue #1515)", () => {
   });
 });
 
-function searchSteps(count: number, text = ""): Array<{ text: string; toolCalls: Array<{ toolName: string }> }> {
+function searchSteps(
+  count: number,
+  text = "",
+): Array<{ text: string; toolCalls: Array<{ toolName: string }> }> {
   return Array.from({ length: count }, (_, i) => ({
     text,
     toolCalls: [{ toolName: "search_messages", toolCallId: `call-${i}` } as any],
@@ -701,11 +685,7 @@ function searchSteps(count: number, text = ""): Array<{ text: string; toolCalls:
 describe("detectToolCallLoop (issue #1524)", () => {
   it("returns null below the threshold and when text interrupts the streak", () => {
     expect(detectToolCallLoop(searchSteps(TOOL_LOOP_THRESHOLD - 1))).toBeNull();
-    expect(
-      detectToolCallLoop([
-        ...searchSteps(TOOL_LOOP_THRESHOLD, "still searching"),
-      ]),
-    ).toBeNull();
+    expect(detectToolCallLoop([...searchSteps(TOOL_LOOP_THRESHOLD, "still searching")])).toBeNull();
     expect(
       detectToolCallLoop([
         ...searchSteps(8),
@@ -799,11 +779,13 @@ function failedSearchSteps(count: number) {
   return Array.from({ length: count }, (_, i) => ({
     text: "",
     toolCalls: [{ toolName: "archive_emails", toolCallId: `fail-${i}` }],
-    toolResults: [{
-      toolName: "archive_emails",
-      toolCallId: `fail-${i}`,
-      output: { ok: false, error: "nope" },
-    }],
+    toolResults: [
+      {
+        toolName: "archive_emails",
+        toolCallId: `fail-${i}`,
+        output: { ok: false, error: "nope" },
+      },
+    ],
   }));
 }
 

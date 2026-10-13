@@ -43,14 +43,11 @@ describe("trySetAgentSessionStatus", () => {
       status: "processing",
     });
 
-    expect(client.apiCall).toHaveBeenCalledExactlyOnceWith(
-      "agents.sessions.setStatus",
-      {
-        channel_id: "D123",
-        thread_ts: "1724264405.531769",
-        status: "processing",
-      },
-    );
+    expect(client.apiCall).toHaveBeenCalledExactlyOnceWith("agents.sessions.setStatus", {
+      channel_id: "D123",
+      thread_ts: "1724264405.531769",
+      status: "processing",
+    });
   });
 
   it("accepts every value of the agent_view status enum", async () => {
@@ -101,14 +98,11 @@ describe("trySetAgentSessionStatus", () => {
 
     // Even if forced past the compiler, nothing beyond the documented
     // payload fields is forwarded to the API.
-    expect(client.apiCall).toHaveBeenCalledExactlyOnceWith(
-      "agents.sessions.setStatus",
-      {
-        channel_id: "D123",
-        thread_ts: "1.2",
-        status: "processing",
-      },
-    );
+    expect(client.apiCall).toHaveBeenCalledExactlyOnceWith("agents.sessions.setStatus", {
+      channel_id: "D123",
+      thread_ts: "1.2",
+      status: "processing",
+    });
   });
 
   it("skips when threadTs is missing", async () => {
@@ -199,14 +193,11 @@ describe("setAssistantThreadTitle", () => {
       title: "Holidays this year",
     });
 
-    expect(client.apiCall).toHaveBeenCalledExactlyOnceWith(
-      "agents.sessions.rename",
-      {
-        channel_id: "D123",
-        thread_ts: "1786543.345678",
-        title: "Holidays this year",
-      },
-    );
+    expect(client.apiCall).toHaveBeenCalledExactlyOnceWith("agents.sessions.rename", {
+      channel_id: "D123",
+      thread_ts: "1786543.345678",
+      title: "Holidays this year",
+    });
   });
 
   it("propagates errors to the caller (call sites own the soft-fail catch)", async () => {

@@ -57,17 +57,19 @@ export function getSameDestinationPostText(
  * mrkdwn punctuation stripped, whitespace collapsed.
  */
 export function normalizeForDuplicateComparison(text: string): string {
-  return text
-    .toLowerCase()
-    // <@U123>, <!here> → drop; <#C123|name> / <url|label> → keep the label.
-    .replace(/<[@!][^>]*>/g, " ")
-    .replace(/<[^>|]*\|([^>]*)>/g, "$1")
-    .replace(/<[^>]*>/g, " ")
-    .replace(/:[a-z0-9_+-]+:/g, " ")
-    .replace(/[*_~`>#|•·]/g, "")
-    .replace(/[^\p{L}\p{N}\s.,%$@/-]/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+  return (
+    text
+      .toLowerCase()
+      // <@U123>, <!here> → drop; <#C123|name> / <url|label> → keep the label.
+      .replace(/<[@!][^>]*>/g, " ")
+      .replace(/<[^>|]*\|([^>]*)>/g, "$1")
+      .replace(/<[^>]*>/g, " ")
+      .replace(/:[a-z0-9_+-]+:/g, " ")
+      .replace(/[*_~`>#|•·]/g, "")
+      .replace(/[^\p{L}\p{N}\s.,%$@/-]/gu, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+  );
 }
 
 function significantWords(normalized: string): string[] {
@@ -89,10 +91,7 @@ const OVERLAP_THRESHOLD = 0.8;
  * - or ≥80% of the final text's significant words appear in a posted message
  *   (catches "Posted in-thread. <restatement>" summaries of the same answer).
  */
-export function isSubstantialDuplicate(
-  finalText: string,
-  postedTexts: string[],
-): boolean {
+export function isSubstantialDuplicate(finalText: string, postedTexts: string[]): boolean {
   const final = normalizeForDuplicateComparison(finalText);
   if (!final) return false;
   const finalWords = significantWords(final);

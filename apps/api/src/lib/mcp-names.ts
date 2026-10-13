@@ -27,9 +27,7 @@ export function namespaceMcpTool(slug: string, toolName: string): string {
   return `${MCP_TOOL_PREFIX}${slug}__${safeTool}`;
 }
 
-export function parseNamespacedMcpTool(
-  name: string,
-): { slug: string; tool: string } | null {
+export function parseNamespacedMcpTool(name: string): { slug: string; tool: string } | null {
   if (!name.startsWith(MCP_TOOL_PREFIX)) return null;
   const rest = name.slice(MCP_TOOL_PREFIX.length);
   const sep = rest.indexOf("__");
@@ -46,10 +44,7 @@ export function mcpEnvAllowlistName(slug: string): string {
   return `mcp:${slug}`;
 }
 
-export function isMcpServerAllowlisted(
-  slug: string,
-  envAllowlist: string[] | undefined,
-): boolean {
+export function isMcpServerAllowlisted(slug: string, envAllowlist: string[] | undefined): boolean {
   if (!envAllowlist) return false;
   const upper = `MCP_${slug.toUpperCase()}`;
   return envAllowlist.includes(mcpEnvAllowlistName(slug)) || envAllowlist.includes(upper);

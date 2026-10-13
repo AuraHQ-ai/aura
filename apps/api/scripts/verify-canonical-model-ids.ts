@@ -1,9 +1,6 @@
 import { desc, eq, sql } from "drizzle-orm";
 import { db } from "../src/db/client.js";
-import {
-  conversationMessages,
-  conversationTraces,
-} from "@aura/db/schema";
+import { conversationMessages, conversationTraces } from "@aura/db/schema";
 import { computeConversationCost } from "../src/lib/cost-calculator.js";
 
 async function main() {
@@ -48,7 +45,10 @@ async function main() {
     select distinct model_id
     from model_pricing
     where effective_until is null
-      and model_id in (${sql.join(sampleModels.map((modelId) => sql`${modelId}`), sql`, `)})
+      and model_id in (${sql.join(
+        sampleModels.map((modelId) => sql`${modelId}`),
+        sql`, `,
+      )})
     order by model_id
   `);
 

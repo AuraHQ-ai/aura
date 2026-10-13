@@ -96,9 +96,7 @@ async function processBatch(
     return { classified, errors: 0 };
   } catch (err) {
     progress.tick(batch.length);
-    console.error(
-      `  ERROR: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    console.error(`  ERROR: ${err instanceof Error ? err.message : String(err)}`);
     return { classified: 0, errors: 1 };
   }
 }
@@ -172,7 +170,9 @@ async function main() {
   console.log(`Batches with errors: ${totalErrors}`);
   console.log(`\nDistribution:`);
   for (const row of stats) {
-    console.log(`  ${row.bucket}: ${row.c} memories (avg importance: ${row.avg_importance}, avg relevance: ${row.avg_relevance})`);
+    console.log(
+      `  ${row.bucket}: ${row.c} memories (avg importance: ${row.avg_importance}, avg relevance: ${row.avg_relevance})`,
+    );
   }
 }
 

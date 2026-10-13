@@ -35,10 +35,7 @@ describe("trust tiers (#950)", () => {
 
   it("derives founder_dm for DMs involving an admin user", () => {
     expect(
-      deriveTrustTier(
-        mem({ sourceChannelType: "dm", relatedUserIds: ["U_FOUNDER"] }),
-        FOUNDERS,
-      ),
+      deriveTrustTier(mem({ sourceChannelType: "dm", relatedUserIds: ["U_FOUNDER"] }), FOUNDERS),
     ).toBe("founder_dm");
     expect(
       deriveTrustTier(
@@ -159,9 +156,7 @@ describe("capability-claim quarantine (#949)", () => {
 
   it("quarantines only assistant-sourced capability claims", () => {
     const content = "Aura does not have access to the Close API";
-    expect(
-      isQuarantinedCapabilityClaim({ content, extractionSourceRole: "assistant" }),
-    ).toBe(true);
+    expect(isQuarantinedCapabilityClaim({ content, extractionSourceRole: "assistant" })).toBe(true);
     expect(isQuarantinedCapabilityClaim({ content, extractionSourceRole: "user" })).toBe(false);
     expect(isQuarantinedCapabilityClaim({ content, extractionSourceRole: null })).toBe(false);
     expect(

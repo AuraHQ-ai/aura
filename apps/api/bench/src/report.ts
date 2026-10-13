@@ -123,16 +123,10 @@ export function buildTextSummary(input: ReportInput): string {
     lines.push("");
     lines.push("Context efficiency — memory injected per answer");
     lines.push(row("Dataset", "Tokens", "Mems"));
-    const datasets = [...eff.byDataset.entries()].sort((a, b) =>
-      a[0].localeCompare(b[0]),
-    );
+    const datasets = [...eff.byDataset.entries()].sort((a, b) => a[0].localeCompare(b[0]));
     for (const [dataset, stat] of datasets) {
       lines.push(
-        row(
-          prettyDataset(dataset),
-          fmtTokens(stat.meanTokens),
-          String(Math.round(stat.meanCount)),
-        ),
+        row(prettyDataset(dataset), fmtTokens(stat.meanTokens), String(Math.round(stat.meanCount))),
       );
     }
     if (datasets.length > 1) {

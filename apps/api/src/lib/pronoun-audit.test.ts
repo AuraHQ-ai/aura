@@ -18,10 +18,7 @@ describe("normalizeGenderToPronounFamily", () => {
 
 describe("classifyPronounSummary", () => {
   it("returns MATCH when pronouns align with expected family", () => {
-    const result = classifyPronounSummary(
-      "He runs product and his team trusts him.",
-      "masculine",
-    );
+    const result = classifyPronounSummary("He runs product and his team trusts him.", "masculine");
     expect(result.kind).toBe("MATCH");
   });
 
@@ -65,7 +62,7 @@ describe("patchSimplePronounMismatch", () => {
     const patched = patchSimplePronounMismatch("They spoke with her.", "feminine", "masculine");
     expect(patched.summary).toBe("They spoke with his.");
     expect(patched.ambiguousChoices.length).toBe(1);
-    expect(patched.ambiguousChoices[0]).toContain('Ambiguous `her`');
+    expect(patched.ambiguousChoices[0]).toContain("Ambiguous `her`");
   });
 });
 

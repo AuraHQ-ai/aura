@@ -30,13 +30,18 @@ interface Stats {
 }
 
 function OverviewPage() {
-  const { data: stats, isLoading, error } = useQuery({
+  const {
+    data: stats,
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ["stats"],
     queryFn: () => apiGet<Stats>("/stats"),
   });
 
   if (isLoading) return <PageSkeleton />;
-  if (error) return <div className="text-destructive text-sm">Failed to load stats: {error.message}</div>;
+  if (error)
+    return <div className="text-destructive text-sm">Failed to load stats: {error.message}</div>;
   if (!stats) return null;
 
   return (
@@ -100,7 +105,11 @@ function OverviewPage() {
                   <div key={err.id} className="flex items-center justify-between gap-3 text-sm">
                     <div className="flex items-center gap-2 min-w-0">
                       <span className="font-medium truncate">{err.errorName}</span>
-                      {err.errorCode && <Badge variant="outline" className="shrink-0">{err.errorCode}</Badge>}
+                      {err.errorCode && (
+                        <Badge variant="outline" className="shrink-0">
+                          {err.errorCode}
+                        </Badge>
+                      )}
                     </div>
                     <div className="flex items-center gap-2 text-muted-foreground shrink-0">
                       {err.resolved && <Badge variant="success">Resolved</Badge>}
@@ -128,9 +137,11 @@ function OverviewPage() {
                       <Badge
                         className="shrink-0"
                         variant={
-                          exec.status === "completed" ? "success" :
-                          exec.status === "failed" ? "destructive" :
-                          "secondary"
+                          exec.status === "completed"
+                            ? "success"
+                            : exec.status === "failed"
+                              ? "destructive"
+                              : "secondary"
                         }
                       >
                         {exec.status}

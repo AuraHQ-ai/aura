@@ -1,7 +1,14 @@
 import { eq, sql, isNull, and, desc } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { withTransaction } from "../db/tx.js";
-import { messages, memories, notes, eventLocks, type NewMessage, type NewMemory } from "@aura/db/schema";
+import {
+  messages,
+  memories,
+  notes,
+  eventLocks,
+  type NewMessage,
+  type NewMemory,
+} from "@aura/db/schema";
 import { embedText, embedTexts } from "../lib/embeddings.js";
 import { logger } from "../lib/logger.js";
 import { importanceToRelevance } from "./importance.js";
@@ -96,7 +103,9 @@ export async function fetchThreadMessages(params: {
  * Uses `externalId` as the dedup key. For Slack, pass the slack_ts.
  * For other channels, pass a unique identifier (e.g. UUID).
  */
-export async function storeMessage(message: Omit<NewMessage, 'channelType'> & { channelType: ChannelType | "dashboard" }): Promise<string> {
+export async function storeMessage(
+  message: Omit<NewMessage, "channelType"> & { channelType: ChannelType | "dashboard" },
+): Promise<string> {
   try {
     let embedding: number[] | null = null;
     if (message.content && message.content.trim().length > 0) {
@@ -307,10 +316,7 @@ export async function backfillNoteEmbeddings(
       const embeddings = await embedTexts(texts);
 
       for (let i = 0; i < batch.length; i++) {
-        await db
-          .update(notes)
-          .set({ embedding: embeddings[i] })
-          .where(eq(notes.id, batch[i].id));
+        await db.update(notes).set({ embedding: embeddings[i] }).where(eq(notes.id, batch[i].id));
       }
 
       totalEmbedded += batch.length;
@@ -351,10 +357,7 @@ export function memoryAuthority(sourceRole?: string | null): number {
  * Zep-style. A strictly lower-authority new memory is blocked, so an
  * assistant-sourced fact can never displace a user/tool-sourced one.
  */
-export function canSupersede(
-  newRole?: string | null,
-  oldRole?: string | null,
-): boolean {
+export function canSupersede(newRole?: string | null, oldRole?: string | null): boolean {
   return memoryAuthority(newRole) >= memoryAuthority(oldRole);
 }
 
@@ -407,7 +410,7 @@ export async function checkDuplicates(
 
       for (const row of rows) {
         const sim = parseFloat(row.similarity);
-        if (sim > 0.90) {
+        if (sim > 0.9) {
           dominated = true;
           break;
         }
@@ -503,11 +506,7 @@ export async function supersedeMemory(
  * next contradiction sweep finalizes supersession or a corroborating source
  * restores it.
  */
-export async function disputeMemory(
-  memoryId: string,
-  reason: string,
-  at?: Date,
-): Promise<void> {
+export async function disputeMemory(memoryId: string, reason: string, at?: Date): Promise<void> {
   const now = at ?? new Date();
   try {
     await db
@@ -542,9 +541,13 @@ export async function findAssistantClaimMatches(
 ): Promise<Array<{ id: string; content: string; similarity: number }>> {
   try {
     const vectorSql = sql.raw(`'[${embedding.join(",")}]'::vector`);
-    const excludeClause = excludeIds.length > 0
-      ? sql`AND id NOT IN (${sql.join(excludeIds.map(id => sql`${id}::uuid`), sql`, `)})`
-      : sql``;
+    const excludeClause =
+      excludeIds.length > 0
+        ? sql`AND id NOT IN (${sql.join(
+            excludeIds.map((id) => sql`${id}::uuid`),
+            sql`, `,
+          )})`
+        : sql``;
 
     const result = await db.execute(sql`
       SELECT id, content, 1 - (embedding <=> ${vectorSql}) AS similarity
@@ -605,10 +608,17 @@ export async function findContradictionCandidates(
 ): Promise<ContradictionCandidate[]> {
   try {
     const vectorSql = sql.raw(`'[${embedding.join(",")}]'::vector`);
-    const userIdsArray = sql`ARRAY[${sql.join(relatedUserIds.map(id => sql`${id}`), sql`, `)}]::text[]`;
-    const excludeClause = excludeIds.length > 0
-      ? sql`AND id NOT IN (${sql.join(excludeIds.map(id => sql`${id}::uuid`), sql`, `)})`
-      : sql``;
+    const userIdsArray = sql`ARRAY[${sql.join(
+      relatedUserIds.map((id) => sql`${id}`),
+      sql`, `,
+    )}]::text[]`;
+    const excludeClause =
+      excludeIds.length > 0
+        ? sql`AND id NOT IN (${sql.join(
+            excludeIds.map((id) => sql`${id}::uuid`),
+            sql`, `,
+          )})`
+        : sql``;
 
     const result = await db.execute(sql`
       SELECT id, content, extraction_source_role, confidence, 1 - (embedding <=> ${vectorSql}) AS similarity
@@ -831,10 +841,7 @@ export async function updateMemoryContent(
       updates.importance = newImportance;
       updates.relevanceScore = importanceToRelevance(newImportance);
     }
-    await db
-      .update(memories)
-      .set(updates)
-      .where(eq(memories.id, memoryId));
+    await db.update(memories).set(updates).where(eq(memories.id, memoryId));
     logger.info("Updated memory content", { memoryId, contentLength: newContent.length });
   } catch (error) {
     logger.warn("Failed to update memory content", {
@@ -849,11 +856,7 @@ export async function updateMemoryContent(
  * Archive a memory (soft delete). Sets status='archived'.
  * Used by thread-scoped reconciliation when the LLM determines a memory is outdated.
  */
-export async function archiveMemory(
-  memoryId: string,
-  reason: string,
-  at?: Date,
-): Promise<void> {
+export async function archiveMemory(memoryId: string, reason: string, at?: Date): Promise<void> {
   const now = at ?? new Date();
   try {
     await db
@@ -878,4 +881,3 @@ export async function archiveMemory(
     throw error;
   }
 }
-

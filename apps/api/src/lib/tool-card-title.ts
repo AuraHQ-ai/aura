@@ -12,17 +12,11 @@
 
 export const TOOL_CARD_LABEL_MAX_CHARS = 60;
 
-export type SlackCardStatus<TInput = any> =
-  | string
-  | ((input: TInput) => string);
+export type SlackCardStatus<TInput = any> = string | ((input: TInput) => string);
 
 export type LaunchLabelCache = Map<string, string>;
 
-const LAUNCHER_TOOLS = new Set([
-  "run_command",
-  "run_command_detached",
-  "dispatch_cursor_agent",
-]);
+const LAUNCHER_TOOLS = new Set(["run_command", "run_command_detached", "dispatch_cursor_agent"]);
 
 const POLLER_KIND: Record<string, "command" | "agent"> = {
   check_command: "command",
@@ -42,10 +36,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return value != null && typeof value === "object" && !Array.isArray(value);
 }
 
-function firstStringField(
-  record: Record<string, unknown>,
-  keys: string[],
-): string | undefined {
+function firstStringField(record: Record<string, unknown>, keys: string[]): string | undefined {
   for (const key of keys) {
     const value = record[key];
     if (typeof value === "string" && value.trim()) return value.trim();
@@ -65,11 +56,7 @@ export function extractPollerTargetId(input: unknown): string | undefined {
   return firstStringField(input, ["id", "agent_id"]);
 }
 
-export function rememberLaunchLabel(
-  cache: LaunchLabelCache,
-  id: unknown,
-  label: unknown,
-): boolean {
+export function rememberLaunchLabel(cache: LaunchLabelCache, id: unknown, label: unknown): boolean {
   const key = typeof id === "string" ? id.trim() : "";
   const value = sanitizeToolCardLabel(label);
   if (!key || !value) return false;
@@ -92,13 +79,8 @@ export function rememberLaunchLabelFromCall(opts: {
   return rememberLaunchLabel(opts.cache, extractLaunchId(opts.output), label);
 }
 
-export function formatPollerCardTitle(
-  kind: "command" | "agent",
-  label: string,
-): string {
-  return kind === "agent"
-    ? `checking agent '${label}'`
-    : `checking job '${label}'`;
+export function formatPollerCardTitle(kind: "command" | "agent", label: string): string {
+  return kind === "agent" ? `checking agent '${label}'` : `checking job '${label}'`;
 }
 
 export function resolveToolCardTitle(opts: {

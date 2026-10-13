@@ -1,7 +1,6 @@
 import { logger } from "./logger.js";
 
-export const MCP_REGISTRY_URL =
-  "https://registry.modelcontextprotocol.io/v0.1/servers";
+export const MCP_REGISTRY_URL = "https://registry.modelcontextprotocol.io/v0.1/servers";
 export const MCP_REGISTRY_CACHE_TTL_MS = 10 * 60 * 1000;
 export const MCP_REGISTRY_STALE_TTL_MS = 6 * 60 * 60 * 1000;
 export const MCP_REGISTRY_TIMEOUT_MS = 30_000;
@@ -48,8 +47,7 @@ export const FEATURED_MCP_SERVERS: McpCatalogEntry[] = [
   {
     name: "com.stripe/mcp",
     title: "Stripe",
-    description:
-      "Official Stripe MCP server — customers, products, payments, and more.",
+    description: "Official Stripe MCP server — customers, products, payments, and more.",
     url: "https://mcp.stripe.com",
     transport: "http",
     featured: true,
@@ -81,8 +79,7 @@ export const FEATURED_MCP_SERVERS: McpCatalogEntry[] = [
   {
     name: "io.github.mako-ai/mako",
     title: "Mako",
-    description:
-      "Explore databases, validate SQL, and build data apps in a Mako workspace.",
+    description: "Explore databases, validate SQL, and build data apps in a Mako workspace.",
     url: "https://app.mako.ai/api/mcp",
     transport: "http",
     featured: true,
@@ -244,8 +241,7 @@ function featuredKeys(): { names: Set<string>; urls: Set<string> } {
 export function excludeFeatured(entries: McpCatalogEntry[]): McpCatalogEntry[] {
   const { names, urls } = featuredKeys();
   return entries.filter(
-    (entry) =>
-      !names.has(entry.name.toLowerCase()) && !urls.has(normalizeMcpUrl(entry.url)),
+    (entry) => !names.has(entry.name.toLowerCase()) && !urls.has(normalizeMcpUrl(entry.url)),
   );
 }
 
@@ -353,8 +349,7 @@ export async function getMarketplaceCatalog(opts: {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     logger.warn("MCP registry fetch failed", { error: message, search, cursor });
-    const staleStillUsable =
-      cached && now - cached.fetchedAt < MCP_REGISTRY_STALE_TTL_MS;
+    const staleStillUsable = cached && now - cached.fetchedAt < MCP_REGISTRY_STALE_TTL_MS;
     if (staleStillUsable && cached) {
       return {
         featured,

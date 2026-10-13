@@ -45,7 +45,11 @@ describe("parseRebuildArgs", () => {
   });
 
   it("accepts channel and date-range scopes", () => {
-    const result = parseRebuildArgs(["--channel=C0123ABC", "--since=2026-01-01", "--until=2026-02-01"]);
+    const result = parseRebuildArgs([
+      "--channel=C0123ABC",
+      "--since=2026-01-01",
+      "--until=2026-02-01",
+    ]);
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.args.scope.channel).toBe("C0123ABC");
@@ -75,7 +79,12 @@ describe("parseRebuildArgs", () => {
   });
 
   it("rejects --apply combined with --dry-run", () => {
-    const result = parseRebuildArgs(["--user=U0123ABC", "--apply", "--confirm=REBUILD", "--dry-run"]);
+    const result = parseRebuildArgs([
+      "--user=U0123ABC",
+      "--apply",
+      "--confirm=REBUILD",
+      "--dry-run",
+    ]);
     expect(result.ok).toBe(false);
   });
 

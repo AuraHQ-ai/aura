@@ -1,4 +1,3 @@
-
 import { useControllableState } from "@radix-ui/react-use-controllable-state";
 import { cn } from "@/lib/utils";
 import type { TranscriptionResult as TranscriptionResult } from "ai";
@@ -14,16 +13,12 @@ interface TranscriptionContextValue {
   onSeek?: (time: number) => void;
 }
 
-const TranscriptionContext = createContext<TranscriptionContextValue | null>(
-  null
-);
+const TranscriptionContext = createContext<TranscriptionContextValue | null>(null);
 
 const useTranscription = () => {
   const context = useContext(TranscriptionContext);
   if (!context) {
-    throw new Error(
-      "Transcription components must be used within Transcription"
-    );
+    throw new Error("Transcription components must be used within Transcription");
   }
   return context;
 };
@@ -51,16 +46,13 @@ export const Transcription = ({
 
   const contextValue = useMemo(
     () => ({ currentTime, onSeek, onTimeUpdate: setCurrentTime, segments }),
-    [currentTime, onSeek, setCurrentTime, segments]
+    [currentTime, onSeek, setCurrentTime, segments],
   );
 
   return (
     <TranscriptionContext.Provider value={contextValue}>
       <div
-        className={cn(
-          "flex flex-wrap gap-1 text-sm leading-relaxed",
-          className
-        )}
+        className={cn("flex flex-wrap gap-1 text-sm leading-relaxed", className)}
         data-slot="transcription"
         {...props}
       >
@@ -86,8 +78,7 @@ export const TranscriptionSegment = ({
 }: TranscriptionSegmentProps) => {
   const { currentTime, onSeek } = useTranscription();
 
-  const isActive =
-    currentTime >= segment.startSecond && currentTime < segment.endSecond;
+  const isActive = currentTime >= segment.startSecond && currentTime < segment.endSecond;
   const isPast = currentTime >= segment.endSecond;
 
   const handleClick = useCallback(
@@ -97,7 +88,7 @@ export const TranscriptionSegment = ({
       }
       onClick?.(event);
     },
-    [onSeek, segment.startSecond, onClick]
+    [onSeek, segment.startSecond, onClick],
   );
 
   return (
@@ -109,7 +100,7 @@ export const TranscriptionSegment = ({
         !(isActive || isPast) && "text-muted-foreground/60",
         onSeek && "cursor-pointer hover:text-foreground",
         !onSeek && "cursor-default",
-        className
+        className,
       )}
       data-active={isActive}
       data-index={index}

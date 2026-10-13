@@ -56,7 +56,9 @@ describe("should-respond Jev gate", () => {
   });
 
   it("drops the latest message from history and keeps last 5", () => {
-    const recent = Array.from({ length: 8 }, (_, i) => msg(`${1790000000 + i}.000000`, "Ana", `m${i}`));
+    const recent = Array.from({ length: 8 }, (_, i) =>
+      msg(`${1790000000 + i}.000000`, "Ana", `m${i}`),
+    );
     const out = toGateMessages(recent, "1790000007.000000");
     expect(out).toHaveLength(5);
     expect(out[out.length - 1].text).toBe("m6");

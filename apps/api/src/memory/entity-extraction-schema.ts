@@ -23,12 +23,8 @@ export const ENTITY_ROLES = ["subject", "object", "mentioned"] as const;
  * Schema for a single extracted entity with aliases.
  */
 export const extractedEntitySchema = z.object({
-  name: z
-    .string()
-    .describe("The entity name (full name for people, official name for companies)"),
-  type: z
-    .enum(ENTITY_TYPES)
-    .describe("The entity type"),
+  name: z.string().describe("The entity name (full name for people, official name for companies)"),
+  type: z.enum(ENTITY_TYPES).describe("The entity type"),
   role: z
     .enum(ENTITY_ROLES)
     .describe(

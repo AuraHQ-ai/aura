@@ -24,7 +24,10 @@ const consumptionQuerySchema = z
   });
 
 /** Inclusive calendar start (UTC midnight) and exclusive upper bound (UTC midnight of day after `end`). */
-function parseCalendarRange(startStr: string | undefined, endStr: string | undefined): {
+function parseCalendarRange(
+  startStr: string | undefined,
+  endStr: string | undefined,
+): {
   rangeStart: Date;
   rangeEndExclusive: Date | null;
 } {
@@ -46,7 +49,8 @@ const getConsumptionRoute = createRoute({
   method: "get",
   path: "/",
   tags: ["Consumption"],
-  summary: "Get cost and token consumption (default: last 30 days rolling; optional start/end YYYY-MM-DD)",
+  summary:
+    "Get cost and token consumption (default: last 30 days rolling; optional start/end YYYY-MM-DD)",
   request: {
     query: consumptionQuerySchema,
   },
@@ -55,11 +59,13 @@ const getConsumptionRoute = createRoute({
       content: {
         "application/json": {
           schema: z.object({
-            dailyCost: z.array(z.object({
-              date: z.string(),
-              cost: z.number(),
-              conversations: z.number(),
-            })),
+            dailyCost: z.array(
+              z.object({
+                date: z.string(),
+                cost: z.number(),
+                conversations: z.number(),
+              }),
+            ),
             perUser: z.array(z.any()),
             perJob: z.array(z.any()),
             totals: z.object({
@@ -90,21 +96,25 @@ dashboardConsumptionApp.openapi(getConsumptionRoute, async (c) => {
     const q = c.req.valid("query");
     const { rangeStart, rangeEndExclusive } = parseCalendarRange(q.start, q.end);
 
-    const traceWhere = rangeEndExclusive === null
-      ? and(isNotNull(conversationTraces.costUsd), gte(conversationTraces.createdAt, rangeStart))
-      : and(
-        isNotNull(conversationTraces.costUsd),
-        gte(conversationTraces.createdAt, rangeStart),
-        lt(conversationTraces.createdAt, rangeEndExclusive),
-      );
+    const traceWhere =
+      rangeEndExclusive === null
+        ? and(isNotNull(conversationTraces.costUsd), gte(conversationTraces.createdAt, rangeStart))
+        : and(
+            isNotNull(conversationTraces.costUsd),
+            gte(conversationTraces.createdAt, rangeStart),
+            lt(conversationTraces.createdAt, rangeEndExclusive),
+          );
 
-    const timeClause = rangeEndExclusive === null
-      ? sql`ct.created_at >= ${rangeStart}`
-      : sql`ct.created_at >= ${rangeStart} AND ct.created_at < ${rangeEndExclusive}`;
+    const timeClause =
+      rangeEndExclusive === null
+        ? sql`ct.created_at >= ${rangeStart}`
+        : sql`ct.created_at >= ${rangeStart} AND ct.created_at < ${rangeEndExclusive}`;
 
     const dailyCostRows = await db
       .select({
-        date: sql<string>`date_trunc('day', ${conversationTraces.createdAt})::date::text`.as("date"),
+        date: sql<string>`date_trunc('day', ${conversationTraces.createdAt})::date::text`.as(
+          "date",
+        ),
         cost: sql<string>`coalesce(sum(${conversationTraces.costUsd}), 0)`.as("cost"),
         conversations: sql<number>`count(*)::int`.as("conversations"),
       })
@@ -163,14 +173,17 @@ dashboardConsumptionApp.openapi(getConsumptionRoute, async (c) => {
       conversations: number;
     }>;
 
-    const userMap = new Map<string, {
-      userId: string;
-      displayName: string | null;
-      interactiveCost: number;
-      jobCost: number;
-      totalCost: number;
-      conversations: number;
-    }>();
+    const userMap = new Map<
+      string,
+      {
+        userId: string;
+        displayName: string | null;
+        interactiveCost: number;
+        jobCost: number;
+        totalCost: number;
+        conversations: number;
+      }
+    >();
 
     for (const row of interactiveRows) {
       const ic = Number(row.interactive_cost);
@@ -251,9 +264,10 @@ dashboardConsumptionApp.openapi(getConsumptionRoute, async (c) => {
     const conversations = Number(totalsRow.conversations);
     const avgDailyCost = dailyCost.length > 0 ? totalCost / dailyCost.length : 0;
 
-    const tokenTimeClause = rangeEndExclusive === null
-      ? sql`created_at >= ${rangeStart}`
-      : sql`created_at >= ${rangeStart} AND created_at < ${rangeEndExclusive}`;
+    const tokenTimeClause =
+      rangeEndExclusive === null
+        ? sql`created_at >= ${rangeStart}`
+        : sql`created_at >= ${rangeStart} AND created_at < ${rangeEndExclusive}`;
 
     const tokenResult = await db.execute(sql`
       SELECT

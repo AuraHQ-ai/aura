@@ -2,36 +2,16 @@ import { useMemo, useCallback, useState, useEffect, useRef } from "react";
 import { useChat } from "@ai-sdk/react";
 import { WorkflowChatTransport } from "@workflow/ai";
 import type { UIMessage, DynamicToolUIPart, ToolUIPart } from "ai";
-import {
-  X,
-  Plus,
-  Clock,
-  ArrowUpIcon,
-  SquareIcon,
-  PaperclipIcon,
-  Copy,
-  Check,
-} from "lucide-react";
+import { X, Plus, Clock, ArrowUpIcon, SquareIcon, PaperclipIcon, Copy, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
-import {
-  ModelAutocomplete,
-  type ModelAutocompleteOption,
-} from "@/components/model-autocomplete";
+import { ModelAutocomplete, type ModelAutocompleteOption } from "@/components/model-autocomplete";
 import {
   Conversation,
   ConversationContent,
   ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
-import {
-  Message,
-  MessageContent,
-  MessageResponse,
-} from "@/components/ai-elements/message";
-import {
-  Reasoning,
-  ReasoningTrigger,
-  ReasoningContent,
-} from "@/components/ai-elements/reasoning";
+import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
+import { Reasoning, ReasoningTrigger, ReasoningContent } from "@/components/ai-elements/reasoning";
 import {
   Tool,
   ToolHeader,
@@ -494,9 +474,7 @@ function ActiveChat({
             <MessageItem
               key={message.id}
               message={message}
-              isStreaming={
-                isStreaming && message.id === messages[messages.length - 1]?.id
-              }
+              isStreaming={isStreaming && message.id === messages[messages.length - 1]?.id}
             />
           ))}
           {error && (
@@ -550,7 +528,14 @@ function EmptyState({
         your data, notes, or memories.
       </p>
       <div className="w-full">
-        <ChatInput onSubmit={onSubmit} status={status} onStop={onStop} selectedModel={selectedModel} onModelChange={onModelChange} modelOptions={modelOptions} />
+        <ChatInput
+          onSubmit={onSubmit}
+          status={status}
+          onStop={onStop}
+          selectedModel={selectedModel}
+          onModelChange={onModelChange}
+          modelOptions={modelOptions}
+        />
       </div>
     </div>
   );
@@ -668,11 +653,7 @@ function AttachmentStrip() {
       <div className="px-2 pt-1">
         <Attachments variant="inline">
           {files.map((file) => (
-            <Attachment
-              key={file.id}
-              data={file}
-              onRemove={() => remove(file.id)}
-            >
+            <Attachment key={file.id} data={file} onRemove={() => remove(file.id)}>
               <AttachmentPreview />
               <AttachmentRemove />
             </Attachment>
@@ -716,9 +697,7 @@ function ThreadList({
           onClick={() => onSelect(thread.threadId)}
           className={cn(
             "flex flex-col gap-0.5 border-b px-3 py-2.5 text-left transition-colors cursor-pointer",
-            thread.threadId === currentThreadId
-              ? "bg-muted"
-              : "hover:bg-muted/50",
+            thread.threadId === currentThreadId ? "bg-muted" : "hover:bg-muted/50",
           )}
         >
           <span className="flex items-center gap-1.5 text-[13px]">
@@ -727,12 +706,14 @@ function ThreadList({
                 <Spinner className="size-3 shrink-0 text-muted-foreground" />
               </span>
             )}
-            <span className="truncate">{thread.preview || (thread.runStatus === "generating" ? "Generating..." : "Empty chat")}</span>
+            <span className="truncate">
+              {thread.preview ||
+                (thread.runStatus === "generating" ? "Generating..." : "Empty chat")}
+            </span>
           </span>
           <span className="text-[11px] text-muted-foreground">
             {formatRelativeTime(thread.lastActivityAt)}
-            {thread.messageCount > 1 &&
-              ` · ${thread.messageCount} exchanges`}
+            {thread.messageCount > 1 && ` · ${thread.messageCount} exchanges`}
           </span>
         </button>
       ))}
@@ -740,13 +721,7 @@ function ThreadList({
   );
 }
 
-function MessageItem({
-  message,
-  isStreaming,
-}: {
-  message: UIMessage;
-  isStreaming: boolean;
-}) {
+function MessageItem({ message, isStreaming }: { message: UIMessage; isStreaming: boolean }) {
   return (
     <Message from={message.role}>
       <MessageContent>
@@ -755,19 +730,18 @@ function MessageItem({
             case "text":
               if (!part.text) return null;
               return (
-                <div key={i} style={{ fontSize: 13 }} className="[&_*]:![font-size:inherit] [&_h1]:![font-size:15px] [&_h2]:![font-size:14px] [&_h3]:![font-size:13px]">
-                  <MessageResponse>
-                    {part.text}
-                  </MessageResponse>
+                <div
+                  key={i}
+                  style={{ fontSize: 13 }}
+                  className="[&_*]:![font-size:inherit] [&_h1]:![font-size:15px] [&_h2]:![font-size:14px] [&_h3]:![font-size:13px]"
+                >
+                  <MessageResponse>{part.text}</MessageResponse>
                 </div>
               );
 
             case "reasoning":
               return (
-                <Reasoning
-                  key={i}
-                  isStreaming={isStreaming && part.state === "streaming"}
-                >
+                <Reasoning key={i} isStreaming={isStreaming && part.state === "streaming"}>
                   <ReasoningTrigger />
                   <ReasoningContent>{part.text}</ReasoningContent>
                 </Reasoning>
@@ -790,10 +764,7 @@ function MessageItem({
                   <ToolContent className="max-h-60 overflow-y-auto px-2 py-1.5 space-y-1.5">
                     <ToolInput input={dynPart.input} />
                     {dynPart.output !== undefined && (
-                      <ToolOutput
-                        output={dynPart.output}
-                        errorText={dynPart.errorText}
-                      />
+                      <ToolOutput output={dynPart.output} errorText={dynPart.errorText} />
                     )}
                   </ToolContent>
                 </Tool>
@@ -815,10 +786,7 @@ function MessageItem({
                     <ToolContent className="max-h-60 overflow-y-auto px-2 py-1.5 space-y-1.5">
                       <ToolInput input={toolPart.input} />
                       {toolPart.output !== undefined && (
-                        <ToolOutput
-                          output={toolPart.output}
-                          errorText={toolPart.errorText}
-                        />
+                        <ToolOutput output={toolPart.output} errorText={toolPart.errorText} />
                       )}
                     </ToolContent>
                   </Tool>

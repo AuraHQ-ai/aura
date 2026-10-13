@@ -301,7 +301,9 @@ describe("MCP dashboard token redaction", () => {
       },
     ];
 
-    const originalSelect = (await import("../../db/client.js")).db.select as ReturnType<typeof vi.fn>;
+    const originalSelect = (await import("../../db/client.js")).db.select as ReturnType<
+      typeof vi.fn
+    >;
     originalSelect.mockImplementation(() =>
       thenable(() => {
         // Both tables are queried; return servers by default. Connection rows
@@ -408,4 +410,3 @@ describe("marketplace-originated add still applies SSRF", () => {
     expect(dbState.inserts).toHaveLength(0);
   });
 });
-

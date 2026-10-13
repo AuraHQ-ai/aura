@@ -64,9 +64,7 @@ describe("cursorWebhookLockKey", () => {
   });
 
   it("falls back to the webhook id when there is no agent id", () => {
-    expect(cursorWebhookLockKey("", "finished", "wh-a")).toBe(
-      "cursor-webhook:wh-a",
-    );
+    expect(cursorWebhookLockKey("", "finished", "wh-a")).toBe("cursor-webhook:wh-a");
   });
 
   it("returns an empty key when there is nothing to key on", () => {

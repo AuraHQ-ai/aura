@@ -20,11 +20,7 @@ export function createMemoryTools(context?: ScheduleContext) {
       }),
       execute: async ({ id }) => {
         try {
-          const rows = await db
-            .select()
-            .from(memories)
-            .where(eq(memories.id, id))
-            .limit(1);
+          const rows = await db.select().from(memories).where(eq(memories.id, id)).limit(1);
 
           const memory = rows[0];
           if (!memory) {
@@ -64,7 +60,7 @@ export function createMemoryTools(context?: ScheduleContext) {
       slack: {
         status: "Retrieving memory...",
         detail: (i) => i.id.substring(0, 8),
-        output: (r) => r.ok === false ? r.error : `Memory ${r.memory.id.substring(0, 8)}`,
+        output: (r) => (r.ok === false ? r.error : `Memory ${r.memory.id.substring(0, 8)}`),
       },
     }),
 
@@ -88,7 +84,10 @@ export function createMemoryTools(context?: ScheduleContext) {
 
           await db.delete(memories).where(eq(memories.id, id));
 
-          logger.info("delete_memory tool called", { id, contentPreview: rows[0].content.substring(0, 80) });
+          logger.info("delete_memory tool called", {
+            id,
+            contentPreview: rows[0].content.substring(0, 80),
+          });
 
           return {
             ok: true as const,
@@ -103,7 +102,7 @@ export function createMemoryTools(context?: ScheduleContext) {
       slack: {
         status: "Deleting memory...",
         detail: (i) => i.id.substring(0, 8),
-        output: (r) => r.ok === false ? r.error : "Memory deleted",
+        output: (r) => (r.ok === false ? r.error : "Memory deleted"),
       },
     }),
 
@@ -121,22 +120,52 @@ export function createMemoryTools(context?: ScheduleContext) {
           .optional()
           .default("current")
           .describe("Filter by status. Default: 'current'"),
-        since: z.string().optional().describe("ISO 8601 date — only memories created after this date"),
-        until: z.string().optional().describe("ISO 8601 date — only memories created before this date"),
+        since: z
+          .string()
+          .optional()
+          .describe("ISO 8601 date — only memories created after this date"),
+        until: z
+          .string()
+          .optional()
+          .describe("ISO 8601 date — only memories created before this date"),
         user_id: z.string().optional().describe("Filter by related user ID (Slack user ID)"),
-        entity: z.string().optional().describe("Filter by entity name (person, company, product, etc.). Resolves via alias/fuzzy matching — same cascade as the context builder."),
+        entity: z
+          .string()
+          .optional()
+          .describe(
+            "Filter by entity name (person, company, product, etc.). Resolves via alias/fuzzy matching — same cascade as the context builder.",
+          ),
         entity_type: z
           .enum(["person", "company", "channel", "technology", "product", "project"])
           .optional()
-          .describe("Narrow entity resolution to a specific type. Optional — omit to match across all types."),
-        limit: z.number().min(1).max(50).optional().default(20).describe("Max results (default 20, max 50)"),
+          .describe(
+            "Narrow entity resolution to a specific type. Optional — omit to match across all types.",
+          ),
+        limit: z
+          .number()
+          .min(1)
+          .max(50)
+          .optional()
+          .default(20)
+          .describe("Max results (default 20, max 50)"),
         mode: z
           .enum(["text", "semantic"])
           .optional()
           .default("text")
           .describe("'text' for full-text keyword search, 'semantic' for vector similarity"),
       }),
-      execute: async ({ query, type, status, since, until, user_id, entity, entity_type, limit, mode }) => {
+      execute: async ({
+        query,
+        type,
+        status,
+        since,
+        until,
+        user_id,
+        entity,
+        entity_type,
+        limit,
+        mode,
+      }) => {
         try {
           // Resolve entity filter if provided
           let entityId: string | null = null;
@@ -146,7 +175,11 @@ export function createMemoryTools(context?: ScheduleContext) {
               // Use type-aware resolution from resolveEntityReadOnly (imported indirectly)
               // But resolveEntityByName is type-agnostic. For typed resolution, call the DB directly.
               const { resolveEntityReadOnly } = await import("../memory/entity-resolution.js");
-              const resolved = await resolveEntityReadOnly(entity, entity_type, DEFAULT_WORKSPACE_ID);
+              const resolved = await resolveEntityReadOnly(
+                entity,
+                entity_type,
+                DEFAULT_WORKSPACE_ID,
+              );
               if (resolved) {
                 entityId = resolved.entityId;
                 resolvedEntityName = resolved.canonicalName;
@@ -183,9 +216,7 @@ export function createMemoryTools(context?: ScheduleContext) {
             const queryEmbedding = await embedText(query.trim());
             const vectorSql = sql.raw(`'[${queryEmbedding.join(",")}]'::vector`);
 
-            const conditions: ReturnType<typeof sql>[] = [
-              sql`m.embedding IS NOT NULL`,
-            ];
+            const conditions: ReturnType<typeof sql>[] = [sql`m.embedding IS NOT NULL`];
             if (status) conditions.push(sql`m.status = ${status}`);
             if (type) conditions.push(sql`m.type = ${type}`);
             if (since) conditions.push(sql`m.created_at >= ${since}::timestamptz`);
@@ -241,9 +272,8 @@ export function createMemoryTools(context?: ScheduleContext) {
             if (until) conditions.push(sql`m.created_at <= ${until}::timestamptz`);
             if (user_id) conditions.push(sql`m.related_user_ids @> ARRAY[${user_id}]::text[]`);
 
-            const whereClause = conditions.length > 0
-              ? sql`AND ${sql.join(conditions, sql` AND `)}`
-              : sql``;
+            const whereClause =
+              conditions.length > 0 ? sql`AND ${sql.join(conditions, sql` AND `)}` : sql``;
 
             // Try full-text search first, fall back to ILIKE
             const ftsResult = await db.execute(sql`
@@ -307,16 +337,14 @@ export function createMemoryTools(context?: ScheduleContext) {
           if (until) conditions.push(sql`m.created_at <= ${until}::timestamptz`);
           if (user_id) conditions.push(sql`m.related_user_ids @> ARRAY[${user_id}]::text[]`);
 
-          const whereClause = conditions.length > 0
-            ? sql`WHERE ${sql.join(conditions, sql` AND `)}`
-            : sql``;
+          const whereClause =
+            conditions.length > 0 ? sql`WHERE ${sql.join(conditions, sql` AND `)}` : sql``;
 
           // When entity join is active, we need WHERE (or AND) differently
           let result;
           if (entityId) {
-            const filterClause = conditions.length > 0
-              ? sql`AND ${sql.join(conditions, sql` AND `)}`
-              : sql``;
+            const filterClause =
+              conditions.length > 0 ? sql`AND ${sql.join(conditions, sql` AND `)}` : sql``;
             result = await db.execute(sql`
               SELECT m.id, m.content, m.type, m.status, m.created_at, m.source_thread_ts, m.source_channel_id
               FROM memories m
@@ -368,7 +396,10 @@ export function createMemoryTools(context?: ScheduleContext) {
       slack: {
         status: "Searching memories...",
         detail: (i) => i.entity ?? i.query ?? i.type ?? i.status ?? undefined,
-        output: (r) => r.ok === false ? r.error : `${r.count} results${r.resolved_entity ? ` (entity: ${r.resolved_entity})` : ""}`,
+        output: (r) =>
+          r.ok === false
+            ? r.error
+            : `${r.count} results${r.resolved_entity ? ` (entity: ${r.resolved_entity})` : ""}`,
       },
     }),
 
@@ -381,7 +412,13 @@ export function createMemoryTools(context?: ScheduleContext) {
           .enum(["person", "company", "channel", "technology", "product", "project"])
           .optional()
           .describe("Filter to a specific entity type"),
-        limit: z.number().min(1).max(50).optional().default(20).describe("Max results (default 20)"),
+        limit: z
+          .number()
+          .min(1)
+          .max(50)
+          .optional()
+          .default(20)
+          .describe("Max results (default 20)"),
       }),
       execute: async ({ query, type, limit }) => {
         try {
@@ -413,7 +450,7 @@ export function createMemoryTools(context?: ScheduleContext) {
       slack: {
         status: "Searching entities...",
         detail: (i) => `${i.query}${i.type ? ` (${i.type})` : ""}`,
-        output: (r) => r.ok === false ? r.error : `${r.count} entities found`,
+        output: (r) => (r.ok === false ? r.error : `${r.count} entities found`),
       },
     }),
 
@@ -422,22 +459,23 @@ export function createMemoryTools(context?: ScheduleContext) {
         "Update a memory's content, status, or confidence. If content changes, the embedding is automatically re-computed. Use this to correct inaccurate memories, change their status (e.g. mark as 'archived' or 'superseded'), or adjust confidence scores.",
       inputSchema: z.object({
         id: z.string().uuid().describe("UUID of the memory to update"),
-        content: z.string().optional().describe("New content text. Triggers re-embedding if changed."),
+        content: z
+          .string()
+          .optional()
+          .describe("New content text. Triggers re-embedding if changed."),
         status: z
           .enum(["current", "superseded", "disputed", "archived", "deleted"])
           .optional()
           .describe("New status for the memory"),
-        confidence: z
-          .number()
-          .min(0)
-          .max(1)
-          .optional()
-          .describe("New confidence score (0–1)"),
+        confidence: z.number().min(0).max(1).optional().describe("New confidence score (0–1)"),
       }),
       execute: async ({ id, content, status, confidence }) => {
         try {
           if (content === undefined && status === undefined && confidence === undefined) {
-            return { ok: false as const, error: "At least one of content, status, or confidence must be provided." };
+            return {
+              ok: false as const,
+              error: "At least one of content, status, or confidence must be provided.",
+            };
           }
 
           const rows = await db
@@ -487,7 +525,7 @@ export function createMemoryTools(context?: ScheduleContext) {
       slack: {
         status: "Updating memory...",
         detail: (i) => i.id.substring(0, 8),
-        output: (r) => r.ok === false ? r.error : "Memory updated",
+        output: (r) => (r.ok === false ? r.error : "Memory updated"),
       },
     }),
   };

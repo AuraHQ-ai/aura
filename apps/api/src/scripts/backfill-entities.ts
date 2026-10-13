@@ -20,9 +20,7 @@ config({ path: resolve(repoRoot, envFile) });
 if (isProd) console.log("Using .env.production (--prod)");
 
 const { db } = await import("../db/client.js");
-const { resolveEntities, linkMemoryEntities } = await import(
-  "../memory/entity-resolution.js"
-);
+const { resolveEntities, linkMemoryEntities } = await import("../memory/entity-resolution.js");
 const { getFastModel } = await import("../lib/ai.js");
 
 // ── Config ──────────────────────────────────────────────────────────────────
@@ -77,9 +75,7 @@ async function processBatch(
 
     let batchLinked = 0;
 
-    const memResults = result.results.filter(
-      (r) => r.entities && r.entities.length > 0,
-    );
+    const memResults = result.results.filter((r) => r.entities && r.entities.length > 0);
 
     for (const memResult of memResults) {
       try {
@@ -107,9 +103,7 @@ async function processBatch(
     return { newEntities: 0, linked: batchLinked, errors: 0 };
   } catch (err) {
     progress.tick(batch.length);
-    console.error(
-      `  ERROR: ${err instanceof Error ? err.message : String(err)}`,
-    );
+    console.error(`  ERROR: ${err instanceof Error ? err.message : String(err)}`);
     return { newEntities: 0, linked: 0, errors: 1 };
   }
 }

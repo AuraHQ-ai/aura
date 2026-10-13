@@ -22,7 +22,6 @@ const MIN_SCORE = 0.01;
  * Memories with a score below the floor are not deleted, just deprioritized.
  */
 export async function decayRelevanceScores(): Promise<number> {
-
   try {
     const result = await db
       .update(memories)
@@ -117,10 +116,7 @@ export async function mergeDuplicateMemories(): Promise<number> {
           continue;
         }
 
-        const boostedScore = Math.min(
-          1.0,
-          Math.max(score1, score2) * 1.1,
-        );
+        const boostedScore = Math.min(1.0, Math.max(score1, score2) * 1.1);
         const now = new Date();
 
         const isFirstLoser = !keeperHasForwardLink.has(keepId);

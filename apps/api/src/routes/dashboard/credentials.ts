@@ -1,19 +1,16 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { eq, ilike, sql, desc } from "drizzle-orm";
-import {
-  credentials,
-  credentialGrants,
-  credentialAuditLog,
-  users,
-} from "@aura/db/schema";
+import { credentials, credentialGrants, credentialAuditLog, users } from "@aura/db/schema";
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
+import { encryptCredential, decryptCredential, maskCredential } from "../../lib/credentials.js";
 import {
-  encryptCredential,
-  decryptCredential,
-  maskCredential,
-} from "../../lib/credentials.js";
-import { errorSchema, paginationQuerySchema, idParamSchema, okSchema, createDashboardApp } from "./schemas.js";
+  errorSchema,
+  paginationQuerySchema,
+  idParamSchema,
+  okSchema,
+  createDashboardApp,
+} from "./schemas.js";
 
 export const dashboardCredentialsApp = createDashboardApp();
 
@@ -51,9 +48,7 @@ dashboardCredentialsApp.openapi(listCredentialsRoute, async (c) => {
     const limit = Math.min(100, Math.max(1, Number(c.req.query("limit")) || 20));
     const offset = (page - 1) * limit;
 
-    const where = search
-      ? ilike(credentials.name, `%${search}%`)
-      : undefined;
+    const where = search ? ilike(credentials.name, `%${search}%`) : undefined;
 
     const [items, [{ total }]] = await Promise.all([
       db
@@ -81,10 +76,7 @@ dashboardCredentialsApp.openapi(listCredentialsRoute, async (c) => {
         .orderBy(desc(credentials.createdAt))
         .limit(limit)
         .offset(offset),
-      db
-        .select({ total: sql<number>`count(*)::int` })
-        .from(credentials)
-        .where(where),
+      db.select({ total: sql<number>`count(*)::int` }).from(credentials).where(where),
     ]);
 
     return c.json({ items, total } as any, 200);
@@ -199,11 +191,7 @@ dashboardCredentialsApp.openapi(getCredentialRoute, async (c) => {
   try {
     const id = c.req.param("id");
 
-    const [cred] = await db
-      .select()
-      .from(credentials)
-      .where(eq(credentials.id, id))
-      .limit(1);
+    const [cred] = await db.select().from(credentials).where(eq(credentials.id, id)).limit(1);
 
     if (!cred) return c.json({ error: "Not found" }, 404);
 
@@ -395,9 +383,7 @@ dashboardCredentialsApp.openapi(updateCredentialNameRoute, async (c) => {
     const id = c.req.param("id");
     const { name } = await c.req.json<{ name: string }>();
 
-    const normalizedName = (name ?? "")
-      .toLowerCase()
-      .replace(/[^a-z0-9_]/g, "_");
+    const normalizedName = (name ?? "").toLowerCase().replace(/[^a-z0-9_]/g, "_");
 
     if (!NAME_PATTERN.test(normalizedName)) {
       return c.json(
@@ -558,7 +544,11 @@ dashboardCredentialsApp.openapi(createGrantRoute, async (c) => {
         grantedBy: body.grantedBy,
       })
       .onConflictDoUpdate({
-        target: [credentialGrants.workspaceId, credentialGrants.credentialId, credentialGrants.granteeId],
+        target: [
+          credentialGrants.workspaceId,
+          credentialGrants.credentialId,
+          credentialGrants.granteeId,
+        ],
         set: {
           permission: body.permission,
           grantedBy: body.grantedBy,

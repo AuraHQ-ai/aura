@@ -17,12 +17,8 @@ export function hasSurroundingConversationContext(
 ): boolean {
   if (!conversation) return false;
   return (
-    (conversation.thread ?? []).some((message) =>
-      hasContextMessage(message, currentMessageTs),
-    ) ||
-    conversation.recentMessages.some((message) =>
-      hasContextMessage(message, currentMessageTs),
-    )
+    (conversation.thread ?? []).some((message) => hasContextMessage(message, currentMessageTs)) ||
+    conversation.recentMessages.some((message) => hasContextMessage(message, currentMessageTs))
   );
 }
 
@@ -31,7 +27,6 @@ export function shouldGreetAndBailForEmptyMessage(
   conversation: ConversationContext | undefined,
 ): boolean {
   return (
-    !context.isMentioned ||
-    !hasSurroundingConversationContext(conversation, context.messageTs)
+    !context.isMentioned || !hasSurroundingConversationContext(conversation, context.messageTs)
   );
 }

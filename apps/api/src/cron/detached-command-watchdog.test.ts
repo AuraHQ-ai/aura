@@ -260,10 +260,7 @@ describe("detached command watchdog sweep", () => {
   });
 
   it("skips the job execution update entirely when no jobExecutionId is linked", async () => {
-    queueDbResults(
-      [staleCommand({ jobId: null, jobExecutionId: null })],
-      [{ id: "abcdef12" }],
-    );
+    queueDbResults([staleCommand({ jobId: null, jobExecutionId: null })], [{ id: "abcdef12" }]);
 
     const result = await sweepStaleDetachedCommands(slackClient, NOW);
 

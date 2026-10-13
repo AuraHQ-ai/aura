@@ -52,12 +52,13 @@ import {
   type TaskUpdateChunk,
   type URLSource,
 } from "../lib/slack-chunks.js";
-import { getSupersedeReason, interruptionNote, isInvocationCurrent } from "../lib/invocation-lock.js";
-import { getSameDestinationPostText, isSubstantialDuplicate } from "./duplicate-reply.js";
 import {
-  createToolMarkupBuffer,
-  isLeakedMarkupToolName,
-} from "./sanitize-tool-markup.js";
+  getSupersedeReason,
+  interruptionNote,
+  isInvocationCurrent,
+} from "../lib/invocation-lock.js";
+import { getSameDestinationPostText, isSubstantialDuplicate } from "./duplicate-reply.js";
+import { createToolMarkupBuffer, isLeakedMarkupToolName } from "./sanitize-tool-markup.js";
 
 // ── Tool I/O Persistence ─────────────────────────────────────────────────────
 // Accumulated during streaming and attached as invisible Slack message metadata
@@ -158,14 +159,12 @@ function buildToolMetadata(
   return { event_type: TOOL_IO_EVENT_TYPE, event_payload: { tool_calls: trimmed } };
 }
 
-
 // ── Task Card Helpers ────────────────────────────────────────────────────────
 
 function truncate(s: string | undefined, max: number): string | undefined {
   if (!s) return undefined;
   return s.length <= max ? s : s.slice(0, max - 1) + "…";
 }
-
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -180,7 +179,13 @@ interface RespondOptions {
   dynamicContext?: string;
   userMessage: string;
   slackClient: WebClient;
-  context?: { userId?: string; channelId?: string; threadTs?: string; workspaceId?: string; timezone?: string };
+  context?: {
+    userId?: string;
+    channelId?: string;
+    threadTs?: string;
+    workspaceId?: string;
+    timezone?: string;
+  };
   files?: FileContentPart[];
   channelId: string;
   threadTs?: string;
@@ -259,7 +264,8 @@ const LONG_TOOL_SPLIT_MS = 75_000;
 const STREAM_MAX_AGE_MS = 60_000;
 const STREAM_CONTINUATION_TOMBSTONE = "_(continuing in a new message...)_";
 const TOOL_CONTINUATION_OUTPUT = "continuing in a new message...";
-const EMPTY_COMPLETION_RELAUNCH_PROMPT = "(continue - you ended without responding. Summarize what you found.)";
+const EMPTY_COMPLETION_RELAUNCH_PROMPT =
+  "(continue - you ended without responding. Summarize what you found.)";
 
 /**
  * Find the best split index in a text delta for stream continuation.
@@ -405,9 +411,7 @@ const streamingUnsupportedChannels = new Set<string>();
  * Falls back to chat.postMessage for channels that don't support streaming
  * (e.g. Slack List item comment threads).
  */
-export async function generateResponse(
-  options: RespondOptions,
-): Promise<LLMResponse> {
+export async function generateResponse(options: RespondOptions): Promise<LLMResponse> {
   const start = Date.now();
   const { slackClient, channelId, threadTs } = options;
   const hasFiles = options.files && options.files.length > 0;
@@ -560,10 +564,9 @@ export async function generateResponse(
       if (isChannelTypeNotSupported(err)) {
         streamingFailed = true;
         streamingUnsupportedChannels.add(channelId);
-        logger.warn(
-          "chatStream not supported for this channel, falling back to postMessage",
-          { channelId },
-        );
+        logger.warn("chatStream not supported for this channel, falling back to postMessage", {
+          channelId,
+        });
         pendingChannelTypeUnsupportedFallback = {
           errorMessage: err?.message || "channel_type_not_supported",
         };
@@ -576,7 +579,8 @@ export async function generateResponse(
         // then keep streaming. Log the exact rejected payload — sanitizeChunks
         // should make this unreachable, so a hit here is a new Slack schema
         // change we need to see verbatim.
-        const errCode = err?.data?.error || (isInvalidArguments(err) ? "invalid_arguments" : "invalid_chunks");
+        const errCode =
+          err?.data?.error || (isInvalidArguments(err) ? "invalid_arguments" : "invalid_chunks");
         const rejectedChunks = Array.isArray((payload as any)?.chunks)
           ? ((payload as any).chunks as AnyChunk[])
           : [];
@@ -658,20 +662,23 @@ export async function generateResponse(
           channelId,
           context: { currentStreamLength },
         });
-      } else if (err?.data?.error === 'internal_error') {
+      } else if (err?.data?.error === "internal_error") {
         // Transient Slack server error — retry once after 500ms, then fall back
         try {
-          await new Promise(r => setTimeout(r, 500));
+          await new Promise((r) => setTimeout(r, 500));
           await streamer.append(payload);
           streamHasContent = true;
           return true;
         } catch (retryErr: any) {
           streamingFailed = true;
-          logger.warn("chatStream append failed on retry after internal_error, falling back to postMessage", {
-            channelId,
-            originalError: err?.data?.error,
-            retryError: retryErr?.data?.error || retryErr?.message,
-          });
+          logger.warn(
+            "chatStream append failed on retry after internal_error, falling back to postMessage",
+            {
+              channelId,
+              originalError: err?.data?.error,
+              retryError: retryErr?.data?.error || retryErr?.message,
+            },
+          );
           logError({
             errorName: "SlackInternalError",
             errorMessage: retryErr?.message || "error on stream append retry",
@@ -775,20 +782,21 @@ export async function generateResponse(
   let toolMarkupLeakLogged = false;
 
   // ── Build agent ──────────────────────────────────────────────────────
-  const { agent, tools, modelId, getStepModelIds, getCompactionTotals } = await createInteractiveAgent({
-    slackClient: options.slackClient,
-    context: options.context,
-    stablePrefix: options.stablePrefix,
-    environmentContext: options.environmentContext,
-    conversationContext: options.conversationContext,
-    dynamicContext: options.dynamicContext,
-    invocationId,
-    channelId: options.channelId,
-    threadTs: options.threadTs,
-    // Lets a hard-deadline continuation job carry the truncated message's
-    // own "remaining work" promises verbatim (issue #1336).
-    getAccumulatedText: () => accumulatedText,
-  });
+  const { agent, tools, modelId, getStepModelIds, getCompactionTotals } =
+    await createInteractiveAgent({
+      slackClient: options.slackClient,
+      context: options.context,
+      stablePrefix: options.stablePrefix,
+      environmentContext: options.environmentContext,
+      conversationContext: options.conversationContext,
+      dynamicContext: options.dynamicContext,
+      invocationId,
+      channelId: options.channelId,
+      threadTs: options.threadTs,
+      // Lets a hard-deadline continuation job carry the truncated message's
+      // own "remaining work" promises verbatim (issue #1336).
+      getAccumulatedText: () => accumulatedText,
+    });
 
   // Issue #1515 / #1524: hold ChatML `<tool_call>` XML split across
   // text-deltas and strip bare registry names / `_suffix` fragments
@@ -796,7 +804,8 @@ export async function generateResponse(
   const toolMarkupBuffer = createToolMarkupBuffer(Object.keys(tools));
 
   const configuredTaskDisplayMode = normalizeTaskDisplayMode(
-    (await getSettingJSON<SlackTaskDisplayMode>("slack_task_display_mode", "timeline")) ?? "timeline",
+    (await getSettingJSON<SlackTaskDisplayMode>("slack_task_display_mode", "timeline")) ??
+      "timeline",
   );
   streamParams.task_display_mode = configuredTaskDisplayMode;
 
@@ -822,14 +831,11 @@ export async function generateResponse(
   // hanging in the thread.
 
   let supersededDuringStream = false;
-  const isSupersededError = (error: unknown): error is InvocationSupersededError => (
+  const isSupersededError = (error: unknown): error is InvocationSupersededError =>
     error instanceof InvocationSupersededError ||
-    (
-      error instanceof Error &&
+    (error instanceof Error &&
       (error.name === "InvocationSupersededError" ||
-        error.message.includes("was superseded by a newer message"))
-    )
-  );
+        error.message.includes("was superseded by a newer message")));
 
   // ── Mid-tool cancellation (issue #1355) ─────────────────────────────
   // prepareStep checks the lock once per model call, so a Stop press during
@@ -888,9 +894,10 @@ export async function generateResponse(
       }
 
       const streamError = error instanceof Error ? error : undefined;
-      const errorLike = error && typeof error === "object"
-        ? error as { name?: string; message?: string; stack?: string }
-        : undefined;
+      const errorLike =
+        error && typeof error === "object"
+          ? (error as { name?: string; message?: string; stack?: string })
+          : undefined;
       logError({
         errorName: errorLike?.name || streamError?.name || "StreamMidFlightError",
         errorMessage: errorLike?.message || streamError?.message || String(error),
@@ -904,10 +911,7 @@ export async function generateResponse(
 
   function buildInitialUserMessage(): ModelMessage {
     if (hasFiles) {
-      const content: any[] = [
-        { type: "text", text: options.userMessage },
-        ...options.files!,
-      ];
+      const content: any[] = [{ type: "text", text: options.userMessage }, ...options.files!];
       return { role: "user", content };
     }
     return { role: "user", content: options.userMessage };
@@ -925,7 +929,10 @@ export async function generateResponse(
     model: modelId || "unknown",
     hasFiles,
     toolCount: Object.keys(tools || {}).length,
-    promptLength: options.stablePrefix.length + options.environmentContext.length + options.conversationContext.length,
+    promptLength:
+      options.stablePrefix.length +
+      options.environmentContext.length +
+      options.conversationContext.length,
   });
 
   // ── Stream and send to Slack ────────────────────────────────────────
@@ -1023,7 +1030,8 @@ export async function generateResponse(
     outputTokens: 0,
     totalTokens: 0,
   };
-  const emptyCompletionFallbackText = "_I ran the tools but didn't get usable output back. Can you tell me what to retry?_";
+  const emptyCompletionFallbackText =
+    "_I ran the tools but didn't get usable output back. Can you tell me what to retry?_";
 
   async function logEmptyContinuationSegmentIfNeeded(params: {
     segmentEnd: "split" | "final";
@@ -1087,9 +1095,7 @@ export async function generateResponse(
     fallback: string;
   }): string {
     const slackMeta = opts.toolName ? getSlackMeta(tools[opts.toolName]) : undefined;
-    const cached = opts.toolCallId
-      ? optimisticToolCards.get(opts.toolCallId)?.title
-      : undefined;
+    const cached = opts.toolCallId ? optimisticToolCards.get(opts.toolCallId)?.title : undefined;
     return resolveToolCardTitle({
       input: opts.input,
       status: slackMeta?.status,
@@ -1103,16 +1109,20 @@ export async function generateResponse(
     const chunks: SlackStreamChunk[] = [];
     for (const [toolCallId, pending] of pendingToolInputs.entries()) {
       const cached = optimisticToolCards.get(toolCallId)?.title;
-      chunks.push(toTaskUpdateChunk({
-        id: toolCallId,
-        title: cached ?? resolveCardTitle({
-          toolName: pending.name,
-          input: parsePendingToolInput(pending.input),
-          fallback: "Working on it...",
+      chunks.push(
+        toTaskUpdateChunk({
+          id: toolCallId,
+          title:
+            cached ??
+            resolveCardTitle({
+              toolName: pending.name,
+              input: parsePendingToolInput(pending.input),
+              fallback: "Working on it...",
+            }),
+          status: "complete",
+          output: TOOL_CONTINUATION_OUTPUT,
         }),
-        status: "complete",
-        output: TOOL_CONTINUATION_OUTPUT,
-      }));
+      );
     }
     chunks.push(toChunkMarkdownText(`\n${STREAM_CONTINUATION_TOMBSTONE}\n`));
     return chunks;
@@ -1178,9 +1188,8 @@ export async function generateResponse(
         tableBuffer.push(line);
       } else {
         if (tableBuffer.length > 0) {
-          output += tableBuffer.length >= 2
-            ? prettifyAndWrapTable(tableBuffer)
-            : tableBuffer.join("");
+          output +=
+            tableBuffer.length >= 2 ? prettifyAndWrapTable(tableBuffer) : tableBuffer.join("");
           tableBuffer = [];
         }
         output += line;
@@ -1192,9 +1201,8 @@ export async function generateResponse(
         output += lineCarry;
         lineCarry = "";
       } else if (tableBuffer.length > 0 && !lineCarry.trimStart().startsWith("|")) {
-        output += tableBuffer.length >= 2
-          ? prettifyAndWrapTable(tableBuffer)
-          : tableBuffer.join("");
+        output +=
+          tableBuffer.length >= 2 ? prettifyAndWrapTable(tableBuffer) : tableBuffer.join("");
         tableBuffer = [];
         output += lineCarry;
         lineCarry = "";
@@ -1212,9 +1220,8 @@ export async function generateResponse(
         tableBuffer.push(lineCarry);
       } else {
         if (tableBuffer.length > 0) {
-          output += tableBuffer.length >= 2
-            ? prettifyAndWrapTable(tableBuffer)
-            : tableBuffer.join("");
+          output +=
+            tableBuffer.length >= 2 ? prettifyAndWrapTable(tableBuffer) : tableBuffer.join("");
           tableBuffer = [];
         }
         output += lineCarry;
@@ -1222,9 +1229,7 @@ export async function generateResponse(
       lineCarry = "";
     }
     if (tableBuffer.length > 0) {
-      output += tableBuffer.length >= 2
-        ? prettifyAndWrapTable(tableBuffer)
-        : tableBuffer.join("");
+      output += tableBuffer.length >= 2 ? prettifyAndWrapTable(tableBuffer) : tableBuffer.join("");
       tableBuffer = [];
     }
     return output;
@@ -1240,19 +1245,24 @@ export async function generateResponse(
     if (usage?.inputTokenDetails) {
       aggregateUsage.inputTokenDetails ??= {};
       aggregateUsage.inputTokenDetails.noCacheTokens =
-        (aggregateUsage.inputTokenDetails.noCacheTokens ?? 0) + (usage.inputTokenDetails.noCacheTokens ?? 0);
+        (aggregateUsage.inputTokenDetails.noCacheTokens ?? 0) +
+        (usage.inputTokenDetails.noCacheTokens ?? 0);
       aggregateUsage.inputTokenDetails.cacheReadTokens =
-        (aggregateUsage.inputTokenDetails.cacheReadTokens ?? 0) + (usage.inputTokenDetails.cacheReadTokens ?? 0);
+        (aggregateUsage.inputTokenDetails.cacheReadTokens ?? 0) +
+        (usage.inputTokenDetails.cacheReadTokens ?? 0);
       aggregateUsage.inputTokenDetails.cacheWriteTokens =
-        (aggregateUsage.inputTokenDetails.cacheWriteTokens ?? 0) + (usage.inputTokenDetails.cacheWriteTokens ?? 0);
+        (aggregateUsage.inputTokenDetails.cacheWriteTokens ?? 0) +
+        (usage.inputTokenDetails.cacheWriteTokens ?? 0);
     }
 
     if (usage?.outputTokenDetails) {
       aggregateUsage.outputTokenDetails ??= {};
       aggregateUsage.outputTokenDetails.textTokens =
-        (aggregateUsage.outputTokenDetails.textTokens ?? 0) + (usage.outputTokenDetails.textTokens ?? 0);
+        (aggregateUsage.outputTokenDetails.textTokens ?? 0) +
+        (usage.outputTokenDetails.textTokens ?? 0);
       aggregateUsage.outputTokenDetails.reasoningTokens =
-        (aggregateUsage.outputTokenDetails.reasoningTokens ?? 0) + (usage.outputTokenDetails.reasoningTokens ?? 0);
+        (aggregateUsage.outputTokenDetails.reasoningTokens ?? 0) +
+        (usage.outputTokenDetails.reasoningTokens ?? 0);
     }
   }
 
@@ -1479,17 +1489,19 @@ export async function generateResponse(
     }
   }
 
-  async function getFinishReason(result: Awaited<ReturnType<typeof agent.stream>>): Promise<unknown> {
+  async function getFinishReason(
+    result: Awaited<ReturnType<typeof agent.stream>>,
+  ): Promise<unknown> {
     try {
-      return (result as any).finishReason
-        ? await (result as any).finishReason
-        : undefined;
+      return (result as any).finishReason ? await (result as any).finishReason : undefined;
     } catch {
       return undefined;
     }
   }
 
-  async function getFinalResultText(result: Awaited<ReturnType<typeof agent.stream>>): Promise<string> {
+  async function getFinalResultText(
+    result: Awaited<ReturnType<typeof agent.stream>>,
+  ): Promise<string> {
     try {
       const text = (result as any).text ? await (result as any).text : "";
       return typeof text === "string" ? text : "";
@@ -1538,346 +1550,400 @@ export async function generateResponse(
         resetTimer();
 
         switch (chunk.type) {
-        case "text-delta": {
-          await appendTextDelta(chunk.text);
-          break;
-        }
-
-        case "tool-input-start": {
-          // The gateway can emit this event with `id` instead of `toolCallId`
-          // (seen in production 2026-08-27) — accept both.
-          const toolCallId = (chunk as any).toolCallId ?? (chunk as any).id;
-          const toolName = (chunk as any).toolName;
-          if (typeof toolCallId !== "string" || typeof toolName !== "string") {
-            break;
-          }
-          // Issue #1515: the XML blob must never be treated as a tool name.
-          if (isLeakedMarkupToolName(toolName)) {
-            break;
-          }
-          if (optimisticToolCards.has(toolCallId)) {
+          case "text-delta": {
+            await appendTextDelta(chunk.text);
             break;
           }
 
-          const title = resolveCardTitle({
-            toolName,
-            fallback: "Working on it...",
-          });
-          optimisticToolCards.set(toolCallId, { title });
-          const toolInputStartPayload = asAppendPayload({
-            chunks: [toTaskUpdateChunk({
-              id: toolCallId,
-              title,
-              status: "in_progress",
-            })],
-          });
-          currentStreamLength += estimateAppendSize(toolInputStartPayload);
-          if (!streamingFailed) {
-            await tryStreamAppend(toolInputStartPayload);
-            if (streamingFailed) {
-              fallbackStartIdx = accumulatedText.length;
+          case "tool-input-start": {
+            // The gateway can emit this event with `id` instead of `toolCallId`
+            // (seen in production 2026-08-27) — accept both.
+            const toolCallId = (chunk as any).toolCallId ?? (chunk as any).id;
+            const toolName = (chunk as any).toolName;
+            if (typeof toolCallId !== "string" || typeof toolName !== "string") {
+              break;
             }
-          }
-          break;
-        }
+            // Issue #1515: the XML blob must never be treated as a tool name.
+            if (isLeakedMarkupToolName(toolName)) {
+              break;
+            }
+            if (optimisticToolCards.has(toolCallId)) {
+              break;
+            }
 
-        case "tool-call": {
-          if (isLeakedMarkupToolName(chunk.toolName)) {
-            logger.warn("Ignoring leaked markup tool-call — refusing to execute XML as a tool name", {
-              modelId,
-              toolCallId: chunk.toolCallId,
+            const title = resolveCardTitle({
+              toolName,
+              fallback: "Working on it...",
             });
-            logError({
-              errorName: "ToolCallMarkupLeaked",
-              errorMessage:
-                "Model emitted a native tool-call whose name was ChatML XML; not executing",
-              errorCode: "tool_call_markup_leaked",
-              channelId,
-              userId: options.recipientUserId,
-              context: {
-                modelId,
-                path: "tool_call_name",
-                toolCallId: chunk.toolCallId,
-                sample: String(chunk.toolName).slice(0, 240),
-              },
+            optimisticToolCards.set(toolCallId, { title });
+            const toolInputStartPayload = asAppendPayload({
+              chunks: [
+                toTaskUpdateChunk({
+                  id: toolCallId,
+                  title,
+                  status: "in_progress",
+                }),
+              ],
             });
+            currentStreamLength += estimateAppendSize(toolInputStartPayload);
+            if (!streamingFailed) {
+              await tryStreamAppend(toolInputStartPayload);
+              if (streamingFailed) {
+                fallbackStartIdx = accumulatedText.length;
+              }
+            }
             break;
           }
-          const callTrip = toolThrashBreaker.recordCall(chunk.toolName);
-          if (callTrip) tripToolThrash(callTrip);
-          // Flush any pending table buffer before tool cards
-          if ((tableBuffer.length > 0 || lineCarry) && !streamingFailed) {
-            const preToolFlush = flushRemainingTableBuffer();
-            if (preToolFlush) {
-              currentStreamLength += preToolFlush.length;
-              await tryStreamAppend(asAppendPayload({ markdown_text: preToolFlush }));
-            }
-            if (streamingFailed) {
-              fallbackStartIdx = streamedRawIdx;
-            } else {
-              streamedRawIdx = accumulatedText.length;
-            }
-          }
 
-          const slackMeta = getSlackMeta(tools[chunk.toolName]);
-          const inputArgs = (chunk as any).input ?? {};
-          const title = resolveCardTitle({
-            toolName: chunk.toolName,
-            input: inputArgs,
-            toolCallId: chunk.toolCallId,
-            fallback: "Working on it...",
-          });
-          optimisticToolCards.set(chunk.toolCallId, { title });
-          let details: string | undefined;
-          try { details = slackMeta?.detail?.(inputArgs); } catch { /* partial input args — safe to ignore */ }
-          const toolCallPayload = asAppendPayload({
-            chunks: [toTaskUpdateChunk({
-              id: chunk.toolCallId,
-              title,
-              status: "in_progress",
-              ...(details && { details }),
-            })],
-          });
-          currentStreamLength += estimateAppendSize(toolCallPayload);
-          if (!streamingFailed) {
-            await tryStreamAppend(toolCallPayload);
-            if (streamingFailed) {
-              fallbackStartIdx = accumulatedText.length;
+          case "tool-call": {
+            if (isLeakedMarkupToolName(chunk.toolName)) {
+              logger.warn(
+                "Ignoring leaked markup tool-call — refusing to execute XML as a tool name",
+                {
+                  modelId,
+                  toolCallId: chunk.toolCallId,
+                },
+              );
+              logError({
+                errorName: "ToolCallMarkupLeaked",
+                errorMessage:
+                  "Model emitted a native tool-call whose name was ChatML XML; not executing",
+                errorCode: "tool_call_markup_leaked",
+                channelId,
+                userId: options.recipientUserId,
+                context: {
+                  modelId,
+                  path: "tool_call_name",
+                  toolCallId: chunk.toolCallId,
+                  sample: String(chunk.toolName).slice(0, 240),
+                },
+              });
+              break;
             }
-          }
+            const callTrip = toolThrashBreaker.recordCall(chunk.toolName);
+            if (callTrip) tripToolThrash(callTrip);
+            // Flush any pending table buffer before tool cards
+            if ((tableBuffer.length > 0 || lineCarry) && !streamingFailed) {
+              const preToolFlush = flushRemainingTableBuffer();
+              if (preToolFlush) {
+                currentStreamLength += preToolFlush.length;
+                await tryStreamAppend(asAppendPayload({ markdown_text: preToolFlush }));
+              }
+              if (streamingFailed) {
+                fallbackStartIdx = streamedRawIdx;
+              } else {
+                streamedRawIdx = accumulatedText.length;
+              }
+            }
 
-          pendingToolInputs.set(chunk.toolCallId, {
-            name: chunk.toolName,
-            input: truncateToBytes(JSON.stringify(inputArgs), 1500),
-          });
-          // Issue #1343: keep the FULL input of Slack posting tools so a
-          // successful post to this turn's own destination can be compared
-          // against the final assistant text.
-          if (chunk.toolName === "send_thread_reply" || chunk.toolName === "send_channel_message") {
-            slackPostToolInputs.set(chunk.toolCallId, {
+            const slackMeta = getSlackMeta(tools[chunk.toolName]);
+            const inputArgs = (chunk as any).input ?? {};
+            const title = resolveCardTitle({
               toolName: chunk.toolName,
               input: inputArgs,
+              toolCallId: chunk.toolCallId,
+              fallback: "Working on it...",
             });
-          }
-          startLongToolSplitTimer();
-
-          // Keep resetting inactivity timer during long tool execution;
-          // each tick also re-checks the invocation lock so a Stop press
-          // mid-tool aborts promptly (issue #1355).
-          if (toolKeepAlive) clearInterval(toolKeepAlive);
-          toolKeepAlive = setInterval(() => {
-            resetTimer();
-            void abortIfSuperseded();
-          }, 60_000);
-
-          // Keep Slack stream alive during long tool execution (~30s idle timeout)
-          if (!streamingFailed && streamKeepAlive == null) {
-            streamKeepAlive = setInterval(async () => {
-              if (streamingFailed) {
-                clearInterval(streamKeepAlive!);
-                streamKeepAlive = null;
-                return;
-              }
-              // Keepalives never CREATE a stream (issue #1012): a whitespace
-              // append opening a fresh bubble is exactly the ghost-message
-              // bug — it only keeps an already-visible stream alive.
-              await tryStreamAppend(asAppendPayload({ markdown_text: " " }), { createStream: false });
-            }, 20_000);
-          }
-          break;
-        }
-
-        case "tool-result": {
-          const resultSlackMeta = getSlackMeta(tools[chunk.toolName]);
-          const pending = pendingToolInputs.get(chunk.toolCallId);
-          const title = resolveCardTitle({
-            toolName: chunk.toolName,
-            input: pending ? parsePendingToolInput(pending.input) : (chunk as any).input,
-            toolCallId: chunk.toolCallId,
-            fallback: "Done",
-          });
-          const output = chunk.output;
-          rememberLaunchLabelFromCall({
-            cache: launchLabels,
-            toolName: chunk.toolName,
-            input: pending ? parsePendingToolInput(pending.input) : (chunk as any).input,
-            output,
-          });
-          const isError = output && typeof output === "object" &&
-            "ok" in output && output.ok === false;
-
-          // Capture native Slack blocks from draw_table/draw_chart/
-          // raise_alert/draw_cards tools.
-          if (
-            output && typeof output === "object" &&
-            TABLE_BLOCK_KEY in output && output[TABLE_BLOCK_KEY]
-          ) {
-            pendingNativeBlocks = [output[TABLE_BLOCK_KEY] as Record<string, any>];
-            pendingNativeBlockToolCallIds = [chunk.toolCallId];
-          } else if (
-            output && typeof output === "object" &&
-            CHART_BLOCK_KEY in output && output[CHART_BLOCK_KEY]
-          ) {
-            pendingNativeBlocks = [output[CHART_BLOCK_KEY] as Record<string, any>];
-            pendingNativeBlockToolCallIds = [chunk.toolCallId];
-          } else if (
-            output && typeof output === "object" &&
-            ALERT_BLOCK_KEY in output && output[ALERT_BLOCK_KEY]
-          ) {
-            pendingNativeBlocks = [output[ALERT_BLOCK_KEY] as Record<string, any>];
-            pendingNativeBlockToolCallIds = [chunk.toolCallId];
-          } else if (
-            output && typeof output === "object" &&
-            CARD_BLOCK_KEY in output && Array.isArray(output[CARD_BLOCK_KEY]) &&
-            (output[CARD_BLOCK_KEY] as unknown[]).length > 0
-          ) {
-            pendingNativeBlocks = output[CARD_BLOCK_KEY] as Record<string, any>[];
-            pendingNativeBlockToolCallIds = [chunk.toolCallId];
-          }
-
-          if (pendingNativeBlocks.length > 0) {
+            optimisticToolCards.set(chunk.toolCallId, { title });
+            let details: string | undefined;
+            try {
+              details = slackMeta?.detail?.(inputArgs);
+            } catch {
+              /* partial input args — safe to ignore */
+            }
+            const toolCallPayload = asAppendPayload({
+              chunks: [
+                toTaskUpdateChunk({
+                  id: chunk.toolCallId,
+                  title,
+                  status: "in_progress",
+                  ...(details && { details }),
+                }),
+              ],
+            });
+            currentStreamLength += estimateAppendSize(toolCallPayload);
             if (!streamingFailed) {
-              const streamedNativeBlock = await tryStreamAppend(asAppendPayload({
-                chunks: [toBlocksChunk(pendingNativeBlocks)],
-              }));
-              if (streamedNativeBlock) {
-                logger.info("NativeBlockDelivered", {
-                  toolCallIds: pendingNativeBlockToolCallIds,
-                  path: "stream_append",
-                });
-                pendingNativeBlocks = [];
-                pendingNativeBlockToolCallIds = [];
+              await tryStreamAppend(toolCallPayload);
+              if (streamingFailed) {
+                fallbackStartIdx = accumulatedText.length;
               }
             }
-          }
 
-          const outputAny = output as any;
-          let taskOutput: string | undefined;
-          try { taskOutput = resultSlackMeta?.output?.(output); } catch { /* safe to ignore — display-only */ }
-          taskOutput ??= (isError && outputAny.error ? String(outputAny.error) : undefined);
-          const toolResultPayload = asAppendPayload({
-            chunks: [toTaskUpdateChunk({
-              id: chunk.toolCallId,
-              title,
-              status: isError ? "error" : "complete",
-              ...(taskOutput && { output: taskOutput }),
-            })],
-          });
-          currentStreamLength += estimateAppendSize(toolResultPayload);
-          if (!streamingFailed) {
-            await tryStreamAppend(toolResultPayload);
-            if (streamingFailed) {
-              fallbackStartIdx = accumulatedText.length;
-            }
-          }
-
-          toolCallRecords.push({
-            name: chunk.toolName,
-            input: pending?.input ?? "{}",
-            output: serializeToolOutput(chunk.toolName, output),
-            is_error: !!isError,
-            rawOutput: output,
-          });
-          const resultTrip = toolThrashBreaker.recordResult(!isError, chunk.toolName);
-          if (resultTrip) tripToolThrash(resultTrip);
-          // Issue #1343: the turn just posted into its own delivery
-          // destination — remember what it said so the final assistant text
-          // can be suppressed if it merely restates it.
-          const slackPost = slackPostToolInputs.get(chunk.toolCallId);
-          if (slackPost && !isError) {
-            const postedText = getSameDestinationPostText(
-              slackPost.toolName,
-              slackPost.input,
-              channelId,
-              threadTs,
-            );
-            if (postedText != null) {
-              sameDestinationPostTexts.push(postedText);
-              logger.info("Turn posted to its own destination via tool; deferring further text", {
-                channelId,
-                threadTs,
-                toolName: slackPost.toolName,
+            pendingToolInputs.set(chunk.toolCallId, {
+              name: chunk.toolName,
+              input: truncateToBytes(JSON.stringify(inputArgs), 1500),
+            });
+            // Issue #1343: keep the FULL input of Slack posting tools so a
+            // successful post to this turn's own destination can be compared
+            // against the final assistant text.
+            if (
+              chunk.toolName === "send_thread_reply" ||
+              chunk.toolName === "send_channel_message"
+            ) {
+              slackPostToolInputs.set(chunk.toolCallId, {
+                toolName: chunk.toolName,
+                input: inputArgs,
               });
             }
-          }
-          slackPostToolInputs.delete(chunk.toolCallId);
-          if (
-            chunk.toolName === "run_command_detached" &&
-            !isError &&
-            getDetachedCommandSuspendState()
-          ) {
-            turnSuspendedByDetachedCommand = true;
-          }
-          pendingToolInputs.delete(chunk.toolCallId);
-          optimisticToolCards.delete(chunk.toolCallId);
+            startLongToolSplitTimer();
 
-          if (pendingToolInputs.size === 0 && toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
-          if (pendingToolInputs.size === 0 && streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
-          if (pendingToolInputs.size === 0) clearLongToolSplitTimer();
-          resetTimer();
+            // Keep resetting inactivity timer during long tool execution;
+            // each tick also re-checks the invocation lock so a Stop press
+            // mid-tool aborts promptly (issue #1355).
+            if (toolKeepAlive) clearInterval(toolKeepAlive);
+            toolKeepAlive = setInterval(() => {
+              resetTimer();
+              void abortIfSuperseded();
+            }, 60_000);
 
-          if (pendingToolInputs.size === 0 && currentStreamLength > STREAM_THRESHOLD_NEWLINE && !streamingFailed) {
-            if (!(await splitToNewStream()) && streamingFailed) {
-              fallbackStartIdx = accumulatedText.length;
+            // Keep Slack stream alive during long tool execution (~30s idle timeout)
+            if (!streamingFailed && streamKeepAlive == null) {
+              streamKeepAlive = setInterval(async () => {
+                if (streamingFailed) {
+                  clearInterval(streamKeepAlive!);
+                  streamKeepAlive = null;
+                  return;
+                }
+                // Keepalives never CREATE a stream (issue #1012): a whitespace
+                // append opening a fresh bubble is exactly the ghost-message
+                // bug — it only keeps an already-visible stream alive.
+                await tryStreamAppend(asAppendPayload({ markdown_text: " " }), {
+                  createStream: false,
+                });
+              }, 20_000);
             }
+            break;
           }
-          await splitForStreamAge();
-          break;
-        }
 
-        case "tool-error": {
-          const errToolName = (chunk as any).toolName;
-          const errToolCallId = (chunk as any).toolCallId;
-          const pending = pendingToolInputs.get(errToolCallId);
-          const title = resolveCardTitle({
-            toolName: errToolName,
-            input: parsePendingToolInput(pending?.input),
-            toolCallId: errToolCallId,
-            fallback: "Failed",
-          });
-          const err = (chunk as any).error;
-          const errorMsg = err instanceof Error ? err.message : String(err);
-          const toolErrorPayload = asAppendPayload({
-            chunks: [toTaskUpdateChunk({
-              id: errToolCallId,
-              title,
-              status: "error",
-              output: truncate(errorMsg, 200),
-            })],
-          });
-          currentStreamLength += estimateAppendSize(toolErrorPayload);
-          if (!streamingFailed) {
-            await tryStreamAppend(toolErrorPayload);
-            if (streamingFailed) {
-              fallbackStartIdx = accumulatedText.length;
+          case "tool-result": {
+            const resultSlackMeta = getSlackMeta(tools[chunk.toolName]);
+            const pending = pendingToolInputs.get(chunk.toolCallId);
+            const title = resolveCardTitle({
+              toolName: chunk.toolName,
+              input: pending ? parsePendingToolInput(pending.input) : (chunk as any).input,
+              toolCallId: chunk.toolCallId,
+              fallback: "Done",
+            });
+            const output = chunk.output;
+            rememberLaunchLabelFromCall({
+              cache: launchLabels,
+              toolName: chunk.toolName,
+              input: pending ? parsePendingToolInput(pending.input) : (chunk as any).input,
+              output,
+            });
+            const isError =
+              output && typeof output === "object" && "ok" in output && output.ok === false;
+
+            // Capture native Slack blocks from draw_table/draw_chart/
+            // raise_alert/draw_cards tools.
+            if (
+              output &&
+              typeof output === "object" &&
+              TABLE_BLOCK_KEY in output &&
+              output[TABLE_BLOCK_KEY]
+            ) {
+              pendingNativeBlocks = [output[TABLE_BLOCK_KEY] as Record<string, any>];
+              pendingNativeBlockToolCallIds = [chunk.toolCallId];
+            } else if (
+              output &&
+              typeof output === "object" &&
+              CHART_BLOCK_KEY in output &&
+              output[CHART_BLOCK_KEY]
+            ) {
+              pendingNativeBlocks = [output[CHART_BLOCK_KEY] as Record<string, any>];
+              pendingNativeBlockToolCallIds = [chunk.toolCallId];
+            } else if (
+              output &&
+              typeof output === "object" &&
+              ALERT_BLOCK_KEY in output &&
+              output[ALERT_BLOCK_KEY]
+            ) {
+              pendingNativeBlocks = [output[ALERT_BLOCK_KEY] as Record<string, any>];
+              pendingNativeBlockToolCallIds = [chunk.toolCallId];
+            } else if (
+              output &&
+              typeof output === "object" &&
+              CARD_BLOCK_KEY in output &&
+              Array.isArray(output[CARD_BLOCK_KEY]) &&
+              (output[CARD_BLOCK_KEY] as unknown[]).length > 0
+            ) {
+              pendingNativeBlocks = output[CARD_BLOCK_KEY] as Record<string, any>[];
+              pendingNativeBlockToolCallIds = [chunk.toolCallId];
             }
-          }
 
-          toolCallRecords.push({
-            name: errToolName || "unknown",
-            input: pending?.input ?? "{}",
-            output: truncateToBytes(JSON.stringify({ error: errorMsg }), 1500),
-            is_error: true,
-          });
-          const errorTrip = toolThrashBreaker.recordResult(false, errToolName || "unknown");
-          if (errorTrip) tripToolThrash(errorTrip);
-          pendingToolInputs.delete(errToolCallId);
-          optimisticToolCards.delete(errToolCallId);
-          slackPostToolInputs.delete(errToolCallId);
-
-          if (pendingToolInputs.size === 0 && toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
-          if (pendingToolInputs.size === 0 && streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
-          if (pendingToolInputs.size === 0) clearLongToolSplitTimer();
-          resetTimer();
-
-          if (pendingToolInputs.size === 0 && currentStreamLength > STREAM_THRESHOLD_NEWLINE && !streamingFailed) {
-            if (!(await splitToNewStream()) && streamingFailed) {
-              fallbackStartIdx = accumulatedText.length;
+            if (pendingNativeBlocks.length > 0) {
+              if (!streamingFailed) {
+                const streamedNativeBlock = await tryStreamAppend(
+                  asAppendPayload({
+                    chunks: [toBlocksChunk(pendingNativeBlocks)],
+                  }),
+                );
+                if (streamedNativeBlock) {
+                  logger.info("NativeBlockDelivered", {
+                    toolCallIds: pendingNativeBlockToolCallIds,
+                    path: "stream_append",
+                  });
+                  pendingNativeBlocks = [];
+                  pendingNativeBlockToolCallIds = [];
+                }
+              }
             }
+
+            const outputAny = output as any;
+            let taskOutput: string | undefined;
+            try {
+              taskOutput = resultSlackMeta?.output?.(output);
+            } catch {
+              /* safe to ignore — display-only */
+            }
+            taskOutput ??= isError && outputAny.error ? String(outputAny.error) : undefined;
+            const toolResultPayload = asAppendPayload({
+              chunks: [
+                toTaskUpdateChunk({
+                  id: chunk.toolCallId,
+                  title,
+                  status: isError ? "error" : "complete",
+                  ...(taskOutput && { output: taskOutput }),
+                }),
+              ],
+            });
+            currentStreamLength += estimateAppendSize(toolResultPayload);
+            if (!streamingFailed) {
+              await tryStreamAppend(toolResultPayload);
+              if (streamingFailed) {
+                fallbackStartIdx = accumulatedText.length;
+              }
+            }
+
+            toolCallRecords.push({
+              name: chunk.toolName,
+              input: pending?.input ?? "{}",
+              output: serializeToolOutput(chunk.toolName, output),
+              is_error: !!isError,
+              rawOutput: output,
+            });
+            const resultTrip = toolThrashBreaker.recordResult(!isError, chunk.toolName);
+            if (resultTrip) tripToolThrash(resultTrip);
+            // Issue #1343: the turn just posted into its own delivery
+            // destination — remember what it said so the final assistant text
+            // can be suppressed if it merely restates it.
+            const slackPost = slackPostToolInputs.get(chunk.toolCallId);
+            if (slackPost && !isError) {
+              const postedText = getSameDestinationPostText(
+                slackPost.toolName,
+                slackPost.input,
+                channelId,
+                threadTs,
+              );
+              if (postedText != null) {
+                sameDestinationPostTexts.push(postedText);
+                logger.info("Turn posted to its own destination via tool; deferring further text", {
+                  channelId,
+                  threadTs,
+                  toolName: slackPost.toolName,
+                });
+              }
+            }
+            slackPostToolInputs.delete(chunk.toolCallId);
+            if (
+              chunk.toolName === "run_command_detached" &&
+              !isError &&
+              getDetachedCommandSuspendState()
+            ) {
+              turnSuspendedByDetachedCommand = true;
+            }
+            pendingToolInputs.delete(chunk.toolCallId);
+            optimisticToolCards.delete(chunk.toolCallId);
+
+            if (pendingToolInputs.size === 0 && toolKeepAlive) {
+              clearInterval(toolKeepAlive);
+              toolKeepAlive = null;
+            }
+            if (pendingToolInputs.size === 0 && streamKeepAlive) {
+              clearInterval(streamKeepAlive);
+              streamKeepAlive = null;
+            }
+            if (pendingToolInputs.size === 0) clearLongToolSplitTimer();
+            resetTimer();
+
+            if (
+              pendingToolInputs.size === 0 &&
+              currentStreamLength > STREAM_THRESHOLD_NEWLINE &&
+              !streamingFailed
+            ) {
+              if (!(await splitToNewStream()) && streamingFailed) {
+                fallbackStartIdx = accumulatedText.length;
+              }
+            }
+            await splitForStreamAge();
+            break;
           }
-          await splitForStreamAge();
-          break;
-        }
+
+          case "tool-error": {
+            const errToolName = (chunk as any).toolName;
+            const errToolCallId = (chunk as any).toolCallId;
+            const pending = pendingToolInputs.get(errToolCallId);
+            const title = resolveCardTitle({
+              toolName: errToolName,
+              input: parsePendingToolInput(pending?.input),
+              toolCallId: errToolCallId,
+              fallback: "Failed",
+            });
+            const err = (chunk as any).error;
+            const errorMsg = err instanceof Error ? err.message : String(err);
+            const toolErrorPayload = asAppendPayload({
+              chunks: [
+                toTaskUpdateChunk({
+                  id: errToolCallId,
+                  title,
+                  status: "error",
+                  output: truncate(errorMsg, 200),
+                }),
+              ],
+            });
+            currentStreamLength += estimateAppendSize(toolErrorPayload);
+            if (!streamingFailed) {
+              await tryStreamAppend(toolErrorPayload);
+              if (streamingFailed) {
+                fallbackStartIdx = accumulatedText.length;
+              }
+            }
+
+            toolCallRecords.push({
+              name: errToolName || "unknown",
+              input: pending?.input ?? "{}",
+              output: truncateToBytes(JSON.stringify({ error: errorMsg }), 1500),
+              is_error: true,
+            });
+            const errorTrip = toolThrashBreaker.recordResult(false, errToolName || "unknown");
+            if (errorTrip) tripToolThrash(errorTrip);
+            pendingToolInputs.delete(errToolCallId);
+            optimisticToolCards.delete(errToolCallId);
+            slackPostToolInputs.delete(errToolCallId);
+
+            if (pendingToolInputs.size === 0 && toolKeepAlive) {
+              clearInterval(toolKeepAlive);
+              toolKeepAlive = null;
+            }
+            if (pendingToolInputs.size === 0 && streamKeepAlive) {
+              clearInterval(streamKeepAlive);
+              streamKeepAlive = null;
+            }
+            if (pendingToolInputs.size === 0) clearLongToolSplitTimer();
+            resetTimer();
+
+            if (
+              pendingToolInputs.size === 0 &&
+              currentStreamLength > STREAM_THRESHOLD_NEWLINE &&
+              !streamingFailed
+            ) {
+              if (!(await splitToNewStream()) && streamingFailed) {
+                fallbackStartIdx = accumulatedText.length;
+              }
+            }
+            await splitForStreamAge();
+            break;
+          }
         }
       }
 
@@ -1945,7 +2011,8 @@ export async function generateResponse(
           emptyCompletionRelaunchCount++;
           logError({
             errorName: "EmptyCompletionRelaunched",
-            errorMessage: "Stream completed without output after useful tool calls; relaunching once",
+            errorMessage:
+              "Stream completed without output after useful tool calls; relaunching once",
             errorCode: "empty_completion_relaunched",
             channelId,
             context: {
@@ -2001,8 +2068,14 @@ export async function generateResponse(
 
     // ── Finalize ──────────────────────────────────────────────────────────
     clearTimeout(inactivityTimer);
-    if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
-    if (streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
+    if (toolKeepAlive) {
+      clearInterval(toolKeepAlive);
+      toolKeepAlive = null;
+    }
+    if (streamKeepAlive) {
+      clearInterval(streamKeepAlive);
+      streamKeepAlive = null;
+    }
     clearLongToolSplitTimer();
 
     // ── Duplicate final message resolution (issue #1343) ────────────────
@@ -2013,15 +2086,19 @@ export async function generateResponse(
       if (isSubstantialDuplicate(deferredFinalText, sameDestinationPostTexts)) {
         duplicateFinalSuppressed = true;
         suppressedTailStart = accumulatedText.length - deferredFinalText.length;
-        logger.info("Final assistant text duplicates a message this turn already posted — suppressing", {
-          channelId,
-          threadTs,
-          deferredLength: deferredFinalText.length,
-          sameDestinationPostCount: sameDestinationPostTexts.length,
-        });
+        logger.info(
+          "Final assistant text duplicates a message this turn already posted — suppressing",
+          {
+            channelId,
+            threadTs,
+            deferredLength: deferredFinalText.length,
+            sameDestinationPostCount: sameDestinationPostTexts.length,
+          },
+        );
         logError({
           errorName: "DuplicateFinalMessageSuppressed",
-          errorMessage: "Final assistant text substantially duplicated a same-thread tool post; suppressed",
+          errorMessage:
+            "Final assistant text substantially duplicated a same-thread tool post; suppressed",
           errorCode: "duplicate_final_message_suppressed",
           channelId,
           context: {
@@ -2061,7 +2138,11 @@ export async function generateResponse(
     if (streamingFailed) {
       // Stop the current streamer to avoid leaving an orphaned stream on Slack
       if (streamer && !emptyCompletionDetected) {
-        try { await streamer.stop(); } catch { /* stream may already be broken */ }
+        try {
+          await streamer.stop();
+        } catch {
+          /* stream may already be broken */
+        }
       }
 
       // Fallback: post the unsent portion via safePostMessage.
@@ -2071,12 +2152,11 @@ export async function generateResponse(
       // silence, not a bulk dump of what they stopped.
       // A duplicate-suppressed tail (issue #1343) is excluded from the
       // fallback post too — it was already delivered via the Slack tool.
-      const deliverableEnd = duplicateFinalSuppressed && suppressedTailStart >= 0
-        ? Math.max(fallbackStartIdx, suppressedTailStart)
-        : finalText.length;
-      const unsentText = stoppedByUser
-        ? ""
-        : finalText.slice(fallbackStartIdx, deliverableEnd);
+      const deliverableEnd =
+        duplicateFinalSuppressed && suppressedTailStart >= 0
+          ? Math.max(fallbackStartIdx, suppressedTailStart)
+          : finalText.length;
+      const unsentText = stoppedByUser ? "" : finalText.slice(fallbackStartIdx, deliverableEnd);
       const blocks: any[] = [];
       const formattedUnsent = unsentText ? formatForSlack(unsentText) : "";
       // Issue #1121: when the stream died after everything visible had
@@ -2092,8 +2172,13 @@ export async function generateResponse(
       // native indicator); with a live bubble nothing more is delivered.
       const stopRenderedNativelyBySlack = stoppedByUser && streamer != null;
       const interruptedStubText = stoppedByUser
-        ? stopRenderedNativelyBySlack ? null : "_[stopped]_"
-        : !emptyCompletionDetected && !duplicateFinalSuppressed && !formattedUnsent && toolCallRecords.length > 0
+        ? stopRenderedNativelyBySlack
+          ? null
+          : "_[stopped]_"
+        : !emptyCompletionDetected &&
+            !duplicateFinalSuppressed &&
+            !formattedUnsent &&
+            toolCallRecords.length > 0
           ? `_Turn interrupted after ${toolCallRecords.length} tool call${toolCallRecords.length === 1 ? "" : "s"} — rerun?_`
           : null;
       if (formattedUnsent) {
@@ -2117,18 +2202,21 @@ export async function generateResponse(
 
       blocks.push({
         type: "context_actions",
-        elements: [{
-          type: "feedback_buttons",
-          action_id: "aura_feedback",
-          positive_button: { text: { type: "plain_text", text: "Good" }, value: "positive" },
-          negative_button: { text: { type: "plain_text", text: "Bad" }, value: "negative" },
-        }],
+        elements: [
+          {
+            type: "feedback_buttons",
+            action_id: "aura_feedback",
+            positive_button: { text: { type: "plain_text", text: "Good" }, value: "positive" },
+            negative_button: { text: { type: "plain_text", text: "Bad" }, value: "negative" },
+          },
+        ],
       });
 
       const toolMeta = buildToolMetadata(toolCallRecords);
       const fallbackText = emptyCompletionDetected
         ? emptyCompletionFallbackText
-        : interruptedStubText ?? (formattedUnsent || "_I processed your request but had nothing to say._");
+        : (interruptedStubText ??
+          (formattedUnsent || "_I processed your request but had nothing to say._"));
 
       if (stopRenderedNativelyBySlack) {
         // Nothing left to deliver: the unsent buffer is suppressed on a Stop
@@ -2200,7 +2288,8 @@ export async function generateResponse(
           try {
             await slackClient.chat.postMessage({
               channel: channelId,
-              text: fallbackText || "I generated a response but couldn't deliver it. Please try again.",
+              text:
+                fallbackText || "I generated a response but couldn't deliver it. Please try again.",
               thread_ts: threadTs,
             });
             pendingChannelTypeUnsupportedFallback = null;
@@ -2220,12 +2309,14 @@ export async function generateResponse(
       // and inject native table/chart blocks if present.
       const feedbackBlock = {
         type: "context_actions",
-        elements: [{
-          type: "feedback_buttons",
-          action_id: "aura_feedback",
-          positive_button: { text: { type: "plain_text", text: "Good" }, value: "positive" },
-          negative_button: { text: { type: "plain_text", text: "Bad" }, value: "negative" },
-        }],
+        elements: [
+          {
+            type: "feedback_buttons",
+            action_id: "aura_feedback",
+            positive_button: { text: { type: "plain_text", text: "Good" }, value: "positive" },
+            negative_button: { text: { type: "plain_text", text: "Bad" }, value: "negative" },
+          },
+        ],
       };
 
       const toolMeta = buildToolMetadata(toolCallRecords);
@@ -2274,7 +2365,8 @@ export async function generateResponse(
           // (same asymmetry as the append path). Both are recoverable: retry
           // the stop without blocks, then deliver the native block via
           // chat.postMessage.
-          const stopErrCode = stopErr?.data?.error ||
+          const stopErrCode =
+            stopErr?.data?.error ||
             (isInvalidArguments(stopErr) ? "invalid_arguments" : "invalid_blocks");
           logger.warn("streamer.stop() rejected blocks, retrying without them", {
             channelId,
@@ -2318,7 +2410,8 @@ export async function generateResponse(
               });
               logError({
                 errorName: "NativeBlockDropped",
-                errorMessage: nativeBlockPostErr?.message ||
+                errorMessage:
+                  nativeBlockPostErr?.message ||
                   "chat.postMessage fallback failed for native block",
                 errorCode: "native_block_dropped",
                 channelId,
@@ -2344,7 +2437,11 @@ export async function generateResponse(
             channelId,
             context: { currentStreamLength },
           });
-          try { await streamer.stop(); } catch { /* already finalized */ }
+          try {
+            await streamer.stop();
+          } catch {
+            /* already finalized */
+          }
           if (pendingNativeBlocks.length > 0) {
             try {
               await slackClient.chat.postMessage({
@@ -2366,7 +2463,8 @@ export async function generateResponse(
               });
               logError({
                 errorName: "NativeBlockDropped",
-                errorMessage: nativeBlockPostErr?.message ||
+                errorMessage:
+                  nativeBlockPostErr?.message ||
                   "chat.postMessage fallback failed for native block",
                 errorCode: "native_block_dropped",
                 channelId,
@@ -2382,10 +2480,17 @@ export async function generateResponse(
           }
         } else if (isChannelTypeNotSupported(stopErr)) {
           streamingUnsupportedChannels.add(channelId);
-          logger.warn("streamer.stop() hit channel_type_not_supported, finalizing without payload", {
-            channelId,
-          });
-          try { await streamer.stop(); } catch { /* already finalized */ }
+          logger.warn(
+            "streamer.stop() hit channel_type_not_supported, finalizing without payload",
+            {
+              channelId,
+            },
+          );
+          try {
+            await streamer.stop();
+          } catch {
+            /* already finalized */
+          }
           if (pendingNativeBlocks.length > 0) {
             try {
               await slackClient.chat.postMessage({
@@ -2407,7 +2512,8 @@ export async function generateResponse(
               });
               logError({
                 errorName: "NativeBlockDropped",
-                errorMessage: nativeBlockPostErr?.message ||
+                errorMessage:
+                  nativeBlockPostErr?.message ||
                   "chat.postMessage fallback failed for native block",
                 errorCode: "native_block_dropped",
                 channelId,
@@ -2464,16 +2570,23 @@ export async function generateResponse(
       },
       toolCalls: toolCallRecords,
       modelId,
-      stepsPromise: stepsPromises.length > 1
-        ? Promise.all(stepsPromises).then((steps) => steps.flat())
-        : latestResult?.steps,
+      stepsPromise:
+        stepsPromises.length > 1
+          ? Promise.all(stepsPromises).then((steps) => steps.flat())
+          : latestResult?.steps,
       stepModelIds: getStepModelIds(),
       compactionTotals: getCompactionTotals?.(),
     };
   } catch (error: any) {
     clearTimeout(inactivityTimer);
-    if (toolKeepAlive) { clearInterval(toolKeepAlive); toolKeepAlive = null; }
-    if (streamKeepAlive) { clearInterval(streamKeepAlive); streamKeepAlive = null; }
+    if (toolKeepAlive) {
+      clearInterval(toolKeepAlive);
+      toolKeepAlive = null;
+    }
+    if (streamKeepAlive) {
+      clearInterval(streamKeepAlive);
+      streamKeepAlive = null;
+    }
     clearLongToolSplitTimer();
 
     // A mid-tool supersede abort (issue #1355) surfaces from the SDK as an
@@ -2611,8 +2724,8 @@ export async function generateResponse(
         error: error.message,
       });
 
-      const fileNames = options.files!
-        .filter((f) => f.type === "file")
+      const fileNames = options
+        .files!.filter((f) => f.type === "file")
         .map((f) => (f as any).filename || "unknown")
         .join(", ");
 
@@ -2663,7 +2776,11 @@ export async function generateResponse(
         const retryOutputTokens = retryUsage.outputTokens ?? 0;
 
         if (!streamingFailed) {
-          try { if (streamer) await streamer.stop(); } catch { /* already closed */ }
+          try {
+            if (streamer) await streamer.stop();
+          } catch {
+            /* already closed */
+          }
         } else {
           const fallbackText = retryText || "_I processed your request but had nothing to say._";
           await safePostMessage(slackClient, {
@@ -2811,7 +2928,9 @@ export async function generateResponse(
           channelId,
           rawLength: accumulatedText.length,
         });
-      } catch { /* truly cannot post to this channel */ }
+      } catch {
+        /* truly cannot post to this channel */
+      }
     }
 
     throw error;

@@ -62,11 +62,7 @@ function JobsPage() {
   });
 
   if (error && !data)
-    return (
-      <div className="text-destructive text-sm">
-        Failed to load jobs: {error.message}
-      </div>
-    );
+    return <div className="text-destructive text-sm">Failed to load jobs: {error.message}</div>;
 
   const jobs = data?.items ?? [];
   const total = data?.total ?? 0;
@@ -75,9 +71,7 @@ function JobsPage() {
     <div className="flex flex-col gap-4 flex-1 min-h-0">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold tracking-tight">Jobs</h1>
-        <span className="text-sm text-muted-foreground">
-          {isLoading ? "…" : `${total} total`}
-        </span>
+        <span className="text-sm text-muted-foreground">{isLoading ? "…" : `${total} total`}</span>
       </div>
 
       <div className="relative max-w-sm">
@@ -93,7 +87,12 @@ function JobsPage() {
         />
       </div>
 
-      <div className={cn("flex-1 min-h-0 rounded-xl border overflow-auto transition-opacity", isFetching && !isLoading && "opacity-50")}>
+      <div
+        className={cn(
+          "flex-1 min-h-0 rounded-xl border overflow-auto transition-opacity",
+          isFetching && !isLoading && "opacity-50",
+        )}
+      >
         <Table className="min-w-[1280px]">
           <TableHeader>
             <TableRow>
@@ -115,10 +114,7 @@ function JobsPage() {
               <TableRowsSkeleton columns={11} />
             ) : jobs.length === 0 ? (
               <TableRow>
-                <TableCell
-                  colSpan={11}
-                  className="text-center text-muted-foreground py-8"
-                >
+                <TableCell colSpan={11} className="text-center text-muted-foreground py-8">
                   No jobs found
                 </TableCell>
               </TableRow>
@@ -177,9 +173,7 @@ function JobsPage() {
                       >
                         <span
                           className={`block h-4 w-4 rounded-full bg-white shadow transition-transform ${
-                            isEnabled
-                              ? "translate-x-4"
-                              : "translate-x-0.5"
+                            isEnabled ? "translate-x-4" : "translate-x-0.5"
                           }`}
                         />
                       </button>
@@ -198,9 +192,7 @@ function JobsPage() {
                       {job.model ? (
                         <Badge variant="outline">{job.model}</Badge>
                       ) : (
-                        <span className="text-muted-foreground text-sm">
-                          medium (default)
-                        </span>
+                        <span className="text-muted-foreground text-sm">medium (default)</span>
                       )}
                     </TableCell>
                     <TableCell className="font-mono text-sm text-muted-foreground">

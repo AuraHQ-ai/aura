@@ -52,9 +52,8 @@ beforeEach(() => {
   vi.clearAllMocks();
   getSettingMock.mockResolvedValue(null);
   safePostMessageMock.mockResolvedValue({ ok: true });
-  resolveSlackDestinationMock.mockImplementation(
-    async (_client: unknown, destination: string) =>
-      destination.startsWith("U") ? `D_${destination}` : destination,
+  resolveSlackDestinationMock.mockImplementation(async (_client: unknown, destination: string) =>
+    destination.startsWith("U") ? `D_${destination}` : destination,
   );
 });
 
@@ -211,10 +210,7 @@ describe("sendJobOpsNotice", () => {
     const result = await sendJobOpsNotice(notice);
 
     expect(result).toEqual({ ok: true, target: "ops_channel" });
-    expect(resolveSlackDestinationMock).toHaveBeenCalledWith(
-      expect.anything(),
-      "C_SETTINGS_OPS",
-    );
+    expect(resolveSlackDestinationMock).toHaveBeenCalledWith(expect.anything(), "C_SETTINGS_OPS");
     expect(safePostMessageMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({

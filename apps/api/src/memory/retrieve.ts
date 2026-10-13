@@ -7,10 +7,7 @@ import type { EntityType } from "@aura/db/schema";
 import { embedText } from "../lib/embeddings.js";
 import { getFastModel, getRerankingModel } from "../lib/ai.js";
 import { resolveEntityReadOnly } from "./entity-resolution.js";
-import {
-  isQuarantinedCapabilityClaim,
-  sourceTrustMultiplier,
-} from "./provenance.js";
+import { isQuarantinedCapabilityClaim, sourceTrustMultiplier } from "./provenance.js";
 import { logger } from "../lib/logger.js";
 import { aiTelemetry } from "../lib/langfuse.js";
 
@@ -53,7 +50,7 @@ interface RetrievalOptions {
     },
   ) => void;
   /**
-  * Return no memories when the candidate pool has no raw retrieval evidence:
+   * Return no memories when the candidate pool has no raw retrieval evidence:
    * no resolved entity, no lexical hit, and no cosine match above the floor.
    */
   abstain?: boolean;
@@ -68,10 +65,7 @@ interface RetrievalOptions {
 const MAX_FULLTEXT_LEXEMES = 8;
 const PER_TERM_FULLTEXT_LIMIT = 25;
 
-async function extractLexemes(
-  query: string,
-  maxLexemes = MAX_FULLTEXT_LEXEMES,
-): Promise<string[]> {
+async function extractLexemes(query: string, maxLexemes = MAX_FULLTEXT_LEXEMES): Promise<string[]> {
   if (!query.trim()) return [];
 
   try {
@@ -99,10 +93,21 @@ async function extractLexemes(
 // ── LLM-based entity extraction ─────────────────────────────────────────────
 
 const queryEntitySchema = z.object({
-  entities: z.array(z.object({
-    name: z.string().describe("The entity name as mentioned or implied"),
-    type: z.enum(["person", "company", "project", "product", "channel", "technology", "concept", "location"]),
-  })),
+  entities: z.array(
+    z.object({
+      name: z.string().describe("The entity name as mentioned or implied"),
+      type: z.enum([
+        "person",
+        "company",
+        "project",
+        "product",
+        "channel",
+        "technology",
+        "concept",
+        "location",
+      ]),
+    }),
+  ),
 });
 
 async function extractQueryEntities(
@@ -153,10 +158,7 @@ export function looksMultiHop(query: string): boolean {
   );
 }
 
-async function planQuery(
-  query: string,
-  onUsage?: RetrievalOptions["onUsage"],
-): Promise<QueryPlan> {
+async function planQuery(query: string, onUsage?: RetrievalOptions["onUsage"]): Promise<QueryPlan> {
   const fallback: QueryPlan = { rewritten: query, subQueries: [] };
   try {
     const model = await getFastModel();
@@ -173,9 +175,7 @@ Message: "${query}"`,
     });
     onUsage?.((model as any)?.modelId ?? "retrieve", usage);
     const rewritten = object.rewritten?.trim() || query;
-    const subQueries = (object.subQueries ?? [])
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0);
+    const subQueries = (object.subQueries ?? []).map((s) => s.trim()).filter((s) => s.length > 0);
     return { rewritten, subQueries };
   } catch (error) {
     logger.warn("Query planning failed, using original query", {
@@ -189,25 +189,122 @@ Message: "${query}"`,
 // ── Heuristic proper noun extraction (fallback) ─────────────────────────────
 
 function extractEntitiesHeuristic(query: string): string[] {
-  const words = query.split(/[\s,;]+/).map((w) => w.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, "")).filter((w) => w.length > 1);
+  const words = query
+    .split(/[\s,;]+/)
+    .map((w) => w.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, ""))
+    .filter((w) => w.length > 1);
   if (words.length === 0) return [];
 
   const STOP_WORDS = new Set([
-    "what", "when", "where", "which", "who", "whom", "whose", "why", "how",
-    "tell", "show", "find", "get", "give", "let", "make", "can", "could",
-    "would", "should", "will", "does", "did", "has", "have", "had", "are",
-    "is", "was", "were", "been", "being", "the", "this", "that", "these",
-    "those", "there", "here", "not", "but", "and", "for", "with", "about",
-    "from", "into", "any", "all", "also", "just", "than", "then", "now",
-    "very", "its", "his", "her", "our", "your", "their", "some", "each",
-    "every", "both", "few", "more", "most", "other", "many", "much", "own",
-    "same", "such", "only", "new", "old", "well", "also", "back", "even",
-    "still", "after", "before", "between", "under", "over", "again",
-    "further", "once", "during", "while", "please", "thanks", "thank",
-    "know", "think", "want", "need", "like", "look", "use", "say", "said",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "whom",
+    "whose",
+    "why",
+    "how",
+    "tell",
+    "show",
+    "find",
+    "get",
+    "give",
+    "let",
+    "make",
+    "can",
+    "could",
+    "would",
+    "should",
+    "will",
+    "does",
+    "did",
+    "has",
+    "have",
+    "had",
+    "are",
+    "is",
+    "was",
+    "were",
+    "been",
+    "being",
+    "the",
+    "this",
+    "that",
+    "these",
+    "those",
+    "there",
+    "here",
+    "not",
+    "but",
+    "and",
+    "for",
+    "with",
+    "about",
+    "from",
+    "into",
+    "any",
+    "all",
+    "also",
+    "just",
+    "than",
+    "then",
+    "now",
+    "very",
+    "its",
+    "his",
+    "her",
+    "our",
+    "your",
+    "their",
+    "some",
+    "each",
+    "every",
+    "both",
+    "few",
+    "more",
+    "most",
+    "other",
+    "many",
+    "much",
+    "own",
+    "same",
+    "such",
+    "only",
+    "new",
+    "old",
+    "well",
+    "also",
+    "back",
+    "even",
+    "still",
+    "after",
+    "before",
+    "between",
+    "under",
+    "over",
+    "again",
+    "further",
+    "once",
+    "during",
+    "while",
+    "please",
+    "thanks",
+    "thank",
+    "know",
+    "think",
+    "want",
+    "need",
+    "like",
+    "look",
+    "use",
+    "say",
+    "said",
   ]);
   const isProperNoun = (w: string, idx: number) =>
-    /^[A-Z]/.test(w) && !STOP_WORDS.has(w.toLowerCase()) && (idx > 0 || /^[A-Z]{2,}/.test(w) || words.length === 1);
+    /^[A-Z]/.test(w) &&
+    !STOP_WORDS.has(w.toLowerCase()) &&
+    (idx > 0 || /^[A-Z]{2,}/.test(w) || words.length === 1);
 
   const candidates: string[] = [];
   for (let i = 0; i < words.length; i++) {
@@ -219,7 +316,11 @@ function extractEntitiesHeuristic(query: string): string[] {
     }
   }
   for (let i = 0; i < words.length - 2; i++) {
-    if (isProperNoun(words[i], i) && isProperNoun(words[i + 1], i + 1) && isProperNoun(words[i + 2], i + 2)) {
+    if (
+      isProperNoun(words[i], i) &&
+      isProperNoun(words[i + 1], i + 1) &&
+      isProperNoun(words[i + 2], i + 2)
+    ) {
       candidates.push(`${words[i]} ${words[i + 1]} ${words[i + 2]}`);
     }
   }
@@ -249,7 +350,11 @@ async function fetchEntityMatchedMemories(
   onUsage?: RetrievalOptions["onUsage"],
   asOf?: Date,
 ): Promise<EntityMemoryResult> {
-  const emptyResult: EntityMemoryResult = { memories: [], memoryEntityMap: new Map(), resolvedEntityCount: 0 };
+  const emptyResult: EntityMemoryResult = {
+    memories: [],
+    memoryEntityMap: new Map(),
+    resolvedEntityCount: 0,
+  };
 
   try {
     // Step 1: Extract entities via LLM
@@ -284,7 +389,9 @@ async function fetchEntityMatchedMemories(
           return resolved ? { entityId: resolved.entityId, name } : null;
         }),
       );
-      resolvedByEntity.push(...heuristicResolutions.filter((r): r is NonNullable<typeof r> => r !== null));
+      resolvedByEntity.push(
+        ...heuristicResolutions.filter((r): r is NonNullable<typeof r> => r !== null),
+      );
     }
 
     if (resolvedByEntity.length === 0) return emptyResult;
@@ -316,7 +423,10 @@ async function fetchEntityMatchedMemories(
       ? sql`AND m.valid_from <= ${asOf} AND (m.valid_until IS NULL OR m.valid_until > ${asOf})`
       : sql`AND m.status IN ('current', 'disputed') AND (m.valid_until IS NULL OR m.valid_until > NOW())`;
 
-    const entityIdList = sql.join(entityIds.map(id => sql`${id}`), sql`, `);
+    const entityIdList = sql.join(
+      entityIds.map((id) => sql`${id}`),
+      sql`, `,
+    );
 
     const memoryResult = await db.execute(sql`
       SELECT DISTINCT m.*
@@ -335,16 +445,22 @@ async function fetchEntityMatchedMemories(
     const memoryIds = rows.map((r) => r.id as string);
 
     // Restrict entity map to only the candidate memory IDs to avoid unbounded result sets
-    const memoryIdList = sql.join(memoryIds.map(id => sql`${id}`), sql`, `);
-    const entityMapResult = memoryIds.length > 0
-      ? await db.execute(sql`
+    const memoryIdList = sql.join(
+      memoryIds.map((id) => sql`${id}`),
+      sql`, `,
+    );
+    const entityMapResult =
+      memoryIds.length > 0
+        ? await db.execute(sql`
           SELECT me.memory_id, me.entity_id
           FROM memory_entities me
           WHERE me.entity_id IN (${entityIdList})
             AND me.memory_id IN (${memoryIdList})
         `)
-      : [];
-    const entityMapRows = ((entityMapResult as any).rows ?? entityMapResult) as Array<Record<string, any>>;
+        : [];
+    const entityMapRows = ((entityMapResult as any).rows ?? entityMapResult) as Array<
+      Record<string, any>
+    >;
 
     const memoryEntityMap = new Map<string, Set<string>>();
     for (const row of entityMapRows) {
@@ -356,31 +472,34 @@ async function fetchEntityMatchedMemories(
       memoryEntityMap.get(memoryId)!.add(entityId);
     }
 
-    const memoriesList: Memory[] = rows.map((row) => ({
-      id: row.id,
-      workspaceId: row.workspace_id,
-      content: row.content,
-      type: row.type,
-      sourceMessageId: row.source_message_id ?? null,
-      sourceChannelType: row.source_channel_type,
-      sourceThreadTs: row.source_thread_ts ?? null,
-      sourceChannelId: row.source_channel_id ?? null,
-      relatedUserIds: row.related_user_ids ?? [],
-      embedding: row.embedding,
-      relevanceScore: row.relevance_score ?? 1,
-      shareable: row.shareable ?? 0,
-      extractionSourceRole: row.extraction_source_role ?? null,
-      searchVector: row.search_vector ?? null,
-      status: row.status ?? "current",
-      confidence: row.confidence ?? 0.8,
-      validFrom: row.valid_from ?? null,
-      validUntil: row.valid_until ?? null,
-      supersedesMemoryId: row.supersedes_memory_id ?? null,
-      supersededAt: row.superseded_at ?? null,
-      supersededByMemoryId: row.superseded_by_memory_id ?? null,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-    } as Memory));
+    const memoriesList: Memory[] = rows.map(
+      (row) =>
+        ({
+          id: row.id,
+          workspaceId: row.workspace_id,
+          content: row.content,
+          type: row.type,
+          sourceMessageId: row.source_message_id ?? null,
+          sourceChannelType: row.source_channel_type,
+          sourceThreadTs: row.source_thread_ts ?? null,
+          sourceChannelId: row.source_channel_id ?? null,
+          relatedUserIds: row.related_user_ids ?? [],
+          embedding: row.embedding,
+          relevanceScore: row.relevance_score ?? 1,
+          shareable: row.shareable ?? 0,
+          extractionSourceRole: row.extraction_source_role ?? null,
+          searchVector: row.search_vector ?? null,
+          status: row.status ?? "current",
+          confidence: row.confidence ?? 0.8,
+          validFrom: row.valid_from ?? null,
+          validUntil: row.valid_until ?? null,
+          supersedesMemoryId: row.supersedes_memory_id ?? null,
+          supersededAt: row.superseded_at ?? null,
+          supersededByMemoryId: row.superseded_by_memory_id ?? null,
+          createdAt: row.created_at,
+          updatedAt: row.updated_at,
+        }) as Memory,
+    );
 
     return {
       memories: memoriesList,
@@ -446,8 +565,7 @@ export function isMemoryVisibleToParticipant(params: {
   currentUserId: string;
 }): boolean {
   const { sourceChannelType, shareable, relatedUserIds, currentUserId } = params;
-  const isParticipantScoped =
-    sourceChannelType === "dm" || sourceChannelType === "mpim";
+  const isParticipantScoped = sourceChannelType === "dm" || sourceChannelType === "mpim";
   return (
     !isParticipantScoped ||
     shareable === 1 ||
@@ -469,9 +587,7 @@ export function isMemoryVisibleToParticipant(params: {
  * 6. Rerank top candidates with Cohere (or fall back to legacy scoring)
  * 7. Return top-K memories
  */
-export async function retrieveMemories(
-  options: RetrievalOptions,
-): Promise<Memory[]> {
+export async function retrieveMemories(options: RetrievalOptions): Promise<Memory[]> {
   if (!options.rewrite) {
     return retrieveSingleQuery(options);
   }
@@ -495,10 +611,13 @@ export async function retrieveMemories(
       ),
     );
     const merged = mergeRoundRobin(lists, limit);
-    logger.info(`Multi-hop retrieval: ${plan.subQueries.length} sub-queries -> ${merged.length} merged`, {
-      query: query.substring(0, 100),
-      subQueries: plan.subQueries,
-    });
+    logger.info(
+      `Multi-hop retrieval: ${plan.subQueries.length} sub-queries -> ${merged.length} merged`,
+      {
+        query: query.substring(0, 100),
+        subQueries: plan.subQueries,
+      },
+    );
     if (merged.length > 0) return merged;
   }
 
@@ -510,17 +629,33 @@ export async function retrieveMemories(
   });
 }
 
-async function retrieveSingleQuery(
-  options: RetrievalOptions,
-): Promise<Memory[]> {
-  const { query, queryEmbedding: precomputed, currentUserId, limit = 20, minRelevanceScore = 0.1, adminMode = false, workspaceId, onUsage, asOf, abstain = true } = options;
+async function retrieveSingleQuery(options: RetrievalOptions): Promise<Memory[]> {
+  const {
+    query,
+    queryEmbedding: precomputed,
+    currentUserId,
+    limit = 20,
+    minRelevanceScore = 0.1,
+    adminMode = false,
+    workspaceId,
+    onUsage,
+    asOf,
+    abstain = true,
+  } = options;
   const start = Date.now();
 
   try {
     const [queryEmbedding, lexemes, entityResult] = await Promise.all([
       precomputed ? Promise.resolve(precomputed) : embedText(query),
       extractLexemes(query),
-      fetchEntityMatchedMemories(query, minRelevanceScore, adminMode ? undefined : currentUserId, workspaceId, onUsage, asOf),
+      fetchEntityMatchedMemories(
+        query,
+        minRelevanceScore,
+        adminMode ? undefined : currentUserId,
+        workspaceId,
+        onUsage,
+        asOf,
+      ),
     ]);
     const { memories: entityMemories, memoryEntityMap, resolvedEntityCount } = entityResult;
 
@@ -549,31 +684,31 @@ async function retrieveSingleQuery(
     // supplied. Without this, the vector + full-text RRF query would see
     // every workspace's memories. The entity-first lane already filters by
     // workspace_id; this brings the hybrid lane in line.
-    const workspaceFilter = workspaceId
-      ? sql`${memories.workspaceId} = ${workspaceId}`
-      : sql`TRUE`;
+    const workspaceFilter = workspaceId ? sql`${memories.workspaceId} = ${workspaceId}` : sql`TRUE`;
     const baseFilter = sql`${memories.embedding} IS NOT NULL AND ${memories.relevanceScore} >= ${minRelevanceScore} AND ${statusFilter} AND ${workspaceFilter}`;
     const combinedTsQuery = lexemes.join(" | ");
-    const bm25Sql = lexemes.length > 0
-      ? sql`COALESCE(ts_rank_cd(m.search_vector, to_tsquery('english', ${combinedTsQuery}), 4), 0.0)`
-      : sql`0.0`;
+    const bm25Sql =
+      lexemes.length > 0
+        ? sql`COALESCE(ts_rank_cd(m.search_vector, to_tsquery('english', ${combinedTsQuery}), 4), 0.0)`
+        : sql`0.0`;
 
     logger.debug(`Extracted ${lexemes.length} lexemes for fulltext search`, {
       lexemes,
       query: query.substring(0, 100),
     });
 
-    const fulltextSearchCte = lexemes.length === 0
-      ? sql`
+    const fulltextSearchCte =
+      lexemes.length === 0
+        ? sql`
         fulltext_search AS (
           SELECT NULL::uuid AS id, NULL::bigint AS rank
           WHERE FALSE
         )
       `
-      : (() => {
-        const perTermCtes = lexemes.map((lexeme, index) => {
-          const cteName = sql.raw(`ft_${index}`);
-          return sql`
+        : (() => {
+            const perTermCtes = lexemes.map((lexeme, index) => {
+              const cteName = sql.raw(`ft_${index}`);
+              return sql`
             ${cteName} AS (
               SELECT id, ROW_NUMBER() OVER (
                 ORDER BY ts_rank_cd(search_vector, to_tsquery('english', ${lexeme}), 4) DESC
@@ -586,14 +721,14 @@ async function retrieveSingleQuery(
               LIMIT ${PER_TERM_FULLTEXT_LIMIT}
             )
           `;
-        });
+            });
 
-        const unionParts = sql.join(
-          lexemes.map((_, index) => sql.raw(`SELECT * FROM ft_${index}`)),
-          sql` UNION ALL `,
-        );
+            const unionParts = sql.join(
+              lexemes.map((_, index) => sql.raw(`SELECT * FROM ft_${index}`)),
+              sql` UNION ALL `,
+            );
 
-        return sql`
+            return sql`
           ${sql.join(perTermCtes, sql`, `)},
           ft_dedup AS (
             SELECT id, MIN(rank) AS rank
@@ -605,7 +740,7 @@ async function retrieveSingleQuery(
             FROM ft_dedup
           )
         `;
-      })();
+          })();
 
     const hybridQuery = sql`
       WITH vector_search AS (
@@ -721,21 +856,21 @@ async function retrieveSingleQuery(
     }
 
     if (entityMemories.length > 0) {
-      logger.debug(`Entity-first retrieval found ${entityMemories.length} memories, ${entityOnlyMemories.length} unique`, {
-        resolvedEntities: resolvedEntityCount,
-        query: query.substring(0, 100),
-      });
+      logger.debug(
+        `Entity-first retrieval found ${entityMemories.length} memories, ${entityOnlyMemories.length} unique`,
+        {
+          resolvedEntities: resolvedEntityCount,
+          query: query.substring(0, 100),
+        },
+      );
     }
 
     if (abstain && !hasRetrievalEvidence(results, resolvedEntityCount)) {
-      logger.info(
-        `Abstaining: no candidate cleared evidence floors in ${Date.now() - start}ms`,
-        {
-          query: query.substring(0, 100),
-          totalCandidates: results.length,
-          resolvedEntityCount,
-        },
-      );
+      logger.info(`Abstaining: no candidate cleared evidence floors in ${Date.now() - start}ms`, {
+        query: query.substring(0, 100),
+        totalCandidates: results.length,
+        resolvedEntityCount,
+      });
       return [];
     }
 
@@ -761,7 +896,10 @@ async function retrieveSingleQuery(
         const ageDays = ageMs / (1000 * 60 * 60 * 24);
         const recencyBoost = Math.max(0, 1 - ageDays / 365);
 
-        const baseScore = item.score * (0.8 - ENTITY_WEIGHT / 2) + recencyBoost * (0.2 - ENTITY_WEIGHT / 2) + result.entityBoost * ENTITY_WEIGHT;
+        const baseScore =
+          item.score * (0.8 - ENTITY_WEIGHT / 2) +
+          recencyBoost * (0.2 - ENTITY_WEIGHT / 2) +
+          result.entityBoost * ENTITY_WEIGHT;
         // Confidence tiebreaker: gently down-weight lower-trust (assistant-
         // inferred, confidence 0.6) memories so they don't crowd out a
         // user/tool-sourced (0.8) memory of equal relevance. Deliberately mild
@@ -790,9 +928,13 @@ async function retrieveSingleQuery(
           method: "hybrid-rrf+cohere-rerank",
         },
       );
-      const reranking = scored.slice(0, limit).map((s, newRank) =>
-        `${s.originalIndex + 1} → ${newRank + 1} (cohere=${s.cohereScore.toFixed(3)}, final=${s.score.toFixed(3)})`
-      ).join(", ");
+      const reranking = scored
+        .slice(0, limit)
+        .map(
+          (s, newRank) =>
+            `${s.originalIndex + 1} → ${newRank + 1} (cohere=${s.cohereScore.toFixed(3)}, final=${s.score.toFixed(3)})`,
+        )
+        .join(", ");
       logger.debug(`Reranking details: ${reranking}`);
     } else {
       const RRF_K = 60;
@@ -812,7 +954,8 @@ async function retrieveSingleQuery(
             similarity * 0.2 +
             memory.relevanceScore * 0.1 +
             recencyBoost * 0.1 +
-            entityBoost * 0.2) * trustFactor;
+            entityBoost * 0.2) *
+          trustFactor;
 
         return { memory, score };
       });
@@ -940,7 +1083,10 @@ export async function retrieveConversations(
     }
 
     // Group by thread: use slack_thread_ts if present, otherwise slack_ts (top-level message)
-    const threadMap = new Map<string, { channelId: string; bestSimilarity: number; mostRecentMessageAt: Date }>();
+    const threadMap = new Map<
+      string,
+      { channelId: string; bestSimilarity: number; mostRecentMessageAt: Date }
+    >();
     for (const r of relevant) {
       const threadKey = r.message.slackThreadTs || r.message.slackTs;
       if (!threadKey) continue;
@@ -984,10 +1130,11 @@ export async function retrieveConversations(
     // Fetch only the first user message per thread for a compact summary
     // DISTINCT ON returns exactly one row per thread, prioritising user messages
     const threadKeys = sortedThreads.map(([key]) => key);
-    const threadKeysList = sql.join(threadKeys.map(k => sql`${k}`), sql`, `);
-    const summaryWorkspaceFilter = workspaceId
-      ? sql`AND workspace_id = ${workspaceId}`
-      : sql``;
+    const threadKeysList = sql.join(
+      threadKeys.map((k) => sql`${k}`),
+      sql`, `,
+    );
+    const summaryWorkspaceFilter = workspaceId ? sql`AND workspace_id = ${workspaceId}` : sql``;
     const summaryAsOfFilter = asOf ? sql`AND created_at <= ${asOf}` : sql``;
     const summaryResult = await db.execute(sql`
       SELECT DISTINCT ON (COALESCE(slack_thread_ts, slack_ts))
@@ -1000,7 +1147,9 @@ export async function retrieveConversations(
                (CASE WHEN role = 'user' THEN 0 ELSE 1 END),
                created_at
     `);
-    const summaryRows = ((summaryResult as any).rows ?? summaryResult) as Array<Record<string, any>>;
+    const summaryRows = ((summaryResult as any).rows ?? summaryResult) as Array<
+      Record<string, any>
+    >;
 
     const threadSummaryMap = new Map<string, { content: string; date: string }>();
     for (const m of summaryRows) {
@@ -1012,18 +1161,16 @@ export async function retrieveConversations(
       threadSummaryMap.set(key, { content, date });
     }
 
-    const conversationThreads: ConversationThread[] = sortedThreads.map(
-      ([threadTs, meta]) => {
-        const summaryData = threadSummaryMap.get(threadTs);
-        return {
-          threadTs,
-          channelId: meta.channelId,
-          bestSimilarity: meta.bestSimilarity,
-          date: summaryData?.date ?? new Date(meta.mostRecentMessageAt).toISOString().split("T")[0],
-          summary: summaryData?.content ?? "",
-        };
-      },
-    );
+    const conversationThreads: ConversationThread[] = sortedThreads.map(([threadTs, meta]) => {
+      const summaryData = threadSummaryMap.get(threadTs);
+      return {
+        threadTs,
+        channelId: meta.channelId,
+        bestSimilarity: meta.bestSimilarity,
+        date: summaryData?.date ?? new Date(meta.mostRecentMessageAt).toISOString().split("T")[0],
+        summary: summaryData?.content ?? "",
+      };
+    });
 
     logger.info(
       `Retrieved ${conversationThreads.length} conversation threads (${relevant.length} matched messages) in ${Date.now() - start}ms`,

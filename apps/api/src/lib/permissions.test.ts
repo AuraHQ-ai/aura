@@ -170,7 +170,13 @@ describe("resolveUserCredentials", () => {
       [],
       [
         { id: "c1", name: "tavily_api_key", scope: "member", ownerId: "U_X", sandboxEnvName: null },
-        { id: "c2", name: "google_bq_credentials", scope: "member", ownerId: "U_X", sandboxEnvName: null },
+        {
+          id: "c2",
+          name: "google_bq_credentials",
+          scope: "member",
+          ownerId: "U_X",
+          sandboxEnvName: null,
+        },
       ],
       [],
     );
@@ -204,7 +210,13 @@ describe("resolveUserCredentials", () => {
           sandboxEnvName: "META_ADMIN_TOKEN",
         },
         { id: "c2", name: "github_token", scope: "member", ownerId: "U_X", sandboxEnvName: null },
-        { id: "c3", name: "slack_bot_token", scope: "member", ownerId: "U_X", sandboxEnvName: null },
+        {
+          id: "c3",
+          name: "slack_bot_token",
+          scope: "member",
+          ownerId: "U_X",
+          sandboxEnvName: null,
+        },
       ],
       [],
     );
@@ -272,9 +284,7 @@ describe("resolveUserCredentials", () => {
     queueDbResults(
       [{ role: "member" }],
       [],
-      [
-        { id: "c1", name: "tavily_api_key", scope: "member", ownerId: "U_X", sandboxEnvName: null },
-      ],
+      [{ id: "c1", name: "tavily_api_key", scope: "member", ownerId: "U_X", sandboxEnvName: null }],
       [],
     );
 

@@ -6,7 +6,12 @@ import { JOB_MODEL_CATEGORIES } from "../../lib/ai.js";
 import { WATCHDOG_RESET_MARKER } from "../../cron/job-watchdog.js";
 import { buildTaskPrefix } from "../../personality/system-prompt.js";
 import { logger } from "../../lib/logger.js";
-import { errorSchema, paginationQuerySchema, idParamSchema, createDashboardApp } from "./schemas.js";
+import {
+  errorSchema,
+  paginationQuerySchema,
+  idParamSchema,
+  createDashboardApp,
+} from "./schemas.js";
 
 /** Env var NAMES only (never values) — standard POSIX-style identifier. */
 const ENV_VAR_NAME_REGEX = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -70,17 +75,8 @@ dashboardJobsApp.openapi(listJobsRoute, async (c) => {
     const where = search ? ilike(jobs.name, `%${search}%`) : undefined;
 
     const [items, countResult] = await Promise.all([
-      db
-        .select()
-        .from(jobs)
-        .where(where)
-        .orderBy(desc(jobs.updatedAt))
-        .limit(limit)
-        .offset(offset),
-      db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(jobs)
-        .where(where),
+      db.select().from(jobs).where(where).orderBy(desc(jobs.updatedAt)).limit(limit).offset(offset),
+      db.select({ count: sql<number>`count(*)::int` }).from(jobs).where(where),
     ]);
 
     // ── Cost aggregation (single query, no N+1) ─────────────────────────
@@ -101,15 +97,9 @@ dashboardJobsApp.openapi(listJobsRoute, async (c) => {
           cost30dUsd: sql<string | null>`sum(${conversationTraces.costUsd})::text`,
         })
         .from(jobExecutions)
-        .leftJoin(
-          conversationTraces,
-          eq(conversationTraces.jobExecutionId, jobExecutions.id),
-        )
+        .leftJoin(conversationTraces, eq(conversationTraces.jobExecutionId, jobExecutions.id))
         .where(
-          and(
-            inArray(jobExecutions.jobId, jobIds),
-            gte(jobExecutions.startedAt, thirtyDaysAgo),
-          ),
+          and(inArray(jobExecutions.jobId, jobIds), gte(jobExecutions.startedAt, thirtyDaysAgo)),
         )
         .groupBy(jobExecutions.jobId);
 
@@ -123,9 +113,7 @@ dashboardJobsApp.openapi(listJobsRoute, async (c) => {
       const runs30d = stat?.runs30d ?? 0;
       const cost30dUsd = stat?.cost30dUsd ?? null;
       const avgCostPerRunUsd =
-        runs30d > 0 && cost30dUsd !== null
-          ? (parseFloat(cost30dUsd) / runs30d).toFixed(6)
-          : null;
+        runs30d > 0 && cost30dUsd !== null ? (parseFloat(cost30dUsd) / runs30d).toFixed(6) : null;
       const wasWatchdogReset = Boolean(job.result?.includes(WATCHDOG_RESET_MARKER));
       return { ...job, runs30d, cost30dUsd, avgCostPerRunUsd, wasWatchdogReset };
     });
@@ -197,11 +185,7 @@ dashboardJobsApp.openapi(getJobRoute, async (c) => {
   try {
     const id = c.req.param("id");
 
-    const jobRows = await db
-      .select()
-      .from(jobs)
-      .where(eq(jobs.id, id))
-      .limit(1);
+    const jobRows = await db.select().from(jobs).where(eq(jobs.id, id)).limit(1);
 
     if (jobRows.length === 0) {
       return c.json({ error: "Job not found" }, 404);
@@ -303,11 +287,7 @@ dashboardJobsApp.openapi(updateJobRoute, async (c) => {
     if (body.envAllowlist !== undefined) set.envAllowlist = body.envAllowlist;
     if (body.promptMode !== undefined) set.promptMode = body.promptMode;
 
-    const result = await db
-      .update(jobs)
-      .set(set)
-      .where(eq(jobs.id, id))
-      .returning();
+    const result = await db.update(jobs).set(set).where(eq(jobs.id, id)).returning();
 
     if (result.length === 0) {
       return c.json({ error: "Job not found" }, 404);

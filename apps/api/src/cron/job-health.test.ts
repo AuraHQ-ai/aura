@@ -90,16 +90,16 @@ describe("evaluateJobHealth", () => {
     expect(evaluateJobHealth([]).consecutiveFailures).toBe(0);
     expect(evaluateJobHealth(["completed"]).consecutiveFailures).toBe(0);
     expect(evaluateJobHealth(["failed", "completed", "failed"]).consecutiveFailures).toBe(1);
-    expect(
-      evaluateJobHealth(["failed", "failed", "failed", "completed"]).consecutiveFailures,
-    ).toBe(3);
+    expect(evaluateJobHealth(["failed", "failed", "failed", "completed"]).consecutiveFailures).toBe(
+      3,
+    );
   });
 
   it("a success at the head resets the consecutive count even after many failures", async () => {
     const { evaluateJobHealth } = await import("./job-health.js");
-    expect(
-      evaluateJobHealth(["completed", "failed", "failed", "failed"]).consecutiveFailures,
-    ).toBe(0);
+    expect(evaluateJobHealth(["completed", "failed", "failed", "failed"]).consecutiveFailures).toBe(
+      0,
+    );
   });
 
   it("flags noSuccessInWindow only when the window is full and success-free", async () => {
@@ -233,7 +233,9 @@ describe("scanJobConfigHealth", () => {
     expect(sendJobOpsNoticeMock).toHaveBeenCalledTimes(1);
     expect(sendJobOpsNoticeMock).toHaveBeenCalledWith(
       expect.objectContaining({
-        text: expect.stringMatching(/NULL prompt_mode[\s\S]*full ~40k[\s\S]*update_job[\s\S]*`docs-refresh`/),
+        text: expect.stringMatching(
+          /NULL prompt_mode[\s\S]*full ~40k[\s\S]*update_job[\s\S]*`docs-refresh`/,
+        ),
         logContext: expect.objectContaining({
           event: "job_config_health_null_prompt_mode",
         }),
@@ -314,4 +316,3 @@ describe("scanJobConfigHealth", () => {
     });
   });
 });
-

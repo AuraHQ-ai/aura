@@ -23,9 +23,7 @@ import { renderWindowTranscript } from "./windowing.js";
 const JUDGE_TIMEOUT_MS = 120_000;
 
 export const judgeEntrySchema = z.object({
-  part_id: z
-    .string()
-    .describe("The id from the [R:<part_id>] marker, echoed back EXACTLY."),
+  part_id: z.string().describe("The id from the [R:<part_id>] marker, echoed back EXACTLY."),
   scorable: z
     .boolean()
     .describe(
@@ -42,18 +40,13 @@ export const judgeEntrySchema = z.object({
   serving_intent: z
     .string()
     .nullable()
-    .describe(
-      "Short description of the nearest open user request this response serves.",
-    ),
+    .describe("Short description of the nearest open user request this response serves."),
   resolved_in_window: z
     .boolean()
     .describe(
       "True when this turn hedged or deferred, but the intent visibly closed later within this window.",
     ),
-  note: z
-    .string()
-    .nullable()
-    .describe("One or two sentences of evidence for the verdict."),
+  note: z.string().nullable().describe("One or two sentences of evidence for the verdict."),
 });
 
 export const judgeWindowSchema = z.object({
@@ -125,9 +118,7 @@ function normalizeEntry(entry: JudgeEntry): JudgedResponse {
   const scorable = entry.scorable;
   const verdict = scorable ? entry.verdict : null;
   const failureClass: EvalFailureClass =
-    verdict === "failed" || verdict === "partial"
-      ? (entry.failure_class ?? "none")
-      : "none";
+    verdict === "failed" || verdict === "partial" ? (entry.failure_class ?? "none") : "none";
   return {
     partId: entry.part_id,
     scorable,
@@ -150,10 +141,7 @@ export async function judgeWindow(
   options: JudgeWindowOptions = {},
 ): Promise<JudgeWindowResult> {
   const generate = options.generate ?? generateText;
-  const [model, judgeModel] = await Promise.all([
-    getFastModel(),
-    getFastModelId(),
-  ]);
+  const [model, judgeModel] = await Promise.all([getFastModel(), getFastModelId()]);
 
   const transcript = renderWindowTranscript(window);
   const abortController = new AbortController();

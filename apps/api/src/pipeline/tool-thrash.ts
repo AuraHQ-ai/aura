@@ -52,10 +52,7 @@ export function resolveToolThrashLimits(): ToolThrashLimits {
       "TOOL_THRASH_CONSECUTIVE_ERROR_LIMIT",
       DEFAULT_CONSECUTIVE_TOOL_ERROR_LIMIT,
     ),
-    maxToolCalls: readPositiveEnv(
-      "TOOL_THRASH_MAX_TOOL_CALLS",
-      DEFAULT_MAX_TOOL_CALLS_PER_TURN,
-    ),
+    maxToolCalls: readPositiveEnv("TOOL_THRASH_MAX_TOOL_CALLS", DEFAULT_MAX_TOOL_CALLS_PER_TURN),
   };
 }
 
@@ -76,8 +73,7 @@ export class ToolThrashError extends Error {
 
 export function isToolThrashError(error: unknown): error is ToolThrashError {
   return (
-    error instanceof ToolThrashError ||
-    (error instanceof Error && error.name === "ToolThrashError")
+    error instanceof ToolThrashError || (error instanceof Error && error.name === "ToolThrashError")
   );
 }
 
@@ -101,10 +97,7 @@ export function formatToolThrashLogMessage(trip: ToolThrashTrip): string {
       `errors (limit ${trip.limits.consecutiveErrorLimit})`
     );
   }
-  return (
-    `Turn aborted after ${trip.callCount} tool calls ` +
-    `(cap ${trip.limits.maxToolCalls})`
-  );
+  return `Turn aborted after ${trip.callCount} tool calls ` + `(cap ${trip.limits.maxToolCalls})`;
 }
 
 export class ToolThrashBreaker {

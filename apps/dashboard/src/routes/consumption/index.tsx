@@ -8,12 +8,15 @@ import { apiGet } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Calendar } from "@/components/ui/calendar";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { PageSkeleton } from "@/components/page-skeleton";
 import {
   AreaChart,
@@ -102,9 +105,7 @@ function ConsumptionPage() {
   const [defaultRange] = useState(defaultDateRange);
 
   const committed =
-    search.start && search.end
-      ? { start: search.start, end: search.end }
-      : defaultRange;
+    search.start && search.end ? { start: search.start, end: search.end } : defaultRange;
 
   const [range, setRange] = useState<DateRange | undefined>(() => ({
     from: parseLocalYMD(committed.start),
@@ -142,19 +143,22 @@ function ConsumptionPage() {
     });
   }, [defaultRange.end, defaultRange.start, navigate]);
 
-  const handleRangeSelect = useCallback((next: DateRange | undefined) => {
-    setRange(next);
-    const from = next?.from;
-    const to = next?.to;
-    if (!from || !to) return;
-    navigate({
-      search: (prev) => ({
-        ...prev,
-        start: formatLocalYMD(from),
-        end: formatLocalYMD(to),
-      }),
-    });
-  }, [navigate]);
+  const handleRangeSelect = useCallback(
+    (next: DateRange | undefined) => {
+      setRange(next);
+      const from = next?.from;
+      const to = next?.to;
+      if (!from || !to) return;
+      navigate({
+        search: (prev) => ({
+          ...prev,
+          start: formatLocalYMD(from),
+          end: formatLocalYMD(to),
+        }),
+      });
+    },
+    [navigate],
+  );
 
   const { data, isLoading, error, isFetching } = useQuery({
     queryKey: ["consumption", committed.start, committed.end],
@@ -172,17 +176,18 @@ function ConsumptionPage() {
       <div className="space-y-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <h1 className="text-lg font-semibold tracking-tight">Consumption</h1>
-          <DateRangeControls
-            range={range}
-            onRangeSelect={handleRangeSelect}
-            onReset={resetRange}
-          />
+          <DateRangeControls range={range} onRangeSelect={handleRangeSelect} onReset={resetRange} />
         </div>
         <p className="text-sm text-destructive">Start date must be on or before end date.</p>
       </div>
     );
   }
-  if (error) return <div className="text-destructive text-sm">Failed to load consumption data: {error.message}</div>;
+  if (error)
+    return (
+      <div className="text-destructive text-sm">
+        Failed to load consumption data: {error.message}
+      </div>
+    );
   if (!data) return null;
 
   const rangeDescription = `${format(parseLocalYMD(committed.start), "LLL d, y")} – ${format(parseLocalYMD(committed.end), "LLL d, y")}`;
@@ -281,7 +286,8 @@ function ConsumptionPage() {
             </ResponsiveContainer>
           ) : (
             <p className="text-sm text-muted-foreground py-8 text-center">
-              No cost data yet. Costs will appear after conversations with cost tracking are processed.
+              No cost data yet. Costs will appear after conversations with cost tracking are
+              processed.
             </p>
           )}
         </CardContent>
@@ -323,14 +329,20 @@ function ConsumptionPage() {
                           share={userTotalCost > 0 ? (u.totalCost / userTotalCost) * 100 : 0}
                         />
                       </TableCell>
-                      <TableCell className="py-2 text-right">{formatCost(u.interactiveCost)}</TableCell>
+                      <TableCell className="py-2 text-right">
+                        {formatCost(u.interactiveCost)}
+                      </TableCell>
                       <TableCell className="py-2 text-right">{formatCost(u.jobCost)}</TableCell>
-                      <TableCell className="py-2 text-right font-medium">{formatCost(u.totalCost)}</TableCell>
+                      <TableCell className="py-2 text-right font-medium">
+                        {formatCost(u.totalCost)}
+                      </TableCell>
                     </TableRow>
                   ))}
                   {data.perUser.length === 0 && (
                     <TableRow className="border-0 hover:bg-transparent">
-                      <TableCell colSpan={4} className="py-4 text-center text-muted-foreground">No data</TableCell>
+                      <TableCell colSpan={4} className="py-4 text-center text-muted-foreground">
+                        No data
+                      </TableCell>
                     </TableRow>
                   )}
                 </TableBody>
@@ -376,12 +388,16 @@ function ConsumptionPage() {
                       </TableCell>
                       <TableCell className="py-2">{j.creatorName || "—"}</TableCell>
                       <TableCell className="py-2 text-right">{j.executionCount}</TableCell>
-                      <TableCell className="py-2 text-right font-medium">{formatCost(j.totalCost)}</TableCell>
+                      <TableCell className="py-2 text-right font-medium">
+                        {formatCost(j.totalCost)}
+                      </TableCell>
                     </TableRow>
                   ))}
                   {data.perJob.length === 0 && (
                     <TableRow className="border-0 hover:bg-transparent">
-                      <TableCell colSpan={4} className="py-4 text-center text-muted-foreground">No data</TableCell>
+                      <TableCell colSpan={4} className="py-4 text-center text-muted-foreground">
+                        No data
+                      </TableCell>
                     </TableRow>
                   )}
                 </TableBody>
@@ -405,7 +421,9 @@ function ConsumptionPage() {
                 <CardTitle className="text-sm font-medium">Cache Read</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-xl font-bold">{data.tokenBreakdown.cacheRead.toLocaleString()}</div>
+                <div className="text-xl font-bold">
+                  {data.tokenBreakdown.cacheRead.toLocaleString()}
+                </div>
               </CardContent>
             </Card>
             <Card>
@@ -413,7 +431,9 @@ function ConsumptionPage() {
                 <CardTitle className="text-sm font-medium">Cache Write</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-xl font-bold">{data.tokenBreakdown.cacheWrite.toLocaleString()}</div>
+                <div className="text-xl font-bold">
+                  {data.tokenBreakdown.cacheWrite.toLocaleString()}
+                </div>
               </CardContent>
             </Card>
             <Card>
@@ -421,7 +441,9 @@ function ConsumptionPage() {
                 <CardTitle className="text-sm font-medium">Uncached Input</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-xl font-bold">{data.tokenBreakdown.uncached.toLocaleString()}</div>
+                <div className="text-xl font-bold">
+                  {data.tokenBreakdown.uncached.toLocaleString()}
+                </div>
               </CardContent>
             </Card>
             <Card>
@@ -429,7 +451,9 @@ function ConsumptionPage() {
                 <CardTitle className="text-sm font-medium">Output</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="text-xl font-bold">{data.tokenBreakdown.output.toLocaleString()}</div>
+                <div className="text-xl font-bold">
+                  {data.tokenBreakdown.output.toLocaleString()}
+                </div>
               </CardContent>
             </Card>
           </div>
@@ -439,13 +463,7 @@ function ConsumptionPage() {
   );
 }
 
-function CostShareLabel({
-  label,
-  share,
-}: {
-  label: ReactNode;
-  share: number;
-}) {
+function CostShareLabel({ label, share }: { label: ReactNode; share: number }) {
   const width = Math.max(share, share > 0 ? 2 : 0);
 
   return (
@@ -525,7 +543,10 @@ function DateRangeControls({
               )}
             </Button>
           </PopoverTrigger>
-          <PopoverContent className="w-auto max-w-[calc(100vw-2rem)] overflow-x-auto p-0" align="end">
+          <PopoverContent
+            className="w-auto max-w-[calc(100vw-2rem)] overflow-x-auto p-0"
+            align="end"
+          >
             <Calendar
               mode="range"
               showOutsideDays={false}
@@ -541,16 +562,15 @@ function DateRangeControls({
       <Button type="button" variant="outline" size="sm" className="sm:mb-0.5" onClick={onReset}>
         Last 30 days
       </Button>
-      {isFetching ? (
-        <span className="text-xs text-muted-foreground sm:mb-2">Updating…</span>
-      ) : null}
+      {isFetching ? <span className="text-xs text-muted-foreground sm:mb-2">Updating…</span> : null}
     </div>
   );
 }
 
 export const Route = createFileRoute("/consumption/")({
   validateSearch: (raw: Record<string, unknown>) => {
-    const start = typeof raw.start === "string" && ISO_DATE_RE.test(raw.start) ? raw.start : undefined;
+    const start =
+      typeof raw.start === "string" && ISO_DATE_RE.test(raw.start) ? raw.start : undefined;
     const end = typeof raw.end === "string" && ISO_DATE_RE.test(raw.end) ? raw.end : undefined;
     return {
       start: start && end ? start : undefined,

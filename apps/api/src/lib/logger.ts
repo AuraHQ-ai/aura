@@ -9,8 +9,7 @@ const LOG_LEVELS: Record<LogLevel, number> = {
   error: 3,
 };
 
-let currentLevel: LogLevel =
-  (process.env.LOG_LEVEL as LogLevel) || "info";
+let currentLevel: LogLevel = (process.env.LOG_LEVEL as LogLevel) || "info";
 
 function shouldLog(level: LogLevel): boolean {
   return LOG_LEVELS[level] >= LOG_LEVELS[currentLevel];
@@ -52,11 +51,7 @@ export function closeLogFile(): void {
   }
 }
 
-function formatMessage(
-  level: LogLevel,
-  message: string,
-  meta?: Record<string, unknown>,
-): string {
+function formatMessage(level: LogLevel, message: string, meta?: Record<string, unknown>): string {
   const timestamp = new Date().toISOString();
   const metaStr = meta ? ` ${JSON.stringify(meta)}` : "";
   return `[${timestamp}] [${level.toUpperCase()}] ${message}${metaStr}`;
@@ -68,11 +63,7 @@ function formatMessage(
  * these writes and scrolls them above the live region automatically — no
  * manual cursor juggling needed. Also mirror to the file sink when active.
  */
-function emit(
-  level: LogLevel,
-  consoleFn: (msg: string) => void,
-  line: string,
-): void {
+function emit(level: LogLevel, consoleFn: (msg: string) => void, line: string): void {
   consoleFn(line);
   if (logStream) logStream.write(line + "\n");
 }

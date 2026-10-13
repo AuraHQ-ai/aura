@@ -26,11 +26,7 @@ export interface JournalEntry {
   when: number;
 }
 
-export type GuardErrorType =
-  | "out-of-order"
-  | "duplicate-when"
-  | "missing-sql"
-  | "orphaned-sql";
+export type GuardErrorType = "out-of-order" | "duplicate-when" | "missing-sql" | "orphaned-sql";
 
 export interface GuardError {
   type: GuardErrorType;
@@ -51,10 +47,10 @@ export function checkMigrationGuard(
   mainMaxWhen: number,
   mainTags: Set<string>,
   prEntries: JournalEntry[],
-  sqlFilesOnDisk: Set<string>
+  sqlFilesOnDisk: Set<string>,
 ): GuardError[] {
   const errors: GuardError[] = [];
-  const newEntries = prEntries.filter(e => !mainTags.has(e.tag));
+  const newEntries = prEntries.filter((e) => !mainTags.has(e.tag));
 
   // ── Check 1: out-of-order generation ────────────────────────────────────
   // A new migration whose `when` is <= the main max `when` was generated on a
@@ -102,7 +98,7 @@ export function checkMigrationGuard(
   }
 
   // ── Check 4: orphaned SQL file (all files in drizzle/) ──────────────────
-  const journalTags = new Set(prEntries.map(e => e.tag));
+  const journalTags = new Set(prEntries.map((e) => e.tag));
   for (const tag of sqlFilesOnDisk) {
     if (!journalTags.has(tag)) {
       errors.push({
@@ -132,10 +128,11 @@ async function main() {
 
   for (const ref of refCandidates) {
     try {
-      mainJournalText = execSync(
-        `git show ${ref}:packages/db/drizzle/meta/_journal.json`,
-        { cwd: REPO_ROOT, encoding: "utf-8", stdio: ["pipe", "pipe", "pipe"] }
-      );
+      mainJournalText = execSync(`git show ${ref}:packages/db/drizzle/meta/_journal.json`, {
+        cwd: REPO_ROOT,
+        encoding: "utf-8",
+        stdio: ["pipe", "pipe", "pipe"],
+      });
       resolved = true;
       break;
     } catch {
@@ -145,8 +142,7 @@ async function main() {
 
   if (!resolved) {
     console.error(
-      "Migration guard: could not read main-branch journal.\n" +
-        "Run: git fetch origin main"
+      "Migration guard: could not read main-branch journal.\n" + "Run: git fetch origin main",
     );
     process.exit(1);
   }
@@ -154,33 +150,22 @@ async function main() {
   const mainJournal = JSON.parse(mainJournalText) as {
     entries: JournalEntry[];
   };
-  const mainMaxWhen = mainJournal.entries.reduce(
-    (max, e) => Math.max(max, e.when),
-    0
-  );
-  const mainTags = new Set(mainJournal.entries.map(e => e.tag));
+  const mainMaxWhen = mainJournal.entries.reduce((max, e) => Math.max(max, e.when), 0);
+  const mainTags = new Set(mainJournal.entries.map((e) => e.tag));
 
   // 2. Get PR journal from disk
-  const prJournalText = readFileSync(
-    join(DRIZZLE_DIR, "meta", "_journal.json"),
-    "utf-8"
-  );
+  const prJournalText = readFileSync(join(DRIZZLE_DIR, "meta", "_journal.json"), "utf-8");
   const prJournal = JSON.parse(prJournalText) as { entries: JournalEntry[] };
 
   // 3. Collect SQL files in drizzle/
   const sqlFilesOnDisk = new Set(
     readdirSync(DRIZZLE_DIR)
-      .filter(f => f.endsWith(".sql"))
-      .map(f => f.replace(/\.sql$/, ""))
+      .filter((f) => f.endsWith(".sql"))
+      .map((f) => f.replace(/\.sql$/, "")),
   );
 
   // 4. Run checks
-  const errors = checkMigrationGuard(
-    mainMaxWhen,
-    mainTags,
-    prJournal.entries,
-    sqlFilesOnDisk
-  );
+  const errors = checkMigrationGuard(mainMaxWhen, mainTags, prJournal.entries, sqlFilesOnDisk);
 
   if (errors.length === 0) {
     console.log("Migration guard: all checks passed.");
@@ -192,14 +177,14 @@ async function main() {
     console.error(`  [${err.type}] ${err.message}`);
   }
   console.error(
-    "\nTo fix out-of-order migrations: rebase on main and regenerate with `pnpm db:generate`."
+    "\nTo fix out-of-order migrations: rebase on main and regenerate with `pnpm db:generate`.",
   );
   process.exit(1);
 }
 
 // Run when executed directly (not when imported by vitest or other modules)
 if (process.argv[1]?.includes("migration-guard")) {
-  main().catch(e => {
+  main().catch((e) => {
     console.error(e);
     process.exit(1);
   });

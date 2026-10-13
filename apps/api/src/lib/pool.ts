@@ -13,7 +13,5 @@ export async function pool<T>(
       await fn(items[i]);
     }
   }
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, items.length) }, () => worker()),
-  );
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => worker()));
 }

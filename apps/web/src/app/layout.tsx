@@ -11,8 +11,7 @@ export const metadata: Metadata = {
     "An AI colleague with memory, autonomy, and a brain that builds itself. Not a chatbot. Not a wrapper. A mind that compounds.",
   openGraph: {
     title: "Aura — Every day she works, she gets harder to replace",
-    description:
-      "An AI colleague with memory, autonomy, and a brain that builds itself.",
+    description: "An AI colleague with memory, autonomy, and a brain that builds itself.",
     url: "https://aurahq.ai",
     siteName: "Aura",
     type: "website",
@@ -20,8 +19,7 @@ export const metadata: Metadata = {
   twitter: {
     card: "summary_large_image",
     title: "Aura — Every day she works, she gets harder to replace",
-    description:
-      "An AI colleague with memory, autonomy, and a brain that builds itself.",
+    description: "An AI colleague with memory, autonomy, and a brain that builds itself.",
   },
   alternates: {
     types: {
@@ -95,8 +93,15 @@ function Nav() {
           Aura
         </Link>
         <div style={{ display: "flex", alignItems: "center", gap: "28px" }}>
-          <Link href="/blog" style={{ fontSize: "14px", color: "var(--text-secondary)" }}>Blog</Link>
-          <a href="https://docs.aurahq.ai" style={{ fontSize: "14px", color: "var(--text-secondary)" }}>Docs</a>
+          <Link href="/blog" style={{ fontSize: "14px", color: "var(--text-secondary)" }}>
+            Blog
+          </Link>
+          <a
+            href="https://docs.aurahq.ai"
+            style={{ fontSize: "14px", color: "var(--text-secondary)" }}
+          >
+            Docs
+          </a>
           <a
             href="https://github.com/AuraHQ-ai/aura"
             target="_blank"
@@ -115,7 +120,12 @@ function Nav() {
               textDecoration: "none",
             }}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style={{ width: "14px", height: "14px", flexShrink: 0 }}>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              style={{ width: "14px", height: "14px", flexShrink: 0 }}
+            >
               <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.942.359.31.678.921.678 1.856 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" />
             </svg>
             Star on GitHub
@@ -134,18 +144,38 @@ function Nav() {
 function Footer() {
   return (
     <footer style={{ borderTop: "1px solid var(--col-border)" }}>
-      <div
-        className="layout-inner footer-inner"
-      >
+      <div className="layout-inner footer-inner">
         <div style={{ display: "flex", alignItems: "center", gap: "24px", flexWrap: "wrap" }}>
-          <Link href="/" style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)" }}>Aura</Link>
-          <Link href="/blog" style={{ fontSize: "13px", color: "var(--text-muted)" }}>Blog</Link>
-          <a href="https://docs.aurahq.ai" style={{ fontSize: "13px", color: "var(--text-muted)" }}>Docs</a>
-          <a href="/blog/feed.xml" style={{ fontSize: "13px", color: "var(--text-muted)" }}>RSS</a>
-          <a href="/llms.txt" style={{ fontSize: "13px", color: "var(--text-muted)" }}>llms.txt</a>
-          <Link href="/legal/privacy" style={{ fontSize: "13px", color: "var(--text-muted)" }}>Privacy</Link>
-          <Link href="/legal/terms" style={{ fontSize: "13px", color: "var(--text-muted)" }}>Terms</Link>
-          <Link href="/legal/data-handling" style={{ fontSize: "13px", color: "var(--text-muted)" }}>Data Handling</Link>
+          <Link
+            href="/"
+            style={{ fontSize: "13px", fontWeight: 600, color: "var(--text-primary)" }}
+          >
+            Aura
+          </Link>
+          <Link href="/blog" style={{ fontSize: "13px", color: "var(--text-muted)" }}>
+            Blog
+          </Link>
+          <a href="https://docs.aurahq.ai" style={{ fontSize: "13px", color: "var(--text-muted)" }}>
+            Docs
+          </a>
+          <a href="/blog/feed.xml" style={{ fontSize: "13px", color: "var(--text-muted)" }}>
+            RSS
+          </a>
+          <a href="/llms.txt" style={{ fontSize: "13px", color: "var(--text-muted)" }}>
+            llms.txt
+          </a>
+          <Link href="/legal/privacy" style={{ fontSize: "13px", color: "var(--text-muted)" }}>
+            Privacy
+          </Link>
+          <Link href="/legal/terms" style={{ fontSize: "13px", color: "var(--text-muted)" }}>
+            Terms
+          </Link>
+          <Link
+            href="/legal/data-handling"
+            style={{ fontSize: "13px", color: "var(--text-muted)" }}
+          >
+            Data Handling
+          </Link>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
           <ThemeToggle />
@@ -157,7 +187,12 @@ function Footer() {
             style={{ color: "var(--text-muted)" }}
             aria-label="View source on GitHub"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style={{ width: "15px", height: "15px" }}>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              style={{ width: "15px", height: "15px" }}
+            >
               <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.942.359.31.678.921.678 1.856 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" />
             </svg>
           </a>
@@ -168,7 +203,12 @@ function Footer() {
             style={{ color: "var(--text-muted)" }}
             aria-label="Follow on X"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style={{ width: "15px", height: "15px" }}>
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="currentColor"
+              style={{ width: "15px", height: "15px" }}
+            >
               <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" />
             </svg>
           </a>
@@ -182,11 +222,14 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en" suppressHydrationWarning>
       <body>
-        <ThemeProvider attribute="class" defaultTheme="system" enableSystem disableTransitionOnChange>
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="system"
+          enableSystem
+          disableTransitionOnChange
+        >
           <Nav />
-          <main className="site-main">
-            {children}
-          </main>
+          <main className="site-main">{children}</main>
           <Footer />
         </ThemeProvider>
       </body>

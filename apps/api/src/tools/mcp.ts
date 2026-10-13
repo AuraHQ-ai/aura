@@ -18,11 +18,7 @@ import {
   assertPublicHttpsUrlFollowingRedirects,
   McpSsrfError,
 } from "../lib/mcp-ssrf.js";
-import {
-  completeMcpOAuth,
-  startMcpOAuth,
-  upsertPendingConnection,
-} from "../lib/mcp-oauth.js";
+import { completeMcpOAuth, startMcpOAuth, upsertPendingConnection } from "../lib/mcp-oauth.js";
 import {
   attachMcpCloser,
   buildMcpToolStubs,
@@ -59,26 +55,17 @@ function includeServerTools(slug: string): boolean {
   return isMcpServerAllowlisted(slug, executionContext.getStore()?.envAllowlist);
 }
 
-async function listVisibleServers(
-  context?: ScheduleContext,
-): Promise<McpServer[]> {
+async function listVisibleServers(context?: ScheduleContext): Promise<McpServer[]> {
   const workspaceId = workspaceIdOf(context);
   const userId = context?.userId;
-  const visibility =
-    userId
-      ? or(eq(mcpServers.visibility, "workspace"), eq(mcpServers.ownerId, userId))
-      : eq(mcpServers.visibility, "workspace");
+  const visibility = userId
+    ? or(eq(mcpServers.visibility, "workspace"), eq(mcpServers.ownerId, userId))
+    : eq(mcpServers.visibility, "workspace");
 
   return db
     .select()
     .from(mcpServers)
-    .where(
-      and(
-        eq(mcpServers.workspaceId, workspaceId),
-        eq(mcpServers.enabled, true),
-        visibility,
-      ),
-    );
+    .where(and(eq(mcpServers.workspaceId, workspaceId), eq(mcpServers.enabled, true), visibility));
 }
 
 async function connectionsForUser(
@@ -89,15 +76,9 @@ async function connectionsForUser(
   const rows = await db
     .select()
     .from(mcpConnections)
-    .where(
-      and(
-        eq(mcpConnections.workspaceId, workspaceId),
-        eq(mcpConnections.userId, userId),
-      ),
-    );
+    .where(and(eq(mcpConnections.workspaceId, workspaceId), eq(mcpConnections.userId, userId)));
   return new Map(rows.map((row) => [row.serverId, row]));
 }
-
 
 /**
  * MCP server tools + chat management tools.
@@ -110,9 +91,7 @@ export async function createMcpTools(context?: ScheduleContext) {
   const clients = new Map<string, McpClientHandle>();
 
   const closer = async () => {
-    await Promise.all(
-      [...clients.values()].map((client) => client.close().catch(() => {})),
-    );
+    await Promise.all([...clients.values()].map((client) => client.close().catch(() => {})));
     clients.clear();
   };
 
@@ -124,14 +103,9 @@ export async function createMcpTools(context?: ScheduleContext) {
     const servers = (await listVisibleServers(context)).filter((server) =>
       includeServerTools(server.slug),
     );
-    const connections = await connectionsForUser(
-      workspaceIdOf(context),
-      context?.userId,
-    );
+    const connections = await connectionsForUser(workspaceIdOf(context), context?.userId);
 
-    const live = servers.filter((server) =>
-      hasLiveConnection(server, connections.get(server.id)),
-    );
+    const live = servers.filter((server) => hasLiveConnection(server, connections.get(server.id)));
 
     const { results, failures } = await loadIsolated(
       live,
@@ -182,7 +156,12 @@ function createMcpManagementTools(context?: ScheduleContext) {
         "Add an MCP server by HTTPS URL so its tools become available as mcp__<slug>__<tool>. Probes the server (SSRF-safe). Returns { status: 'connected' } or { status: 'needs_auth', auth_url } for OAuth. Default visibility is personal (any member). visibility='workspace' is admin-only. Header-auth servers are added from the dashboard (phase 2). After OAuth, click the auth URL; Aura posts back into this Slack thread when connected.",
       inputSchema: z.object({
         url: z.string().url().describe("HTTPS MCP server URL (http/stdio rejected)"),
-        name: z.string().min(1).max(80).optional().describe("Display name; defaults to the hostname"),
+        name: z
+          .string()
+          .min(1)
+          .max(80)
+          .optional()
+          .describe("Display name; defaults to the hostname"),
         visibility: z
           .enum(["personal", "workspace"])
           .optional()
@@ -194,7 +173,8 @@ function createMcpManagementTools(context?: ScheduleContext) {
       },
       execute: async ({ url, name, visibility }) => {
         const userId = context?.userId;
-        if (!userId) return { ok: false, error: "A signed-in user is required to add an MCP server" };
+        if (!userId)
+          return { ok: false, error: "A signed-in user is required to add an MCP server" };
 
         const vis = visibility ?? "personal";
         if (vis === "workspace" && !(await hasRole(userId, "admin"))) {
@@ -318,7 +298,7 @@ function createMcpManagementTools(context?: ScheduleContext) {
               connection_status: hasLiveConnection(server, connection)
                 ? "connected"
                 : server.authType === "oauth"
-                  ? connection?.status ?? "needs_auth"
+                  ? (connection?.status ?? "needs_auth")
                   : "not_configured",
             };
           }),

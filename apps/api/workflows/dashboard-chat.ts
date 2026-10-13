@@ -117,9 +117,7 @@ async function prepareDashboardTurn(
     });
   }
 
-  const modelMessages = await convertToModelMessages(
-    sanitizeAssistantPartOrder(input.messages),
-  );
+  const modelMessages = await convertToModelMessages(sanitizeAssistantPartOrder(input.messages));
 
   const systemMessages = buildCachedSystemMessages(
     prompt.stablePrefix,

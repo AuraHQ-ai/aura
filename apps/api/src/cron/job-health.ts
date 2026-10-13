@@ -73,8 +73,7 @@ export function evaluateJobHealth(
 
   const window = statusesNewestFirst.slice(0, noSuccessWindowRuns);
   const noSuccessInWindow =
-    window.length >= noSuccessWindowRuns &&
-    !window.some((status) => status === "completed");
+    window.length >= noSuccessWindowRuns && !window.some((status) => status === "completed");
 
   return { consecutiveFailures, noSuccessInWindow };
 }
@@ -107,11 +106,7 @@ export async function scanJobFailureHealth(now = new Date()): Promise<JobHealthS
       .limit(200);
 
     const candidateJobIds = [
-      ...new Set(
-        freshFailures
-          .map((row) => row.jobId)
-          .filter((id): id is string => id !== null),
-      ),
+      ...new Set(freshFailures.map((row) => row.jobId).filter((id): id is string => id !== null)),
     ].slice(0, HEALTH_SCAN_BATCH_SIZE);
 
     if (candidateJobIds.length === 0) return result;
@@ -211,8 +206,7 @@ export async function scanJobFailureHealth(now = new Date()): Promise<JobHealthS
 // persisted in the settings table so it survives across serverless invocations.
 
 /** Settings key storing the ISO timestamp of the last NULL-prompt_mode ops notice. */
-export const JOB_CONFIG_HEALTH_NOTICE_SETTING_KEY =
-  "job_config_health_last_notice_at";
+export const JOB_CONFIG_HEALTH_NOTICE_SETTING_KEY = "job_config_health_last_notice_at";
 
 /** At most one NULL-prompt_mode notice per this window, regardless of heartbeat cadence. */
 export const JOB_CONFIG_HEALTH_NOTICE_THROTTLE_MS = 24 * 60 * 60 * 1000;
@@ -251,9 +245,7 @@ function isNullPromptModeRecurringJob(job: {
  * Never throws — the heartbeat must not fail because of this scan.
  * Throttled to at most one notice per 24h via the settings table.
  */
-export async function scanJobConfigHealth(
-  now = new Date(),
-): Promise<JobConfigHealthScanResult> {
+export async function scanJobConfigHealth(now = new Date()): Promise<JobConfigHealthScanResult> {
   const result: JobConfigHealthScanResult = { found: 0, alerted: 0, jobNames: [] };
 
   try {

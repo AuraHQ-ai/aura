@@ -27,7 +27,9 @@ describe("prefilterNotScorable", () => {
   });
 
   it("catches obvious progress/status pings", () => {
-    expect(prefilterNotScorable(assistantTurn("I'll take a look and get back to you."))).toMatchObject({
+    expect(
+      prefilterNotScorable(assistantTurn("I'll take a look and get back to you.")),
+    ).toMatchObject({
       rule: "progress_ping",
     });
     expect(prefilterNotScorable(assistantTurn("Looking into this now"))).toMatchObject({
@@ -57,9 +59,7 @@ describe("prefilterNotScorable", () => {
   it("keeps terse completed work and tool-backed status visible to the judge", () => {
     expect(prefilterNotScorable(assistantTurn("yes, merged, commit be511f4"))).toBeNull();
     expect(
-      prefilterNotScorable(
-        assistantTurn("Done", { toolNames: ["github_create_pull_request"] }),
-      ),
+      prefilterNotScorable(assistantTurn("Done", { toolNames: ["github_create_pull_request"] })),
     ).toBeNull();
   });
 });

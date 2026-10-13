@@ -67,10 +67,7 @@ dashboardErrorsApp.openapi(listErrorsRoute, async (c) => {
         .orderBy(desc(errorEvents.timestamp))
         .limit(limit)
         .offset(offset),
-      db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(errorEvents)
-        .where(where),
+      db.select({ count: sql<number>`count(*)::int` }).from(errorEvents).where(where),
     ]);
 
     return c.json({ items, total: countResult[0]?.count ?? 0 } as any, 200);
@@ -108,11 +105,7 @@ dashboardErrorsApp.openapi(getErrorRoute, async (c) => {
   try {
     const id = c.req.param("id");
 
-    const rows = await db
-      .select()
-      .from(errorEvents)
-      .where(eq(errorEvents.id, id))
-      .limit(1);
+    const rows = await db.select().from(errorEvents).where(eq(errorEvents.id, id)).limit(1);
 
     if (rows.length === 0) {
       return c.json({ error: "Error not found" }, 404);

@@ -92,11 +92,13 @@ describe("detectToolThrashFromSteps (issue #1524)", () => {
     const steps = Array.from({ length: 5 }, (_, i) => ({
       text: "",
       toolCalls: [{ toolName: "archive_emails", toolCallId: `c${i}` }],
-      toolResults: [{
-        toolName: "archive_emails",
-        toolCallId: `c${i}`,
-        output: { ok: false, error: "nope" },
-      }],
+      toolResults: [
+        {
+          toolName: "archive_emails",
+          toolCallId: `c${i}`,
+          output: { ok: false, error: "nope" },
+        },
+      ],
     }));
     expect(detectToolThrashFromSteps(steps)).toMatchObject({
       reason: "consecutive_errors",

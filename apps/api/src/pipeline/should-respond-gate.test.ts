@@ -66,9 +66,7 @@ function context(overrides: Partial<MessageContext> = {}): MessageContext {
   };
 }
 
-function conversation(
-  overrides: Partial<ConversationContext> = {},
-): ConversationContext {
+function conversation(overrides: Partial<ConversationContext> = {}): ConversationContext {
   return {
     thread: [
       {
@@ -187,7 +185,11 @@ describe("shouldRespond gate logging", () => {
     expect(result.respond).toBe(false);
     expect(loggerMocks.warn).toHaveBeenCalledWith(
       "Jev gate failed, falling back to fast-model gate",
-      expect.objectContaining({ fallback: "haiku_fallback", error: "jev 503", tier: "recently_active" }),
+      expect.objectContaining({
+        fallback: "haiku_fallback",
+        error: "jev 503",
+        tier: "recently_active",
+      }),
     );
     expect(loggerMocks.info).toHaveBeenCalledTimes(1);
     expect(loggerMocks.info).toHaveBeenCalledWith(
@@ -234,7 +236,11 @@ describe("shouldRespond gate logging", () => {
     );
     expect(loggerMocks.warn).toHaveBeenCalledWith(
       "LLM shouldRespond gate failed, falling back to tier",
-      expect.objectContaining({ fallback: "tier_fallback", error: "haiku empty", tier: "participant" }),
+      expect.objectContaining({
+        fallback: "tier_fallback",
+        error: "haiku empty",
+        tier: "participant",
+      }),
     );
     expect(loggerMocks.info).toHaveBeenCalledTimes(1);
     expect(loggerMocks.info).toHaveBeenCalledWith(

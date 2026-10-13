@@ -7,9 +7,7 @@ import {
   shouldGreetAndBailForEmptyMessage,
 } from "./empty-message.js";
 
-function conversation(
-  overrides: Partial<ConversationContext> = {},
-): ConversationContext {
+function conversation(overrides: Partial<ConversationContext> = {}): ConversationContext {
   return {
     thread: null,
     recentMessages: [],
@@ -61,10 +59,7 @@ describe("empty-message pipeline guard", () => {
     });
 
     expect(
-      shouldGreetAndBailForEmptyMessage(
-        { isMentioned: true, messageTs: "200.000" },
-        conv,
-      ),
+      shouldGreetAndBailForEmptyMessage({ isMentioned: true, messageTs: "200.000" }, conv),
     ).toBe(true);
     expect(
       shouldGreetAndBailForEmptyMessage(
@@ -105,10 +100,7 @@ describe("empty-message pipeline guard", () => {
     });
 
     expect(
-      shouldGreetAndBailForEmptyMessage(
-        { isMentioned: true, messageTs: "101.000" },
-        conv,
-      ),
+      shouldGreetAndBailForEmptyMessage({ isMentioned: true, messageTs: "101.000" }, conv),
     ).toBe(false);
   });
 });

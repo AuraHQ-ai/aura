@@ -159,10 +159,7 @@ function normalizeToolsRepo(value: string): string | null {
 }
 
 function redactGitAuth(stderr?: string): string | undefined {
-  return stderr?.replace(
-    /x-access-token:[^@\s]+@/g,
-    "x-access-token:[REDACTED]@",
-  );
+  return stderr?.replace(/x-access-token:[^@\s]+@/g, "x-access-token:[REDACTED]@");
 }
 
 /**
@@ -382,12 +379,7 @@ async function resolveSandboxCredentialRows(
       const grants = await db
         .select({ credentialId: credentialGrants.credentialId })
         .from(credentialGrants)
-        .where(
-          and(
-            eq(credentialGrants.granteeId, userId),
-            isNull(credentialGrants.revokedAt),
-          ),
-        );
+        .where(and(eq(credentialGrants.granteeId, userId), isNull(credentialGrants.revokedAt)));
       for (const g of grants) grantedCredentialIds.add(g.credentialId);
     }
 
@@ -425,11 +417,7 @@ async function resolveSandboxCredentialRows(
       } else if (scope === "per_user") {
         if (!userId) continue;
         if (row.ownerId !== userId && !grantedCredentialIds.has(row.id)) continue;
-      } else if (
-        scope !== "member" &&
-        scope !== "power_user" &&
-        scope !== "admin"
-      ) {
+      } else if (scope !== "member" && scope !== "power_user" && scope !== "admin") {
         logger.warn("getSandboxEnvs: unknown credential scope", {
           userId,
           credentialName: row.name,
@@ -536,9 +524,7 @@ const CALLER_SCOPED_SCOPES = new Set(["owner", "per_user"]);
  * capabilities -- and, for caller-scoped credentials, WHOSE credential the env
  * var resolves from -- without exposing secrets.
  */
-export async function getSandboxEnvNames(
-  userId?: string,
-): Promise<SandboxEnvVarInfo[]> {
+export async function getSandboxEnvNames(userId?: string): Promise<SandboxEnvVarInfo[]> {
   const rows = await resolveSandboxCredentialRows(userId, false);
 
   // Mirror getSandboxEnvs(): caller-owned credentials always win env name
@@ -592,7 +578,7 @@ export async function getSandboxEnvNames(
         envName,
         scope,
         ownerDisplayName: CALLER_SCOPED_SCOPES.has(scope)
-          ? displayNames.get(row.ownerId) ?? null
+          ? (displayNames.get(row.ownerId) ?? null)
           : null,
       };
     })
@@ -604,10 +590,7 @@ export async function getSandboxEnvNames(
  * Installs gcsfuse if needed and uses the base64-encoded SA key from envs.
  * Non-fatal -- sandbox works fine without the mount.
  */
-async function setupSandboxFilesystem(
-  sandbox: any,
-  envs: Record<string, string>,
-): Promise<void> {
+async function setupSandboxFilesystem(sandbox: any, envs: Record<string, string>): Promise<void> {
   try {
     const mountCheck = await runTolerant(
       sandbox,
@@ -732,11 +715,10 @@ export async function ensureAuraTools(
 
     let checkoutChanged: boolean;
     if (probe.stdout.includes("AURA_TOOLS_PRESENT")) {
-      const pullResult = await runTolerant(
-        sandbox,
-        `git -C ${checkoutPathArg} pull --ff-only`,
-        { timeoutMs: 60_000, envs: commandEnvs },
-      );
+      const pullResult = await runTolerant(sandbox, `git -C ${checkoutPathArg} pull --ff-only`, {
+        timeoutMs: 60_000,
+        envs: commandEnvs,
+      });
       if (pullResult.exitCode !== 0) {
         // Keep the existing (stale but usable) checkout; do NOT touch the
         // marker so the next acquisition retries the refresh.
@@ -756,16 +738,12 @@ export async function ensureAuraTools(
         { timeoutMs: 120_000, envs: commandEnvs },
       );
       if (cloneResult.exitCode !== 0) {
-        recordError(
-          "sandbox.ensureAuraTools",
-          new Error("Failed to clone tools repository"),
-          {
-            toolsRepo,
-            checkoutPath,
-            exitCode: cloneResult.exitCode,
-            stderr: redactGitAuth(cloneResult.stderr),
-          },
-        );
+        recordError("sandbox.ensureAuraTools", new Error("Failed to clone tools repository"), {
+          toolsRepo,
+          checkoutPath,
+          exitCode: cloneResult.exitCode,
+          stderr: redactGitAuth(cloneResult.stderr),
+        });
         return;
       }
       checkoutChanged = true;
@@ -935,9 +913,7 @@ export async function getOrCreateSandbox(
 
   const apiKey = envs.E2B_API_KEY;
   if (!apiKey) {
-    throw new Error(
-      "E2B_API_KEY is not configured. Add it as a credential in the dashboard.",
-    );
+    throw new Error("E2B_API_KEY is not configured. Add it as a credential in the dashboard.");
   }
 
   // Try to resume a previously paused sandbox (per-user key).
@@ -1053,11 +1029,10 @@ export async function getOrCreateSandbox(
     });
     if (check.exitCode !== 0) {
       logger.info("Installing Claude Code in sandbox");
-      const installResult = await runTolerant(
-        sandbox,
-        "npm install -g @anthropic-ai/claude-code",
-        { timeoutMs: 120_000, envs },
-      );
+      const installResult = await runTolerant(sandbox, "npm install -g @anthropic-ai/claude-code", {
+        timeoutMs: 120_000,
+        envs,
+      });
       if (installResult.exitCode !== 0) {
         logger.warn("Claude Code install failed", {
           exitCode: installResult.exitCode,
@@ -1078,7 +1053,6 @@ export async function getOrCreateSandbox(
 
   return sandbox;
 }
-
 
 /**
  * Write binary data (as a Buffer) to the sandbox filesystem.
@@ -1114,10 +1088,7 @@ export async function writeToSandbox(
  * Truncate shell output to avoid token bloat.
  * Preserves the beginning (headers, command echo) and end (results, errors).
  */
-export function truncateOutput(
-  output: string,
-  maxChars = 4000,
-): string {
+export function truncateOutput(output: string, maxChars = 4000): string {
   if (output.length <= maxChars) return output;
   const half = Math.floor(maxChars / 2);
   return (

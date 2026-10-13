@@ -44,9 +44,10 @@ function isOutboundCall(metadata: any): boolean {
 
 // ── Tool Handlers ───────────────────────────────────────────────────────────
 
-async function handleLookupContext(
-  params: { person_name?: string; query?: string },
-): Promise<string> {
+async function handleLookupContext(params: {
+  person_name?: string;
+  query?: string;
+}): Promise<string> {
   try {
     const { person_name, query } = params;
 
@@ -87,9 +88,7 @@ async function handleLookupContext(
 
       try {
         const { ilike } = await import("drizzle-orm");
-        const escapedName = person_name
-          .replace(/%/g, "\\%")
-          .replace(/_/g, "\\_");
+        const escapedName = person_name.replace(/%/g, "\\%").replace(/_/g, "\\_");
         const relatedNotes = await db
           .select({ topic: notes.topic, content: notes.content })
           .from(notes)
@@ -120,9 +119,7 @@ async function handleLookupContext(
   }
 }
 
-async function handleSendDm(
-  params: { user_name?: string; message?: string },
-): Promise<string> {
+async function handleSendDm(params: { user_name?: string; message?: string }): Promise<string> {
   try {
     const { user_name, message } = params;
     if (!user_name || !message) return "Missing required parameters: user_name, message";
@@ -188,15 +185,11 @@ elevenlabsWebhookApp.post("/tool/:toolName", async (c) => {
 
   switch (toolName) {
     case "lookup_context":
-      result = await handleLookupContext(
-        body as { person_name?: string; query?: string },
-      );
+      result = await handleLookupContext(body as { person_name?: string; query?: string });
       break;
 
     case "send_dm":
-      result = await handleSendDm(
-        body as { user_name?: string; message?: string },
-      );
+      result = await handleSendDm(body as { user_name?: string; message?: string });
       break;
 
     default:
@@ -269,15 +262,11 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
             : "";
 
       const durationStr =
-        duration != null
-          ? `${Math.floor(duration / 60)}m ${duration % 60}s`
-          : "unknown duration";
+        duration != null ? `${Math.floor(duration / 60)}m ${duration % 60}s` : "unknown duration";
 
       // Store in voice_calls table
       const callStatus =
-        data.status === "error" || data.status === "failed"
-          ? "failed"
-          : "completed";
+        data.status === "error" || data.status === "failed" ? "failed" : "completed";
 
       const { transcript: _t, analysis: _a, ...metadataRest } = data;
       const strippedMetadata = metadataRest as Record<string, unknown>;
@@ -349,9 +338,7 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
           : `*${directionLabel} call*`;
 
       const truncatedTranscript =
-        transcriptText.length > 500
-          ? transcriptText.slice(0, 500) + "..."
-          : transcriptText;
+        transcriptText.length > 500 ? transcriptText.slice(0, 500) + "..." : transcriptText;
 
       const slackMessage =
         `${directionEmoji} *Voice call ended*\n` +
@@ -360,9 +347,7 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
         `*Status:* ${callStatus}\n` +
         `*Conversation ID:* \`${conversationId}\`\n` +
         `*Summary:* ${summary}` +
-        (truncatedTranscript
-          ? `\n\n*Transcript excerpt:*\n>${truncatedTranscript}`
-          : "");
+        (truncatedTranscript ? `\n\n*Transcript excerpt:*\n>${truncatedTranscript}` : "");
 
       // Route the summary back to the originating channel/thread when a
       // callback target was captured at place_call time (#400).

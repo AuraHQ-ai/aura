@@ -65,12 +65,7 @@ export async function finishTurnMarker(
     await db
       .update(turnMarkers)
       .set({ status, endedAt: new Date() })
-      .where(
-        and(
-          eq(turnMarkers.invocationId, invocationId),
-          eq(turnMarkers.status, "started"),
-        ),
-      );
+      .where(and(eq(turnMarkers.invocationId, invocationId), eq(turnMarkers.status, "started")));
   } catch (err: unknown) {
     logger.warn("turn_marker_finish_failed", {
       invocationId,
@@ -88,12 +83,7 @@ export async function cleanupOldTurnMarkers(cutoff: Date): Promise<number> {
   try {
     const deleted = await db
       .delete(turnMarkers)
-      .where(
-        and(
-          ne(turnMarkers.status, "started"),
-          lt(turnMarkers.startedAt, cutoff),
-        ),
-      )
+      .where(and(ne(turnMarkers.status, "started"), lt(turnMarkers.startedAt, cutoff)))
       .returning({ id: turnMarkers.id });
     return deleted.length;
   } catch (err: unknown) {

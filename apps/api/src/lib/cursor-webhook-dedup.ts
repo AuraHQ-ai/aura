@@ -27,11 +27,7 @@ function statusClass(status: string): string {
   return s || "unknown";
 }
 
-export function cursorWebhookLockKey(
-  agentId: string,
-  status: string,
-  webhookId: string,
-): string {
+export function cursorWebhookLockKey(agentId: string, status: string, webhookId: string): string {
   if (agentId) return `cursor-agent:${agentId}:${statusClass(status)}`;
   if (webhookId) return `cursor-webhook:${webhookId}`;
   return "";
@@ -78,10 +74,7 @@ export async function releaseCursorWebhookClaim(key: string): Promise<void> {
     await db
       .delete(eventLocks)
       .where(
-        and(
-          eq(eventLocks.eventTs, key),
-          eq(eventLocks.channelId, CURSOR_WEBHOOK_LOCK_CHANNEL),
-        ),
+        and(eq(eventLocks.eventTs, key), eq(eventLocks.channelId, CURSOR_WEBHOOK_LOCK_CHANNEL)),
       );
   } catch (error) {
     logger.warn("Cursor webhook dedup: failed to release claim", {
@@ -99,9 +92,7 @@ export async function releaseCursorWebhookClaim(key: string): Promise<void> {
  * would suppress that notification forever — trading duplicate messages for
  * missing ones. Called from the follow-up path, never from the webhook.
  */
-export async function releaseCursorWebhookLocks(
-  agentId: string,
-): Promise<void> {
+export async function releaseCursorWebhookLocks(agentId: string): Promise<void> {
   if (!agentId) return;
 
   for (const outcome of ["finished", "error"]) {

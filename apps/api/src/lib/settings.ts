@@ -24,11 +24,7 @@ export async function getSetting(key: string): Promise<string | null> {
 /**
  * Upsert a setting. Creates or updates the key-value pair.
  */
-export async function setSetting(
-  key: string,
-  value: string,
-  updatedBy?: string,
-): Promise<void> {
+export async function setSetting(key: string, value: string, updatedBy?: string): Promise<void> {
   try {
     await db
       .insert(settings)

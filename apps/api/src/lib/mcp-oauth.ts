@@ -30,9 +30,7 @@ export function getMcpOAuthRedirectUrl(): string {
   if (explicit) return `${explicit}/api/mcp/oauth/callback`;
 
   const host =
-    process.env.VERCEL_PROJECT_PRODUCTION_URL ||
-    process.env.VERCEL_URL ||
-    "localhost:3001";
+    process.env.VERCEL_PROJECT_PRODUCTION_URL || process.env.VERCEL_URL || "localhost:3001";
   const protocol = host.includes("localhost") ? "http" : "https";
   return `${protocol}://${host}/api/mcp/oauth/callback`;
 }
@@ -80,9 +78,7 @@ export class DbOAuthClientProvider implements OAuthClientProvider {
     return row;
   }
 
-  private async patch(
-    values: Partial<typeof mcpConnections.$inferInsert>,
-  ): Promise<void> {
+  private async patch(values: Partial<typeof mcpConnections.$inferInsert>): Promise<void> {
     await db
       .update(mcpConnections)
       .set({ ...values, updatedAt: new Date() })
@@ -130,9 +126,7 @@ export class DbOAuthClientProvider implements OAuthClientProvider {
     return decryptJson<McpOAuthClientInformation>(row?.encryptedClientInfo);
   }
 
-  async saveClientInformation(
-    clientInformation: McpOAuthClientInformation,
-  ): Promise<void> {
+  async saveClientInformation(clientInformation: McpOAuthClientInformation): Promise<void> {
     await this.patch({
       encryptedClientInfo: encryptJson(clientInformation),
       dynamicallyRegistered: true,
@@ -161,16 +155,12 @@ export class DbOAuthClientProvider implements OAuthClientProvider {
     return row?.oauthState ?? undefined;
   }
 
-  async authorizationServerInformation(): Promise<
-    McpOAuthAsInformation | undefined
-  > {
+  async authorizationServerInformation(): Promise<McpOAuthAsInformation | undefined> {
     const row = await this.load();
     return decryptJson<McpOAuthAsInformation>(row?.encryptedAsInfo);
   }
 
-  async saveAuthorizationServerInformation(
-    info: McpOAuthAsInformation,
-  ): Promise<void> {
+  async saveAuthorizationServerInformation(info: McpOAuthAsInformation): Promise<void> {
     await this.patch({ encryptedAsInfo: encryptJson(info) });
   }
 
@@ -243,11 +233,7 @@ export async function upsertPendingConnection(opts: {
       updatedAt: now,
     })
     .onConflictDoUpdate({
-      target: [
-        mcpConnections.workspaceId,
-        mcpConnections.serverId,
-        mcpConnections.userId,
-      ],
+      target: [mcpConnections.workspaceId, mcpConnections.serverId, mcpConnections.userId],
       set: {
         status: "pending_auth",
         channelId: opts.channelId ?? null,
@@ -274,9 +260,7 @@ export async function findConnectionByState(
   return row;
 }
 
-export async function findConnectionByStateAny(
-  state: string,
-): Promise<McpConnection | undefined> {
+export async function findConnectionByStateAny(state: string): Promise<McpConnection | undefined> {
   const [row] = await db
     .select()
     .from(mcpConnections)
@@ -335,10 +319,7 @@ export async function completeMcpOAuth(opts: {
   });
 }
 
-export async function markConnectionError(
-  connectionId: string,
-  error: string,
-): Promise<void> {
+export async function markConnectionError(connectionId: string, error: string): Promise<void> {
   try {
     await db
       .update(mcpConnections)

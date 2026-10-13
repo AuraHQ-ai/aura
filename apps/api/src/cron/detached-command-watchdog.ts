@@ -25,8 +25,7 @@ const DEFAULT_STALE_MINUTES = 20;
 /** Max stale commands processed per sweep. */
 const SWEEP_BATCH_SIZE = 20;
 
-export const DETACHED_COMMAND_NEVER_RESUMED_ERROR_CODE =
-  "detached_command_never_resumed";
+export const DETACHED_COMMAND_NEVER_RESUMED_ERROR_CODE = "detached_command_never_resumed";
 
 export const DETACHED_COMMAND_RECOVERY_MESSAGE =
   "_That background task didn't report back — re-run or ask me to retry._";
@@ -42,8 +41,7 @@ export const DETACHED_COMMAND_WATCHDOG_NOTE =
 export function detachedCommandWatchdogStaleMs(): number {
   const raw = process.env.DETACHED_WATCHDOG_STALE_MINUTES;
   const parsed = raw ? Number(raw) : NaN;
-  const minutes =
-    Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STALE_MINUTES;
+  const minutes = Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_STALE_MINUTES;
   return minutes * 60 * 1000;
 }
 
@@ -87,12 +85,7 @@ export async function sweepStaleDetachedCommands(
     const staleCommands = await db
       .select()
       .from(detachedCommands)
-      .where(
-        and(
-          eq(detachedCommands.status, "running"),
-          lt(detachedCommands.startedAt, cutoff),
-        ),
-      )
+      .where(and(eq(detachedCommands.status, "running"), lt(detachedCommands.startedAt, cutoff)))
       .orderBy(detachedCommands.startedAt)
       .limit(SWEEP_BATCH_SIZE);
 
@@ -109,12 +102,7 @@ export async function sweepStaleDetachedCommands(
           completedAt: new Date(),
           stderrTail: DETACHED_COMMAND_WATCHDOG_NOTE,
         })
-        .where(
-          and(
-            eq(detachedCommands.id, command.id),
-            eq(detachedCommands.status, "running"),
-          ),
-        )
+        .where(and(eq(detachedCommands.id, command.id), eq(detachedCommands.status, "running")))
         .returning({ id: detachedCommands.id });
 
       if (claimed.length === 0) continue;

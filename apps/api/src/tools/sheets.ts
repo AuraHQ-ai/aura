@@ -4,8 +4,7 @@ import { logger } from "../lib/logger.js";
 import { resolveEffectiveUserId } from "../lib/resolve-user.js";
 import type { ScheduleContext } from "@aura/db/schema";
 
-const SHEETS_URL_REGEX =
-  /docs\.google\.com\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/;
+const SHEETS_URL_REGEX = /docs\.google\.com\/spreadsheets\/d\/([a-zA-Z0-9_-]+)/;
 
 function extractSpreadsheetId(input: string): string {
   const match = input.match(SHEETS_URL_REGEX);
@@ -27,10 +26,7 @@ async function getAccessToken(userId?: string): Promise<string | null> {
   return token ?? null;
 }
 
-function getSheetsNoAccessError(
-  userName: string | undefined,
-  context?: ScheduleContext,
-): string {
+function getSheetsNoAccessError(userName: string | undefined, context?: ScheduleContext): string {
   if (userName) {
     return `No Google Sheets access for '${userName}'. They may need to authorize Aura via OAuth first.`;
   }
@@ -58,9 +54,7 @@ async function fetchJson<T>(url: string, token: string): Promise<T> {
     const body = await res.text().catch(() => "");
     const status = res.status;
     if (status === 404) {
-      throw new Error(
-        "Spreadsheet not found. Check the ID and make sure it exists.",
-      );
+      throw new Error("Spreadsheet not found. Check the ID and make sure it exists.");
     }
     if (status === 403) {
       throw new Error(
@@ -104,8 +98,10 @@ export function createSheetsTools(context?: ScheduleContext) {
       }),
       execute: async ({ spreadsheet_id, range, max_rows, user_name }) => {
         try {
-          const { userId: resolvedUserId, error: resolveError } =
-            await resolveEffectiveUserId(user_name, context);
+          const { userId: resolvedUserId, error: resolveError } = await resolveEffectiveUserId(
+            user_name,
+            context,
+          );
           if (resolveError) {
             return { ok: false, error: resolveError };
           }
@@ -131,17 +127,14 @@ export function createSheetsTools(context?: ScheduleContext) {
 
             let sheetName: string;
             if (gid != null) {
-              const match = meta.sheets.find(
-                (s) => s.properties.sheetId === gid,
-              );
+              const match = meta.sheets.find((s) => s.properties.sheetId === gid);
               sheetName = match
                 ? match.properties.title
-                : meta.sheets[0]?.properties.title ?? "Sheet1";
+                : (meta.sheets[0]?.properties.title ?? "Sheet1");
             } else {
               sheetName = meta.sheets[0]?.properties.title ?? "Sheet1";
             }
-            effectiveRange =
-              "'" + sheetName.replace(/'/g, "''") + "'";
+            effectiveRange = "'" + sheetName.replace(/'/g, "''") + "'";
           }
 
           const data = await fetchJson<{

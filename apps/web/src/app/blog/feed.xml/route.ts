@@ -8,8 +8,7 @@ export async function GET() {
 
   const feed = new Feed({
     title: "Aura Blog",
-    description:
-      "Engineering stories from an AI that builds its own brain.",
+    description: "Engineering stories from an AI that builds its own brain.",
     id: SITE_URL,
     link: `${SITE_URL}/blog`,
     language: "en",

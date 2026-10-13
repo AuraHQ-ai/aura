@@ -119,15 +119,9 @@ function ToolInvocationBlock({ part }: { part: ConversationPart }) {
             className="flex w-full items-center gap-1.5 px-3 py-1 text-xs text-muted-foreground hover:text-foreground cursor-pointer"
             onClick={() => setShowInput(!showInput)}
           >
-            {showInput ? (
-              <ChevronDown className="h-3 w-3" />
-            ) : (
-              <ChevronRight className="h-3 w-3" />
-            )}
+            {showInput ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
             Input
-            <span className="text-[10px]">
-              ({inputStr.length.toLocaleString()} chars)
-            </span>
+            <span className="text-[10px]">({inputStr.length.toLocaleString()} chars)</span>
           </button>
           {showInput && (
             <pre className="px-3 pb-2 text-xs font-mono whitespace-pre-wrap overflow-auto max-h-[400px]">
@@ -149,9 +143,7 @@ function ToolInvocationBlock({ part }: { part: ConversationPart }) {
               <ChevronRight className="h-3 w-3" />
             )}
             Output
-            <span className="text-[10px]">
-              ({outputStr.length.toLocaleString()} chars)
-            </span>
+            <span className="text-[10px]">({outputStr.length.toLocaleString()} chars)</span>
           </button>
           {showOutput && (
             <pre className="px-3 pb-2 text-xs font-mono whitespace-pre-wrap overflow-auto max-h-[400px]">
@@ -174,7 +166,11 @@ function SystemMessageBlock({ text }: { text: string }) {
   const hasXml = text.includes("<");
   const [viewMode, setViewMode] = useState<SystemViewMode>(hasXml ? "xml" : "markdown");
   const isLong = text.length > SYSTEM_PREVIEW_LENGTH;
-  const displayText = expanded ? text : isLong ? text.slice(0, SYSTEM_PREVIEW_LENGTH) + "..." : text;
+  const displayText = expanded
+    ? text
+    : isLong
+      ? text.slice(0, SYSTEM_PREVIEW_LENGTH) + "..."
+      : text;
 
   const modes: { key: SystemViewMode; label: string }[] = [
     { key: "xml", label: "XML" },
@@ -188,9 +184,7 @@ function SystemMessageBlock({ text }: { text: string }) {
         <Badge variant="secondary" className="text-[10px]">
           system
         </Badge>
-        <span className="text-xs text-muted-foreground">
-          {text.length.toLocaleString()} chars
-        </span>
+        <span className="text-xs text-muted-foreground">{text.length.toLocaleString()} chars</span>
         <div className="flex items-center gap-1 ml-auto">
           {modes.map((m) => (
             <button
@@ -241,9 +235,7 @@ function UserMessageBlock({ text }: { text: string }) {
         <Badge variant="default" className="text-[10px]">
           user
         </Badge>
-        <span className="text-xs text-muted-foreground">
-          {text.length.toLocaleString()} chars
-        </span>
+        <span className="text-xs text-muted-foreground">{text.length.toLocaleString()} chars</span>
       </div>
       <div className="border-t px-3 py-2">
         {expanded ? (
@@ -287,9 +279,7 @@ function AssistantStepBlock({
           assistant
         </Badge>
         {msg.modelId && (
-          <span className="text-[10px] text-muted-foreground font-mono">
-            {msg.modelId}
-          </span>
+          <span className="text-[10px] text-muted-foreground font-mono">{msg.modelId}</span>
         )}
         {msg.evalScore && (
           <Link
@@ -363,10 +353,7 @@ function AssistantStepBlock({
 
             if (part.type === "text" && part.textValue) {
               return (
-                <div
-                  key={part.id}
-                  className="text-sm bg-muted/30 rounded-md px-3 py-2 border"
-                >
+                <div key={part.id} className="text-sm bg-muted/30 rounded-md px-3 py-2 border">
                   <pre className="whitespace-pre-wrap font-mono text-xs overflow-auto max-h-[400px]">
                     {part.textValue}
                   </pre>
@@ -386,9 +373,7 @@ export function UnifiedTimeline({
 }: {
   conversation: ConversationMessageWithParts[];
 }) {
-  const sorted = [...conversation].sort(
-    (a, b) => a.orderIndex - b.orderIndex,
-  );
+  const sorted = [...conversation].sort((a, b) => a.orderIndex - b.orderIndex);
 
   let assistantStep = 0;
 
@@ -409,13 +394,7 @@ export function UnifiedTimeline({
 
         if (msg.role === "assistant") {
           assistantStep++;
-          return (
-            <AssistantStepBlock
-              key={msg.id}
-              msg={msg}
-              stepIndex={assistantStep}
-            />
-          );
+          return <AssistantStepBlock key={msg.id} msg={msg} stepIndex={assistantStep} />;
         }
 
         return null;

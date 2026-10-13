@@ -4,7 +4,14 @@ import { apiGet, apiPatch } from "@/lib/api";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { DetailSkeleton } from "@/components/page-skeleton";
 import { formatDate, truncate } from "@/lib/utils";
 import { useState } from "react";
@@ -39,7 +46,11 @@ interface MemoryDetail {
 function MemoryDetailPage() {
   const { id } = Route.useParams();
   const queryClient = useQueryClient();
-  const { data: memory, isLoading, error } = useQuery({
+  const {
+    data: memory,
+    isLoading,
+    error,
+  } = useQuery({
     queryKey: ["memories", id],
     queryFn: () => apiGet<MemoryDetail>(`/memories/${id}`),
   });
@@ -71,7 +82,8 @@ function MemoryDetailPage() {
   }
 
   if (isLoading) return <DetailSkeleton />;
-  if (error) return <div className="text-destructive text-sm">Failed to load memory: {error.message}</div>;
+  if (error)
+    return <div className="text-destructive text-sm">Failed to load memory: {error.message}</div>;
   if (!memory) return null;
 
   const relatedUsers = memory.relatedUsers ?? [];
@@ -80,7 +92,9 @@ function MemoryDetailPage() {
     <div className="space-y-4">
       <div className="flex items-center gap-3">
         <Button variant="ghost" size="icon-sm" asChild>
-          <Link to="/memories" search={{ search: undefined, type: undefined, page: undefined }}><ArrowLeft className="h-4 w-4" /></Link>
+          <Link to="/memories" search={{ search: undefined, type: undefined, page: undefined }}>
+            <ArrowLeft className="h-4 w-4" />
+          </Link>
         </Button>
         <div className="flex-1 flex items-center gap-2">
           <Badge variant="secondary">{memory.type}</Badge>
@@ -93,7 +107,9 @@ function MemoryDetailPage() {
             </Button>
             <Button
               size="sm"
-              onClick={() => updateMutation.mutate({ content, relevanceScore: relevance, shareable })}
+              onClick={() =>
+                updateMutation.mutate({ content, relevanceScore: relevance, shareable })
+              }
               disabled={updateMutation.isPending}
             >
               <Save className="h-4 w-4" /> {updateMutation.isPending ? "Saving..." : "Save"}
@@ -107,7 +123,9 @@ function MemoryDetailPage() {
       </div>
 
       <Card>
-        <CardHeader><CardTitle className="text-sm">Content</CardTitle></CardHeader>
+        <CardHeader>
+          <CardTitle className="text-sm">Content</CardTitle>
+        </CardHeader>
         <CardContent>
           {editing ? (
             <textarea
@@ -124,7 +142,9 @@ function MemoryDetailPage() {
       {editing ? (
         <div className="grid gap-3 sm:grid-cols-3">
           <Card>
-            <CardHeader><CardTitle className="text-sm">Relevance Score</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle className="text-sm">Relevance Score</CardTitle>
+            </CardHeader>
             <CardContent>
               <input
                 type="range"
@@ -139,7 +159,9 @@ function MemoryDetailPage() {
             </CardContent>
           </Card>
           <Card>
-            <CardHeader><CardTitle className="text-sm">Shareable</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle className="text-sm">Shareable</CardTitle>
+            </CardHeader>
             <CardContent>
               <label className="flex items-center gap-2">
                 <input
@@ -147,19 +169,25 @@ function MemoryDetailPage() {
                   checked={shareable === 1}
                   onChange={(e) => setShareable(e.target.checked ? 1 : 0)}
                 />
-                <span className="text-sm">{shareable ? "Shareable across channels" : "Private"}</span>
+                <span className="text-sm">
+                  {shareable ? "Shareable across channels" : "Private"}
+                </span>
               </label>
             </CardContent>
           </Card>
           <Card>
-            <CardHeader><CardTitle className="text-sm">Related Users</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle className="text-sm">Related Users</CardTitle>
+            </CardHeader>
             <CardContent>
               {relatedUsers.length === 0 ? (
                 <span className="text-sm text-muted-foreground">None</span>
               ) : (
                 <div className="flex flex-wrap gap-1">
                   {relatedUsers.map((u) => (
-                    <Badge key={u.slackUserId} variant="outline">{u.displayName}</Badge>
+                    <Badge key={u.slackUserId} variant="outline">
+                      {u.displayName}
+                    </Badge>
                   ))}
                 </div>
               )}
@@ -170,44 +198,65 @@ function MemoryDetailPage() {
         <>
           <div className="grid gap-3 sm:grid-cols-4">
             <Card>
-              <CardHeader><CardTitle className="text-sm">Category</CardTitle></CardHeader>
+              <CardHeader>
+                <CardTitle className="text-sm">Category</CardTitle>
+              </CardHeader>
               <CardContent>
                 <Badge variant="outline">{memory.category ?? "—"}</Badge>
               </CardContent>
             </Card>
             <Card>
-              <CardHeader><CardTitle className="text-sm">Importance</CardTitle></CardHeader>
+              <CardHeader>
+                <CardTitle className="text-sm">Importance</CardTitle>
+              </CardHeader>
               <CardContent>
                 <span className="text-sm font-mono">{memory.importance ?? "—"}</span>
               </CardContent>
             </Card>
             <Card>
-              <CardHeader><CardTitle className="text-sm">Relevance Score</CardTitle></CardHeader>
+              <CardHeader>
+                <CardTitle className="text-sm">Relevance Score</CardTitle>
+              </CardHeader>
               <CardContent>
-                <span className="text-sm font-mono">{memory.relevanceScore?.toFixed(2) ?? "—"}</span>
+                <span className="text-sm font-mono">
+                  {memory.relevanceScore?.toFixed(2) ?? "—"}
+                </span>
               </CardContent>
             </Card>
             <Card>
-              <CardHeader><CardTitle className="text-sm">Status</CardTitle></CardHeader>
+              <CardHeader>
+                <CardTitle className="text-sm">Status</CardTitle>
+              </CardHeader>
               <CardContent>
-                <Badge variant={memory.status === "current" ? "secondary" : "outline"}>{memory.status ?? "—"}</Badge>
+                <Badge variant={memory.status === "current" ? "secondary" : "outline"}>
+                  {memory.status ?? "—"}
+                </Badge>
               </CardContent>
             </Card>
           </div>
           <div className="grid gap-3 sm:grid-cols-3">
             <Card>
-              <CardHeader><CardTitle className="text-sm">Shareable</CardTitle></CardHeader>
+              <CardHeader>
+                <CardTitle className="text-sm">Shareable</CardTitle>
+              </CardHeader>
               <CardContent>
-                <span className="text-sm">{memory.shareable ? "Shareable across channels" : "Private"}</span>
+                <span className="text-sm">
+                  {memory.shareable ? "Shareable across channels" : "Private"}
+                </span>
               </CardContent>
             </Card>
             <Card>
-              <CardHeader><CardTitle className="text-sm">Source</CardTitle></CardHeader>
+              <CardHeader>
+                <CardTitle className="text-sm">Source</CardTitle>
+              </CardHeader>
               <CardContent>
                 {memory.sourceThread ? (
                   <Link
                     to="/conversations/threads/$channelId/$threadTs"
-                    params={{ channelId: memory.sourceThread.channelId, threadTs: memory.sourceThread.threadTs }}
+                    params={{
+                      channelId: memory.sourceThread.channelId,
+                      threadTs: memory.sourceThread.threadTs,
+                    }}
                     search={{ highlight: memory.sourceThread.messageAt }}
                     className="text-sm text-primary hover:underline"
                   >
@@ -221,14 +270,18 @@ function MemoryDetailPage() {
               </CardContent>
             </Card>
             <Card>
-              <CardHeader><CardTitle className="text-sm">Related Users</CardTitle></CardHeader>
+              <CardHeader>
+                <CardTitle className="text-sm">Related Users</CardTitle>
+              </CardHeader>
               <CardContent>
                 {relatedUsers.length === 0 ? (
                   <span className="text-sm text-muted-foreground">None</span>
                 ) : (
                   <div className="flex flex-wrap gap-1">
                     {relatedUsers.map((u) => (
-                      <Badge key={u.slackUserId} variant="outline">{u.displayName}</Badge>
+                      <Badge key={u.slackUserId} variant="outline">
+                        {u.displayName}
+                      </Badge>
                     ))}
                   </div>
                 )}
@@ -241,7 +294,9 @@ function MemoryDetailPage() {
       {(memory.linkedEntities ?? []).length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-sm">Linked Entities ({memory.linkedEntities.length})</CardTitle>
+            <CardTitle className="text-sm">
+              Linked Entities ({memory.linkedEntities.length})
+            </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             <Table>
@@ -257,11 +312,17 @@ function MemoryDetailPage() {
                 {memory.linkedEntities.map((e) => (
                   <TableRow key={e.entityId}>
                     <TableCell className="font-medium">
-                      <Link to="/memories/entities/$id" params={{ id: e.entityId }} className="hover:underline">
+                      <Link
+                        to="/memories/entities/$id"
+                        params={{ id: e.entityId }}
+                        className="hover:underline"
+                      >
                         {e.canonicalName}
                       </Link>
                     </TableCell>
-                    <TableCell><Badge variant="secondary">{e.type}</Badge></TableCell>
+                    <TableCell>
+                      <Badge variant="secondary">{e.type}</Badge>
+                    </TableCell>
                     <TableCell className="text-sm text-muted-foreground">{e.role ?? "—"}</TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {e.summary ? truncate(e.summary, 90) : "—"}

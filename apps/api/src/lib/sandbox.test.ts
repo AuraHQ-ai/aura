@@ -166,9 +166,7 @@ describe("getSandboxEnvs env allowlist (scoped job execution)", () => {
   beforeEach(() => {
     queueDbResults();
     vi.clearAllMocks();
-    resolveUserCredentialsMock.mockResolvedValue(
-      new Set(rows.map((row) => row.name)),
-    );
+    resolveUserCredentialsMock.mockResolvedValue(new Set(rows.map((row) => row.name)));
   });
 
   it("filters to allowlisted vars plus core infra when the execution context carries an allowlist", async () => {
@@ -269,10 +267,9 @@ describe("filterEnvsByAllowlist", () => {
   });
 
   it("narrows only — allowlisted names not in the env map are not added", () => {
-    const filtered = filterEnvsByAllowlist(
-      { E2B_API_KEY: "e2b-secret" },
-      ["SOME_TOKEN_THE_CALLER_CANNOT_ACCESS"],
-    );
+    const filtered = filterEnvsByAllowlist({ E2B_API_KEY: "e2b-secret" }, [
+      "SOME_TOKEN_THE_CALLER_CANNOT_ACCESS",
+    ]);
 
     expect(filtered).toEqual({ E2B_API_KEY: "e2b-secret" });
   });
@@ -338,9 +335,7 @@ describe("filterCredentialNamesByEnvAllowlist (issue #1312)", () => {
     };
     const userCredentials = new Set(["google_bq_credentials", "tavily_api_key"]);
 
-    const scoped = filterCredentialNamesByEnvAllowlist(userCredentials, [
-      "TAVILY_API_KEY",
-    ]);
+    const scoped = filterCredentialNamesByEnvAllowlist(userCredentials, ["TAVILY_API_KEY"]);
     const filtered = filterToolsByCredentials(tools, scoped);
 
     // bq_execute_query's backing credential is outside the allowlist → omitted.
@@ -383,14 +378,10 @@ describe("getSandboxEnvNames", () => {
         sandboxEnvName: "LINEAR_API_KEY",
       },
     ];
-    queueDbResults(
-      [{ credentialId: "granted" }],
-      rows,
-      [
-        { slackUserId: "U_CALLER", displayName: "Callan Corrado" },
-        { slackUserId: "U_OTHER", displayName: "Nia Otieno" },
-      ],
-    );
+    queueDbResults([{ credentialId: "granted" }], rows, [
+      { slackUserId: "U_CALLER", displayName: "Callan Corrado" },
+      { slackUserId: "U_OTHER", displayName: "Nia Otieno" },
+    ]);
     resolveUserCredentialsMock.mockResolvedValue(
       new Set(["github_token", "notion_api_key", "linear_api_key"]),
     );
@@ -478,9 +469,7 @@ describe("getSandboxEnvNames", () => {
       },
     ];
     queueDbResults([], rows);
-    resolveUserCredentialsMock.mockResolvedValue(
-      new Set(["member_token", "power_token"]),
-    );
+    resolveUserCredentialsMock.mockResolvedValue(new Set(["member_token", "power_token"]));
 
     await expect(getSandboxEnvNames("U_CALLER")).resolves.toEqual([
       { envName: "MEMBER_TOKEN", scope: "member", ownerDisplayName: null },
@@ -510,11 +499,9 @@ describe("getSandboxEnvNames", () => {
         scope: "member",
         sandboxEnvName: null,
       };
-      queueDbResults(
-        [],
-        callerFirst ? [callerRow, sharedRow] : [sharedRow, callerRow],
-        [{ slackUserId: "U_CALLER", displayName: "Callan Corrado" }],
-      );
+      queueDbResults([], callerFirst ? [callerRow, sharedRow] : [sharedRow, callerRow], [
+        { slackUserId: "U_CALLER", displayName: "Callan Corrado" },
+      ]);
       resolveUserCredentialsMock.mockResolvedValue(new Set(["github_token"]));
 
       await expect(getSandboxEnvNames("U_CALLER")).resolves.toEqual([
@@ -578,9 +565,7 @@ describe("ensureAuraTools", () => {
    * are exactly why issue #1363 was never caught by tests.
    */
   class FakeCommandExitError extends Error {
-    constructor(
-      private readonly result: { exitCode: number; stdout: string; stderr: string },
-    ) {
+    constructor(private readonly result: { exitCode: number; stdout: string; stderr: string }) {
       super(`exit status ${result.exitCode}`);
       this.name = "CommandExitError";
     }
@@ -599,7 +584,11 @@ describe("ensureAuraTools", () => {
     exitCode = 0,
     stdout = "",
     stderr = "",
-  }: { exitCode?: number; stdout?: string; stderr?: string }) {
+  }: {
+    exitCode?: number;
+    stdout?: string;
+    stderr?: string;
+  }) {
     if (exitCode !== 0) {
       throw new FakeCommandExitError({ exitCode, stdout, stderr });
     }
@@ -669,9 +658,7 @@ describe("ensureAuraTools", () => {
 
     await ensureAuraTools(makeSandbox(run), { GITHUB_TOKEN: "token" });
 
-    const cloneCall = run.mock.calls.find(([command]) =>
-      command.startsWith("git clone"),
-    );
+    const cloneCall = run.mock.calls.find(([command]) => command.startsWith("git clone"));
     expect(cloneCall).toBeDefined();
     expect(cloneCall![0]).toContain(
       'git clone --depth=1 "https://x-access-token:$GITHUB_TOKEN@github.com/acme/tools.git"',
@@ -778,18 +765,14 @@ describe("ensureAuraTools", () => {
   });
 
   it("records an error and issues no commands when GITHUB_TOKEN is unavailable", async () => {
-    const run = vi.fn(async (_command: string, _options?: unknown) =>
-      commandResult({}),
-    );
+    const run = vi.fn(async (_command: string, _options?: unknown) => commandResult({}));
 
     await ensureAuraTools(makeSandbox(run), {});
 
     expect(run).not.toHaveBeenCalled();
-    expect(recordErrorMock).toHaveBeenCalledWith(
-      "sandbox.ensureAuraTools",
-      expect.any(Error),
-      { toolsRepo: "realadvisor/aura-tools" },
-    );
+    expect(recordErrorMock).toHaveBeenCalledWith("sandbox.ensureAuraTools", expect.any(Error), {
+      toolsRepo: "realadvisor/aura-tools",
+    });
   });
 
   it("records an error but does not throw when clone fails", async () => {
