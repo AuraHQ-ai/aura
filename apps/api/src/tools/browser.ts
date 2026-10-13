@@ -119,7 +119,7 @@ export function createBrowserTools(context?: ScheduleContext, client?: WebClient
             "Extract content from the page. 'text' = innerText, 'accessibility' = a11y tree, 'html' = raw HTML.",
           ),
         headers: z
-          .record(z.string())
+          .record(z.string(), z.string())
           .optional()
           .describe("Custom HTTP headers to set before navigation."),
         stealth: z

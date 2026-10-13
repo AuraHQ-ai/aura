@@ -938,7 +938,7 @@ export function createSandboxTools(context?: ScheduleContext) {
             "Working directory for the command, e.g. '/home/user/repo'. Defaults to /home/user.",
           ),
         env: z
-          .record(z.string())
+          .record(z.string(), z.string())
           .optional()
           .describe(
             "Additional environment variables for this command. Values are injected into the sandbox process and should not be echoed.",

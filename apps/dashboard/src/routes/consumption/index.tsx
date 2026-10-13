@@ -262,8 +262,10 @@ function ConsumptionPage() {
                     borderRadius: "8px",
                     fontSize: "12px",
                   }}
-                  formatter={(value: number, name: string) =>
-                    name === "Cost" ? [chartUsdFormatter.format(value), name] : [value.toLocaleString(), name]
+                  formatter={(value, name) =>
+                    name === "Cost"
+                      ? [chartUsdFormatter.format(Number(value)), name]
+                      : [Number(value).toLocaleString(), name]
                   }
                 />
                 <Area

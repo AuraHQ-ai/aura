@@ -59,7 +59,7 @@ describe("defineTool strict + inputExamples forwarding", () => {
   it("forwards strict: false into the tool() config", () => {
     const t = defineTool({
       description: "a tool with a strict-incompatible schema",
-      inputSchema: z.object({ fields: z.record(z.any()) }),
+      inputSchema: z.object({ fields: z.record(z.string(), z.any()) }),
       strict: false,
       execute: async () => ({ ok: true }),
     });
