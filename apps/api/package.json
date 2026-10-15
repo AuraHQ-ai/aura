@@ -12,6 +12,7 @@
     "start": "node dist/index.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:workspace-isolation": "bash scripts/workspace-isolation-test.sh",
     "content:index": "tsx scripts/index-content.ts",
     "content:index:no-embeddings": "tsx scripts/index-content.ts --skip-embeddings",
     "backfill:canonical-model-ids": "tsx scripts/backfill-canonical-model-ids.ts",
@@ -74,13 +75,17 @@
     "turndown": "^7.2.4",
     "undici": "^7.30.0",
     "workflow": "^5.2.1",
+    "ws": "^8.21.3",
     "xlsx": "^0.18.5",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^24.19.2",
+    "@types/pg": "^8.23.1",
     "@types/react": "19.3.0",
     "@types/turndown": "^5.0.6",
+    "@types/ws": "^8.18.1",
+    "pg": "^8.23.0",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^5.0.4"
