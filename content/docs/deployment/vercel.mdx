@@ -28,7 +28,9 @@ The API and the dashboard deploy together as **one** Vercel project; only `apps/
 
 ## Continuous integration
 
-Pull requests and pushes to `main` run `.github/workflows/ci.yml`. The `ci` job installs with the frozen pnpm lockfile, builds `@aura/db`, runs `pnpm typecheck`, runs the API test suite, and finishes with the Vercel-preset build (`pnpm --filter aura-api build:vercel`). The Vercel build is deliberately the final gate because it exercises the production bundling path.
+Pull requests and pushes to `main` run `.github/workflows/ci.yml`. The `ci` job installs with the frozen pnpm lockfile, runs the Biome lint + format gate (`pnpm exec biome ci .`; errors and unformatted files fail the job, warnings do not), builds `@aura/db`, runs `pnpm typecheck`, runs the API test suite, and finishes with the Vercel-preset build (`pnpm --filter aura-api build:vercel`). The Vercel build is deliberately the final gate because it exercises the production bundling path.
+
+Locally, `pnpm check` runs Biome and `pnpm check:fix` auto-fixes lint and formatting issues. The `.husky/pre-push` hook runs the same Biome check plus the API and dashboard typechecks, so run `pnpm check:fix` if a push is rejected.
 
 ## Architecture
 
