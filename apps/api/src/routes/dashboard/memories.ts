@@ -19,6 +19,9 @@ const memoryColumns = {
   relevanceScore: memories.relevanceScore,
   shareable: memories.shareable,
   status: memories.status,
+  factClass: memories.factClass,
+  validFrom: memories.validFrom,
+  validUntil: memories.validUntil,
   createdAt: memories.createdAt,
   updatedAt: memories.updatedAt,
 } as const;

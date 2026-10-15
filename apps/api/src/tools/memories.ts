@@ -46,6 +46,7 @@ export function createMemoryTools(context?: ScheduleContext) {
               supersedes_memory_id: memory.supersedesMemoryId,
               superseded_by_memory_id: memory.supersededByMemoryId,
               superseded_at: memory.supersededAt?.toISOString() ?? null,
+              fact_class: memory.factClass ?? null,
               valid_from: memory.validFrom?.toISOString() ?? null,
               valid_until: memory.validUntil?.toISOString() ?? null,
               created_at: memory.createdAt.toISOString(),
