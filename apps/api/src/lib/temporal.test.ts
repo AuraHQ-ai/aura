@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { relativeTime, parseRelativeTime, formatTimestamp } from "./temporal.js";
+import { relativeTime, parseRelativeTime, formatTimestamp, parseAbsoluteDate } from "./temporal.js";
 
 describe("relativeTime", () => {
   const now = new Date("2026-03-03T12:00:00Z");
@@ -54,9 +54,9 @@ describe("relativeTime", () => {
     expect(relativeTime(date, now)).toBe("back in December");
   });
 
-  it("returns 'in the future' for future dates", () => {
+  it("clamps timestamps after `now` instead of saying 'in the future'", () => {
     const date = new Date(now.getTime() + 60 * 60 * 1000);
-    expect(relativeTime(date, now)).toBe("in the future");
+    expect(relativeTime(date, now)).toBe("just now");
   });
 });
 
@@ -122,5 +122,25 @@ describe("formatTimestamp", () => {
 
   it("returns original string for invalid input", () => {
     expect(formatTimestamp("not-a-date")).toBe("not-a-date");
+  });
+});
+
+describe("parseAbsoluteDate", () => {
+  it("parses YYYY-MM-DD as UTC midnight", () => {
+    expect(parseAbsoluteDate("2024-01-15")?.toISOString()).toBe("2024-01-15T00:00:00.000Z");
+  });
+
+  it("parses a full ISO-8601 datetime", () => {
+    expect(parseAbsoluteDate("2024-01-15T12:30:00.000Z")?.toISOString()).toBe(
+      "2024-01-15T12:30:00.000Z",
+    );
+  });
+
+  it("rejects relative phrases and free text so they cannot backdate a memory", () => {
+    expect(parseAbsoluteDate("yesterday")).toBeNull();
+    expect(parseAbsoluteDate("back in January")).toBeNull();
+    expect(parseAbsoluteDate("booked recently")).toBeNull();
+    expect(parseAbsoluteDate("")).toBeNull();
+    expect(parseAbsoluteDate(null)).toBeNull();
   });
 });
