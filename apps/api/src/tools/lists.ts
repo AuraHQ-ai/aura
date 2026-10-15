@@ -15,7 +15,7 @@ export function createListWriteTools(client: WebClient) {
       inputSchema: z.object({
         list_id: z.string().describe("The ID of the Slack List"),
         fields: z
-          .record(z.any())
+          .record(z.string(), z.any())
           .optional()
           .describe(
             "Column values as a JSON object of column_id -> value pairs. " +
@@ -30,10 +30,7 @@ export function createListWriteTools(client: WebClient) {
             params.initial_fields = fields;
           }
 
-          const result = await (client as any).apiCall(
-            "slackLists.items.create",
-            params,
-          );
+          const result = await (client as any).apiCall("slackLists.items.create", params);
 
           if (!result.ok) {
             logger.error("create_slack_list_item API error", {
@@ -68,25 +65,28 @@ export function createListWriteTools(client: WebClient) {
           };
         }
       },
-      slack: { status: "Creating list item...", output: (r) => r.ok === false ? r.error : 'Item created' },
+      slack: {
+        status: "Creating list item...",
+        output: (r) => (r.ok === false ? r.error : "Item created"),
+      },
     }),
 
     update_slack_list_item: defineTool({
       description:
         "Update fields on an existing item (row) in a Slack List. Use this to change title, status, assignee, severity, etc. " +
         "IMPORTANT: First call get_slack_list_item to see the exact column IDs and value formats. " +
-        "Values can be: a string (for text fields), an array of strings (for select/status fields like [\"done\"]), " +
-        "an array of user IDs (for user fields like [\"U01234\"]), or a typed object like {select: [\"done\"]} for explicit control. " +
-        "Date fields MUST use typed objects: {date: [\"2025-09-20\"]}.",
+        'Values can be: a string (for text fields), an array of strings (for select/status fields like ["done"]), ' +
+        'an array of user IDs (for user fields like ["U01234"]), or a typed object like {select: ["done"]} for explicit control. ' +
+        'Date fields MUST use typed objects: {date: ["2025-09-20"]}.',
       inputSchema: z.object({
         list_id: z.string().describe("The ID of the Slack List"),
         item_id: z.string().describe("The ID of the item/row to update"),
         fields: z
-          .record(z.any())
+          .record(z.string(), z.any())
           .describe(
             "Column values to update as a flat object: { column_id: value, ... }. " +
-              "Simple formats: string for text, [\"value\"] for select/status, [\"U01234\"] for users. " +
-              "Or use typed objects: {select: [\"done\"]}, {rich_text: [...]}, {user: [\"U01234\"]}, {date: [\"2025-09-20\"]}.",
+              'Simple formats: string for text, ["value"] for select/status, ["U01234"] for users. ' +
+              'Or use typed objects: {select: ["done"]}, {rich_text: [...]}, {user: ["U01234"]}, {date: ["2025-09-20"]}.',
           ),
       }),
       // fields is z.record(z.any()) — free-form keys/values can't be expressed
@@ -114,8 +114,15 @@ export function createListWriteTools(client: WebClient) {
       ],
       execute: async ({ list_id, item_id, fields }) => {
         try {
-
-          const TYPED_KEYS = new Set(["select", "rich_text", "user", "date", "timestamp", "number", "attachment"]);
+          const TYPED_KEYS = new Set([
+            "select",
+            "rich_text",
+            "user",
+            "date",
+            "timestamp",
+            "number",
+            "attachment",
+          ]);
 
           const cells = Object.entries(fields).map(([column_id, value]) => {
             const base = { column_id, row_id: item_id };
@@ -175,13 +182,10 @@ export function createListWriteTools(client: WebClient) {
             return { ...base, value };
           });
 
-          const result = await (client as any).apiCall(
-            "slackLists.items.update",
-            {
-              list_id,
-              cells,
-            },
-          );
+          const result = await (client as any).apiCall("slackLists.items.update", {
+            list_id,
+            cells,
+          });
 
           if (!result.ok) {
             logger.error("update_slack_list_item API error", {
@@ -194,8 +198,7 @@ export function createListWriteTools(client: WebClient) {
             return {
               ok: false,
               error: `Failed to update list item: ${result.error || "unknown"}`,
-              detail:
-                result.response_metadata?.messages?.join("; ") || undefined,
+              detail: result.response_metadata?.messages?.join("; ") || undefined,
             };
           }
 
@@ -217,7 +220,10 @@ export function createListWriteTools(client: WebClient) {
           };
         }
       },
-      slack: { status: "Updating list item...", output: (r) => r.ok === false ? r.error : 'Item updated' },
+      slack: {
+        status: "Updating list item...",
+        output: (r) => (r.ok === false ? r.error : "Item updated"),
+      },
     }),
 
     delete_slack_list_item: defineTool({
@@ -228,13 +234,10 @@ export function createListWriteTools(client: WebClient) {
       }),
       execute: async ({ list_id, item_id }) => {
         try {
-          const result = await (client as any).apiCall(
-            "slackLists.items.delete",
-            {
-              list_id,
-              id: item_id,
-            },
-          );
+          const result = await (client as any).apiCall("slackLists.items.delete", {
+            list_id,
+            id: item_id,
+          });
 
           if (!result.ok) {
             return {
@@ -260,7 +263,10 @@ export function createListWriteTools(client: WebClient) {
           };
         }
       },
-      slack: { status: "Deleting list item...", output: (r) => r.ok === false ? r.error : 'Item deleted' },
+      slack: {
+        status: "Deleting list item...",
+        output: (r) => (r.ok === false ? r.error : "Item deleted"),
+      },
     }),
   };
 }

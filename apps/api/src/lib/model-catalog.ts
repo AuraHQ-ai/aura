@@ -1,11 +1,4 @@
-import {
-  and,
-  asc,
-  eq,
-  inArray,
-  isNull,
-  sql,
-} from "drizzle-orm";
+import { and, asc, eq, inArray, isNull, sql } from "drizzle-orm";
 import {
   ModelCapabilities as ModelCapabilitiesSchema,
   type ModelCapabilities as StoredModelCapabilities,
@@ -15,13 +8,7 @@ import {
 import { db } from "../db/client.js";
 import { logger } from "./logger.js";
 
-export const MODEL_CATEGORIES = [
-  "main",
-  "fast",
-  "medium",
-  "embedding",
-  "escalation",
-] as const;
+export const MODEL_CATEGORIES = ["main", "fast", "medium", "embedding", "escalation"] as const;
 
 export type ModelCategory = (typeof MODEL_CATEGORIES)[number];
 
@@ -120,9 +107,7 @@ function errorIncludes(error: unknown, needle: string): boolean {
   return String(error).includes(needle);
 }
 
-function inferStaticModelCapabilities(
-  gatewayModel: GatewayModel,
-): StoredModelCapabilities | null {
+function inferStaticModelCapabilities(gatewayModel: GatewayModel): StoredModelCapabilities | null {
   const tags = getGatewayModelTags(gatewayModel);
   if (!hasReasoningTag(tags)) return null;
 
@@ -159,7 +144,7 @@ async function probeAnthropicThinkingMode(
     });
     return { provider: "anthropic", thinkingMode: "enabled" };
   } catch (error) {
-    if (errorIncludes(error, "\"thinking.type.enabled\" is not supported")) {
+    if (errorIncludes(error, '"thinking.type.enabled" is not supported')) {
       return { provider: "anthropic", thinkingMode: "adaptive" };
     }
     if (errorIncludes(error, "adaptive thinking is not supported on this model")) {
@@ -181,9 +166,7 @@ async function seedModelCapabilitiesForSyncedModels(
   const modelIds = gatewayModels.map((model) => model.id);
   if (modelIds.length === 0) return;
 
-  const gatewayModelById = new Map(
-    gatewayModels.map((model) => [model.id, model]),
-  );
+  const gatewayModelById = new Map(gatewayModels.map((model) => [model.id, model]));
   const rows = await db
     .select({
       modelId: modelCatalog.modelId,
@@ -241,9 +224,7 @@ function normalizePricingKey(key: string): string {
   return normalized;
 }
 
-function toPricePerMillion(
-  rawPrice: string | number | null | undefined,
-): string | null {
+function toPricePerMillion(rawPrice: string | number | null | undefined): string | null {
   if (rawPrice == null) return null;
   const numeric = Number(rawPrice);
   if (!Number.isFinite(numeric) || numeric < 0) return null;
@@ -256,7 +237,7 @@ async function fetchGatewayModels(): Promise<GatewayModel[]> {
     throw new Error(`Gateway models fetch failed: ${response.status}`);
   }
 
-  const payload = await response.json() as { data?: GatewayModel[] };
+  const payload = (await response.json()) as { data?: GatewayModel[] };
   if (!Array.isArray(payload.data)) {
     throw new Error("Gateway models payload missing data array");
   }
@@ -280,18 +261,11 @@ export async function syncModelCatalogFromGateway(
           provider: providerFromModelId(gatewayModel.id),
           name: gatewayModel.name ?? gatewayModel.id,
           description:
-            typeof gatewayModel.description === "string"
-              ? gatewayModel.description
-              : null,
+            typeof gatewayModel.description === "string" ? gatewayModel.description : null,
           type: gatewayModel.type ?? "unknown",
           contextWindow:
-            typeof gatewayModel.context_window === "number"
-              ? gatewayModel.context_window
-              : null,
-          maxTokens:
-            typeof gatewayModel.max_tokens === "number"
-              ? gatewayModel.max_tokens
-              : null,
+            typeof gatewayModel.context_window === "number" ? gatewayModel.context_window : null,
+          maxTokens: typeof gatewayModel.max_tokens === "number" ? gatewayModel.max_tokens : null,
           tags: getGatewayModelTags(gatewayModel),
           capabilities: inferStaticModelCapabilities(gatewayModel),
           rawPricing: gatewayModel.pricing ?? null,
@@ -342,9 +316,7 @@ export async function syncModelCatalogFromGateway(
         )
     : [];
 
-  const activeByKey = new Map(
-    activeRows.map((row) => [`${row.modelId}:${row.tokenType}`, row]),
-  );
+  const activeByKey = new Map(activeRows.map((row) => [`${row.modelId}:${row.tokenType}`, row]));
 
   for (const model of gatewayModels) {
     const pricingEntries = Object.entries(model.pricing ?? {})
@@ -507,12 +479,7 @@ export async function getModelCapabilities(
       capabilities: modelCatalog.capabilities,
     })
     .from(modelCatalog)
-    .where(
-      and(
-        eq(modelCatalog.workspaceId, workspaceId),
-        eq(modelCatalog.modelId, modelId),
-      ),
-    )
+    .where(and(eq(modelCatalog.workspaceId, workspaceId), eq(modelCatalog.modelId, modelId)))
     .limit(1);
 
   const tags = Array.isArray(row?.tags) ? row!.tags : [];
@@ -568,12 +535,7 @@ export async function updateModelCapabilities(
       capabilities: parsed,
       updatedAt: new Date(),
     })
-    .where(
-      and(
-        eq(modelCatalog.workspaceId, workspaceId),
-        eq(modelCatalog.modelId, modelId),
-      ),
-    )
+    .where(and(eq(modelCatalog.workspaceId, workspaceId), eq(modelCatalog.modelId, modelId)))
     .returning({ modelId: modelCatalog.modelId });
 
   capabilityCache.delete(`${workspaceId}::${modelId}`);
@@ -589,4 +551,3 @@ export async function updateModelCapabilities(
 
   return true;
 }
-

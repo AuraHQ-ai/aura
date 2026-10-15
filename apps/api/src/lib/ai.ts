@@ -11,10 +11,7 @@ import { getSetting } from "./settings.js";
 import { type ModelCategory, updateModelCapabilities } from "./model-catalog.js";
 import { logger } from "./logger.js";
 import { recordError } from "./metrics.js";
-import {
-  hasDeferredLoading,
-  withoutDeferredLoading,
-} from "../tools/deferred-loading.js";
+import { hasDeferredLoading, withoutDeferredLoading } from "../tools/deferred-loading.js";
 import {
   getProviderThinkingOptions,
   resolveProviderThinkingOptions,
@@ -51,17 +48,14 @@ import type { ModelCapabilities } from "@aura/db/schema";
  * of truth for the fallback path.
  */
 export const LAST_RESORT_MODELS: Record<ModelCategory, string> = {
-  main:      "anthropic/claude-sonnet-4.5",
-  fast:      "anthropic/claude-haiku-4.5",
-  medium:    "anthropic/claude-sonnet-4.5",
+  main: "anthropic/claude-sonnet-4.5",
+  fast: "anthropic/claude-haiku-4.5",
+  medium: "anthropic/claude-sonnet-4.5",
   embedding: "openai/text-embedding-3-small",
-  escalation:"anthropic/claude-opus-4.5",
+  escalation: "anthropic/claude-opus-4.5",
 };
 
-async function resolveModelId(
-  settingKey: string,
-  category: ModelCategory,
-): Promise<string> {
+async function resolveModelId(settingKey: string, category: ModelCategory): Promise<string> {
   const override = await getSetting(settingKey);
   if (override) return override;
 
@@ -110,10 +104,8 @@ async function getDirectAnthropicModel(modelId: string) {
   return createAnthropic({ apiKey: process.env.ANTHROPIC_API_KEY })(modelId);
 }
 
-const ENABLED_THINKING_UNSUPPORTED =
-  "\"thinking.type.enabled\" is not supported for this model";
-const ADAPTIVE_THINKING_UNSUPPORTED =
-  "adaptive thinking is not supported on this model";
+const ENABLED_THINKING_UNSUPPORTED = '"thinking.type.enabled" is not supported for this model';
+const ADAPTIVE_THINKING_UNSUPPORTED = "adaptive thinking is not supported on this model";
 
 function errorIncludes(error: unknown, needle: string): boolean {
   if (error instanceof Error) {
@@ -137,9 +129,7 @@ function errorIncludes(error: unknown, needle: string): boolean {
   return String(error).includes(needle);
 }
 
-function getSelfHealedAnthropicCapabilities(
-  error: unknown,
-): ModelCapabilities | null {
+function getSelfHealedAnthropicCapabilities(error: unknown): ModelCapabilities | null {
   if (errorIncludes(error, ENABLED_THINKING_UNSUPPORTED)) {
     return { provider: "anthropic", thinkingMode: "adaptive" };
   }
@@ -175,9 +165,7 @@ function mergeProviderOptions(
   return merged;
 }
 
-type SelfHealRetryResult<T> =
-  | { healed: false }
-  | { healed: true; result: T };
+type SelfHealRetryResult<T> = { healed: false } | { healed: true; result: T };
 
 async function retryWithSelfHealedThinking<T>(opts: {
   error: unknown;
@@ -199,9 +187,7 @@ async function retryWithSelfHealedThinking<T>(opts: {
   let correctedProviderOptions = await getProviderThinkingOptions(
     opts.gatewayId,
     budgetTokens,
-  ).catch(() =>
-    resolveProviderThinkingOptions(opts.gatewayId, capabilities, budgetTokens),
-  );
+  ).catch(() => resolveProviderThinkingOptions(opts.gatewayId, capabilities, budgetTokens));
 
   if (Object.keys(correctedProviderOptions).length === 0) {
     correctedProviderOptions = resolveProviderThinkingOptions(
@@ -438,9 +424,7 @@ function gatewayFallbackMiddleware(
       try {
         return await doGenerate();
       } catch (error) {
-        const healed = await retryWithSelfHealedThinking<
-          Awaited<ReturnType<typeof doGenerate>>
-        >({
+        const healed = await retryWithSelfHealedThinking<Awaited<ReturnType<typeof doGenerate>>>({
           error,
           gatewayId,
           params,
@@ -473,10 +457,9 @@ function gatewayFallbackMiddleware(
         if (materialized.healed) return materialized.result;
 
         if (GatewayAuthenticationError.isInstance(error)) {
-          logger.warn(
-            "Gateway auth failed, falling back to direct Anthropic API",
-            { model: directModelId },
-          );
+          logger.warn("Gateway auth failed, falling back to direct Anthropic API", {
+            model: directModelId,
+          });
           const fallback = await getDirectAnthropicModel(directModelId);
           return await fallback.doGenerate(params);
         }
@@ -487,14 +470,11 @@ function gatewayFallbackMiddleware(
       try {
         return await doStream();
       } catch (error) {
-        const healed = await retryWithSelfHealedThinking<
-          Awaited<ReturnType<typeof doStream>>
-        >({
+        const healed = await retryWithSelfHealedThinking<Awaited<ReturnType<typeof doStream>>>({
           error,
           gatewayId,
           params,
-          retry: (retryParams) =>
-            gatewayModel.doStream(retryParams) as ReturnType<typeof doStream>,
+          retry: (retryParams) => gatewayModel.doStream(retryParams) as ReturnType<typeof doStream>,
         });
         if (healed.healed) return healed.result;
 
@@ -504,28 +484,26 @@ function gatewayFallbackMiddleware(
           error,
           gatewayId,
           params,
-          retry: (retryParams) =>
-            gatewayModel.doStream(retryParams) as ReturnType<typeof doStream>,
+          retry: (retryParams) => gatewayModel.doStream(retryParams) as ReturnType<typeof doStream>,
         });
         if (strippedField.healed) return strippedField.result;
 
-        const materialized = await retryWithMaterializedTools<
-          Awaited<ReturnType<typeof doStream>>
-        >({
-          error,
-          gatewayId,
-          params,
-          retry: (retryParams) =>
-            gatewayModel.doStream(retryParams) as ReturnType<typeof doStream>,
-          onHeal: markToolSearchDegraded,
-        });
+        const materialized = await retryWithMaterializedTools<Awaited<ReturnType<typeof doStream>>>(
+          {
+            error,
+            gatewayId,
+            params,
+            retry: (retryParams) =>
+              gatewayModel.doStream(retryParams) as ReturnType<typeof doStream>,
+            onHeal: markToolSearchDegraded,
+          },
+        );
         if (materialized.healed) return materialized.result;
 
         if (GatewayAuthenticationError.isInstance(error)) {
-          logger.warn(
-            "Gateway auth failed (stream), falling back to direct Anthropic API",
-            { model: directModelId },
-          );
+          logger.warn("Gateway auth failed (stream), falling back to direct Anthropic API", {
+            model: directModelId,
+          });
           const fallback = await getDirectAnthropicModel(directModelId);
           return await fallback.doStream(params);
         }
@@ -554,10 +532,11 @@ function gatewayFallbackMiddleware(
  * fallback middleware — and every retry/fallback path inside it — only ever
  * sees params with inputExamples already stripped.
  */
-export function withAnthropicFallback(gatewayModel: WrappableModel, gatewayId: string): WrappableModel {
-  const middleware: LanguageModelMiddleware[] = [
-    addToolInputExamplesMiddleware(),
-  ];
+export function withAnthropicFallback(
+  gatewayModel: WrappableModel,
+  gatewayId: string,
+): WrappableModel {
+  const middleware: LanguageModelMiddleware[] = [addToolInputExamplesMiddleware()];
 
   const directId = toDirectAnthropicId(gatewayId);
   if (directId) {
@@ -632,10 +611,7 @@ export const JOB_MODEL_CATEGORIES = ["main", "fast", "medium", "escalation"] as 
 export type JobModelCategory = (typeof JOB_MODEL_CATEGORIES)[number];
 
 export function isJobModelCategory(value: unknown): value is JobModelCategory {
-  return (
-    typeof value === "string" &&
-    JOB_MODEL_CATEGORIES.includes(value as JobModelCategory)
-  );
+  return typeof value === "string" && JOB_MODEL_CATEGORIES.includes(value as JobModelCategory);
 }
 
 const SETTING_KEY_BY_CATEGORY: Record<JobModelCategory, string> = {
@@ -658,18 +634,6 @@ export async function getModelByCategory(category: JobModelCategory) {
   return { modelId, model: withAnthropicFallback(gatewayModel, modelId) };
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
 /**
  * Wrap a system prompt string with Anthropic cache control.
  * Returns a SystemModelMessage with providerOptions that enable ephemeral caching.
@@ -677,9 +641,9 @@ export async function getModelByCategory(category: JobModelCategory) {
  */
 export function withCacheControl(systemPrompt: string) {
   return {
-    role: 'system' as const,
+    role: "system" as const,
     content: systemPrompt,
-    providerOptions: { anthropic: { cacheControl: { type: 'ephemeral' } } },
+    providerOptions: { anthropic: { cacheControl: { type: "ephemeral" } } },
   };
 }
 
@@ -690,7 +654,7 @@ export function withCacheControl(systemPrompt: string) {
  * the three stable layers and the volatile runtime tail left uncached:
  *   1. stablePrefix (cached globally): personality + self-directive + notes index
  *      — byte-identical across every user and thread.
- *   2. environmentContext (cached per-user): capabilities + storage + deferred tools
+ *   2. environmentContext (cached per-user): capabilities + storage + mcp servers + deferred tools
  *      — "what you can do"; stable across a user's threads. Sits AHEAD of the
  *      conversation so it caches and is never stranded in the uncached tail.
  *   3. conversationContext (cached per-turn): channel + user + memories + threads
@@ -707,33 +671,36 @@ export function buildCachedSystemMessages(
   conversationContext: string,
   dynamicContext?: string,
 ) {
-  const ephemeral = { anthropic: { cacheControl: { type: 'ephemeral' } } };
-  const messages: Array<{ role: 'system'; content: string; providerOptions?: Record<string, any> }> = [
+  const ephemeral = { anthropic: { cacheControl: { type: "ephemeral" } } };
+  const messages: Array<{
+    role: "system";
+    content: string;
+    providerOptions?: Record<string, any>;
+  }> = [
     {
-      role: 'system',
+      role: "system",
       content: stablePrefix,
       providerOptions: ephemeral,
     },
   ];
   if (environmentContext) {
     messages.push({
-      role: 'system',
+      role: "system",
       content: environmentContext,
       providerOptions: ephemeral,
     });
   }
   if (conversationContext) {
     messages.push({
-      role: 'system',
+      role: "system",
       content: conversationContext,
       providerOptions: ephemeral,
     });
   }
   if (dynamicContext) {
-    messages.push({ role: 'system', content: dynamicContext });
+    messages.push({ role: "system", content: dynamicContext });
   }
   return messages;
-
 }
 
 /**

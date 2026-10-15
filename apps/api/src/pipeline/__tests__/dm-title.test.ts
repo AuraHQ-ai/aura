@@ -45,9 +45,7 @@ describe("DM thread title helpers", () => {
   });
 
   it("normalizes wrappers, whitespace, and trailing punctuation structurally", () => {
-    expect(sanitizeDmThreadTitle('  "Pipeline\ninvestigation."  ')).toBe(
-      "Pipeline investigation",
-    );
+    expect(sanitizeDmThreadTitle('  "Pipeline\ninvestigation."  ')).toBe("Pipeline investigation");
   });
 
   it("formats elided conversation context from both ends of the thread", () => {

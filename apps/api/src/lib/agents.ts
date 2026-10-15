@@ -1,4 +1,5 @@
 import { ToolLoopAgent, isStepCount, type ToolSet, type LanguageModel } from "ai";
+import { repairLeakedToolCall } from "../pipeline/sanitize-tool-markup.js";
 import type { WebClient } from "@slack/web-api";
 import type { ScheduleContext } from "@aura/db/schema";
 import {
@@ -10,8 +11,11 @@ import {
   type JobModelCategory,
 } from "./ai.js";
 import { createSlackTools } from "../tools/slack.js";
+import { closeMcpClients } from "../tools/mcp.js";
 import { getDeferredToolManifest } from "../tools/deferred.js";
-import { appendDeferredToolsBlock } from "../personality/system-prompt.js";
+import { appendDeferredToolsBlock, appendMcpServersBlock } from "../personality/system-prompt.js";
+import { listLiveMcpServersForCaller, toMcpServerHintEntry } from "./mcp-servers.js";
+import { logger } from "./logger.js";
 import {
   createInteractivePrepareStep,
   createHeadlessPrepareStep,
@@ -62,7 +66,12 @@ export async function createInteractiveAgent(
   options: InteractiveAgentOptions,
 ): Promise<InteractiveAgentResult> {
   const { modelId, model } = await getMainModel();
-  const tools = await createSlackTools(options.slackClient, options.context, modelId, options.invocationId);
+  const tools = await createSlackTools(
+    options.slackClient,
+    options.context,
+    modelId,
+    options.invocationId,
+  );
   const stepModelIds: string[] = [];
   const compactionTotals: CompactionTotals = {
     compactedToolResults: 0,
@@ -71,10 +80,9 @@ export async function createInteractiveAgent(
   // Deferred-tool manifest is environment-level ("what you can call"), so it
   // rides in the cached environment layer ahead of the conversation — not the
   // volatile runtime tail.
-  const environmentContext = appendDeferredToolsBlock(
-    options.environmentContext,
-    getDeferredToolManifest(tools),
-  ) ?? options.environmentContext;
+  const environmentContext =
+    appendDeferredToolsBlock(options.environmentContext, getDeferredToolManifest(tools)) ??
+    options.environmentContext;
   const systemMessages = buildCachedSystemMessages(
     options.stablePrefix,
     environmentContext,
@@ -86,12 +94,17 @@ export async function createInteractiveAgent(
     model,
     tools,
     instructions: systemMessages,
+    // Issue #1515: never execute a ChatML XML blob as a tool name.
+    experimental_repairToolCall: repairLeakedToolCall,
     stopWhen: isStepCount(STEP_LIMIT),
     telemetry: aiTelemetry("slack-chat", {
       modelId,
       ...(options.channelId ? { channelId: options.channelId } : {}),
       ...(options.invocationId ? { invocationId: options.invocationId } : {}),
     }),
+    onFinish: async () => {
+      await closeMcpClients(tools);
+    },
     prepareStep: createInteractivePrepareStep({
       stablePrefix: options.stablePrefix,
       environmentContext,
@@ -149,29 +162,45 @@ export interface HeadlessAgentOptions {
 export async function createHeadlessAgent(options: HeadlessAgentOptions) {
   const category: JobModelCategory = options.modelCategory ?? "medium";
   const { modelId, model } =
-    category === "main"
-      ? await getMainModel()
-      : await getModelByCategory(category);
-  const tools = await createSlackTools(options.slackClient, options.context, modelId, options.invocationId);
+    category === "main" ? await getMainModel() : await getModelByCategory(category);
+  const tools = await createSlackTools(
+    options.slackClient,
+    options.context,
+    modelId,
+    options.invocationId,
+  );
   const stepModelIds: string[] = [];
   const compactionTotals: CompactionTotals = {
     compactedToolResults: 0,
     compactionTokensSaved: 0,
   };
-  const systemPrompt = appendDeferredToolsBlock(
-    options.systemPrompt,
-    getDeferredToolManifest(tools),
-  ) ?? options.systemPrompt;
+  let systemPrompt = options.systemPrompt;
+  try {
+    const live = await listLiveMcpServersForCaller(options.context);
+    systemPrompt =
+      appendMcpServersBlock(systemPrompt, live.map(toMcpServerHintEntry)) ?? systemPrompt;
+  } catch (error) {
+    logger.warn("Failed to load MCP server hint block for headless job", {
+      error: error instanceof Error ? error.message : String(error),
+      userId: options.context?.userId,
+    });
+  }
+  systemPrompt =
+    appendDeferredToolsBlock(systemPrompt, getDeferredToolManifest(tools)) ?? systemPrompt;
 
   const agent = new ToolLoopAgent({
     model,
     tools,
     instructions: withCacheControl(systemPrompt),
+    experimental_repairToolCall: repairLeakedToolCall,
     stopWhen: isStepCount(HEADLESS_STEP_LIMIT),
     telemetry: aiTelemetry("headless-job", {
       modelId,
       ...(options.invocationId ? { invocationId: options.invocationId } : {}),
     }),
+    onFinish: async () => {
+      await closeMcpClients(tools);
+    },
     prepareStep: createHeadlessPrepareStep({
       stablePrefix: systemPrompt,
       modelId,
@@ -216,15 +245,15 @@ export interface SubagentAgentOptions {
 }
 
 export function createSubAgent(options: SubagentAgentOptions) {
-  const systemPrompt = appendDeferredToolsBlock(
-    options.systemPrompt,
-    getDeferredToolManifest(options.tools),
-  ) ?? options.systemPrompt;
+  const systemPrompt =
+    appendDeferredToolsBlock(options.systemPrompt, getDeferredToolManifest(options.tools)) ??
+    options.systemPrompt;
 
   return new ToolLoopAgent({
     model: options.model,
     tools: options.tools,
     instructions: systemPrompt,
+    experimental_repairToolCall: repairLeakedToolCall,
     stopWhen: isStepCount(options.maxSteps ?? 50),
     telemetry: aiTelemetry("subagent"),
   });

@@ -72,13 +72,9 @@ async function tryFetch(url: string, attempts = 5): Promise<Buffer | null> {
           : Math.min(30_000, 2_000 * 2 ** (attempt - 1));
       await sleep(backoff + Math.floor(Math.random() * 1_000));
     } catch (error) {
-      console.error(
-        `  ${url} -> ${String(error).slice(0, 200)}${last ? "" : " (retrying)"}`,
-      );
+      console.error(`  ${url} -> ${String(error).slice(0, 200)}${last ? "" : " (retrying)"}`);
       if (last) return null;
-      await sleep(
-        Math.min(30_000, 2_000 * 2 ** (attempt - 1)) + Math.floor(Math.random() * 1_000),
-      );
+      await sleep(Math.min(30_000, 2_000 * 2 ** (attempt - 1)) + Math.floor(Math.random() * 1_000));
     }
   }
   return null;

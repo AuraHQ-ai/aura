@@ -87,11 +87,7 @@ describe("buildStepUsages model-id fallback (issue #1325)", () => {
   const usage = { inputTokens: 1_000, outputTokens: 500, totalTokens: 1_500 };
 
   it("keeps steps whose provider response carries no modelId, pricing them via the fallback", () => {
-    const steps = buildStepUsages(
-      [{ usage, response: {} }],
-      [],
-      "anthropic/claude-sonnet-5",
-    );
+    const steps = buildStepUsages([{ usage, response: {} }], [], "anthropic/claude-sonnet-5");
 
     expect(steps).toEqual([
       {

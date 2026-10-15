@@ -21,6 +21,7 @@ import { filterToolsByCredentials, registerToolNames } from "../lib/tool.js";
 import { resolveUserCredentials } from "../lib/permissions.js";
 import { logger } from "../lib/logger.js";
 import { applyAnthropicToolDiscovery } from "./deferred.js";
+import { createMcpTools } from "./mcp.js";
 
 /**
  * Channel-agnostic tools available to every connector (Slack, Dashboard, etc.).
@@ -58,10 +59,11 @@ export async function createCoreTools(
     ...createSubagentTools(undefined, context),
     ...createScratchpadTools(crypto.randomUUID()),
     ...createMemoryTools(context),
+    ...(await createMcpTools(context)),
   };
 
   try {
-    const userCreds = preResolvedCreds ?? await resolveUserCredentials(context?.userId);
+    const userCreds = preResolvedCreds ?? (await resolveUserCredentials(context?.userId));
     const filteredTools = filterToolsByCredentials(allTools, userCreds);
     await applyAnthropicToolDiscovery(filteredTools, modelId, context);
     return registerToolNames(filteredTools);

@@ -39,6 +39,8 @@ export const db: Database = new Proxy(baseDb, {
     const delegate =
       store?.active && store.handle ? (store.handle as Record<PropertyKey, unknown>) : target;
     const value = (delegate as Record<PropertyKey, unknown>)[prop as string];
-    return typeof value === "function" ? (value as (...args: unknown[]) => unknown).bind(delegate) : value;
+    return typeof value === "function"
+      ? (value as (...args: unknown[]) => unknown).bind(delegate)
+      : value;
   },
 });

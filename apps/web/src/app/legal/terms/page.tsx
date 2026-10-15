@@ -8,17 +8,41 @@ export const metadata = {
 };
 
 export default async function TermsPage() {
-  const filePath = path.resolve(process.cwd(), "..", "..", "content", "legal", "terms-of-service.mdx");
+  const filePath = path.resolve(
+    process.cwd(),
+    "..",
+    "..",
+    "content",
+    "legal",
+    "terms-of-service.mdx",
+  );
   const source = await readFile(filePath, "utf-8");
   const content = await renderMdx(source);
 
   return (
     <div className="site-inner">
       <div style={{ padding: "64px 0 48px", borderBottom: "1px solid var(--col-border)" }}>
-        <p style={{ fontSize: "12px", fontWeight: 600, letterSpacing: "0.08em", color: "var(--text-muted)", textTransform: "uppercase", marginBottom: "12px" }}>
+        <p
+          style={{
+            fontSize: "12px",
+            fontWeight: 600,
+            letterSpacing: "0.08em",
+            color: "var(--text-muted)",
+            textTransform: "uppercase",
+            marginBottom: "12px",
+          }}
+        >
           Legal
         </p>
-        <h1 style={{ fontSize: "2rem", fontWeight: 700, letterSpacing: "-0.03em", color: "var(--text-primary)", margin: 0 }}>
+        <h1
+          style={{
+            fontSize: "2rem",
+            fontWeight: 700,
+            letterSpacing: "-0.03em",
+            color: "var(--text-primary)",
+            margin: 0,
+          }}
+        >
           Terms of Service
         </h1>
       </div>

@@ -1,7 +1,6 @@
 import { defineTool, filterToolsByCredentials } from "../lib/tool.js";
 import { z } from "zod";
 import type { WebClient } from "@slack/web-api";
-import { logger } from "../lib/logger.js";
 import { runSubagent } from "../lib/subagent.js";
 import { getFastModel, getMainModel } from "../lib/ai.js";
 import { resolveUserCredentials } from "../lib/permissions.js";
@@ -83,21 +82,22 @@ async function buildToolScope(
   }
 }
 
-export function createSubagentTools(
-  client?: WebClient,
-  context?: ScheduleContext,
-) {
+export function createSubagentTools(client?: WebClient, context?: ScheduleContext) {
   return {
     run_subagent: defineTool({
       requiredCredentials: ["e2b_api_key"],
       description:
         "Launch a subagent for parallel fan-out. Call this tool MULTIPLE TIMES in the same tool-call block to run tasks concurrently — e.g. sweep 4 market channels simultaneously, or triage emails while analyzing data. Each subagent runs in its own isolated context with scoped tools, preventing context pollution. Returns a compressed summary. The primary value is parallelism and performance — use when you can split work into independent pieces that don't depend on each other's results.",
       inputSchema: z.object({
+        label: z
+          .string()
+          .max(60)
+          .describe(
+            'Human-readable intent for what THIS subagent does, shown on the Slack tool card. Verb-first, no trailing period, never generic. Examples: "sweeping 4 market channels in parallel", "triaging unread founder email", "summarizing last week\'s sales threads", "pulling competitor pricing pages"',
+          ),
         task: z
           .string()
-          .describe(
-            "What the subagent should do. Be specific — this is the user prompt.",
-          ),
+          .describe("What the subagent should do. Be specific — this is the user prompt."),
         system_prompt: z
           .string()
           .optional()
@@ -123,13 +123,7 @@ export function createSubagentTools(
           .default(50)
           .describe("Maximum agent loop steps for the subagent."),
       }),
-      execute: async ({
-        task,
-        system_prompt,
-        scope,
-        model_preference,
-        max_steps,
-      }) => {
+      execute: async ({ task, system_prompt, scope, model_preference, max_steps }) => {
         const { modelId, model } =
           model_preference === "main"
             ? await getMainModel()

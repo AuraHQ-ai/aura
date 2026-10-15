@@ -28,10 +28,7 @@ export function createEmailTools(context?: ScheduleContext) {
           .string()
           .optional()
           .describe("Message ID to reply to (for threading)"),
-        thread_id: z
-          .string()
-          .optional()
-          .describe("Thread ID for reply threading"),
+        thread_id: z.string().optional().describe("Thread ID for reply threading"),
         user_name: z
           .string()
           .optional()
@@ -77,21 +74,33 @@ export function createEmailTools(context?: ScheduleContext) {
           if (user_name) {
             const callerId = context?.userId;
             if (!callerId || (callerId !== resolvedUserId && !(await hasRole(callerId, "admin")))) {
-              return { ok: false, error: "You can only send email from your own account. Ask an admin for help." };
+              return {
+                ok: false,
+                error: "You can only send email from your own account. Ask an admin for help.",
+              };
             }
           }
 
           const { sendEmail } = await import("../lib/gmail.js");
-          const result = await sendEmail(to, subject, body, {
-            cc,
-            bcc,
-            replyToMessageId: reply_to_message_id,
-            threadId: thread_id,
-            attachments,
-          }, resolvedUserId);
+          const result = await sendEmail(
+            to,
+            subject,
+            body,
+            {
+              cc,
+              bcc,
+              replyToMessageId: reply_to_message_id,
+              threadId: thread_id,
+              attachments,
+            },
+            resolvedUserId,
+          );
 
           if (!result) {
-            return { ok: false, error: `Failed to send email: no Gmail access for the resolved user. They may need to authorize Aura via OAuth first.` };
+            return {
+              ok: false,
+              error: `Failed to send email: no Gmail access for the resolved user. They may need to authorize Aura via OAuth first.`,
+            };
           }
 
           logger.info("send_email tool called", {
@@ -124,14 +133,11 @@ export function createEmailTools(context?: ScheduleContext) {
 
     reply_to_email: defineTool({
       requiredCredentials: ["google_oauth"],
-      description: "Reply to an existing email thread. Defaults to replying from Aura's configured email address. Set user_name to reply from another user's account (requires that user's OAuth access, and caller must be that user or an admin). Requires message_id and thread_id from read_user_emails or read_user_email.",
+      description:
+        "Reply to an existing email thread. Defaults to replying from Aura's configured email address. Set user_name to reply from another user's account (requires that user's OAuth access, and caller must be that user or an admin). Requires message_id and thread_id from read_user_emails or read_user_email.",
       inputSchema: z.object({
-        message_id: z
-          .string()
-          .describe("Message ID of the email to reply to"),
-        thread_id: z
-          .string()
-          .describe("Thread ID for proper threading"),
+        message_id: z.string().describe("Message ID of the email to reply to"),
+        thread_id: z.string().describe("Thread ID for proper threading"),
         body: z.string().describe("Reply body text"),
         user_name: z
           .string()
@@ -158,7 +164,10 @@ export function createEmailTools(context?: ScheduleContext) {
           if (user_name) {
             const callerId = context?.userId;
             if (!callerId || (callerId !== resolvedUserId && !(await hasRole(callerId, "admin")))) {
-              return { ok: false, error: "You can only reply from your own email account. Ask an admin for help." };
+              return {
+                ok: false,
+                error: "You can only reply from your own email account. Ask an admin for help.",
+              };
             }
           }
 
@@ -166,7 +175,11 @@ export function createEmailTools(context?: ScheduleContext) {
           const result = await replyToEmail(message_id, thread_id, body, resolvedUserId);
 
           if (!result) {
-            return { ok: false, error: "Failed to reply to email: no Gmail access for the resolved user. They may need to authorize Aura via OAuth first." };
+            return {
+              ok: false,
+              error:
+                "Failed to reply to email: no Gmail access for the resolved user. They may need to authorize Aura via OAuth first.",
+            };
           }
 
           logger.info("reply_to_email tool called", {
@@ -203,15 +216,11 @@ export function createEmailTools(context?: ScheduleContext) {
       inputSchema: z.object({
         query: z
           .string()
-          .describe(
-            "Name or email to search for, e.g. 'Joan Rodriguez' or 'joan@company.com'"
-          ),
+          .describe("Name or email to search for, e.g. 'Joan Rodriguez' or 'joan@company.com'"),
       }),
       execute: async ({ query }) => {
         try {
-          const { searchDirectoryUser } = await import(
-            "../lib/workspace-directory.js"
-          );
+          const { searchDirectoryUser } = await import("../lib/workspace-directory.js");
           const users = await searchDirectoryUser(query);
           if (!users) {
             return {
@@ -269,15 +278,12 @@ export function createEmailTools(context?: ScheduleContext) {
       }),
       execute: async ({ max_results }) => {
         try {
-          const { listDirectoryUsers } = await import(
-            "../lib/workspace-directory.js"
-          );
+          const { listDirectoryUsers } = await import("../lib/workspace-directory.js");
           const users = await listDirectoryUsers(max_results);
           if (!users) {
             return {
               ok: false,
-              error:
-                "Workspace Directory is not configured or the API returned an error.",
+              error: "Workspace Directory is not configured or the API returned an error.",
             };
           }
 
@@ -289,11 +295,11 @@ export function createEmailTools(context?: ScheduleContext) {
             ok: true,
             count: users.length,
             users: users.map((u) => ({
-                email: u.email,
-                name: u.name,
-                title: u.title || undefined,
-                department: u.department || undefined,
-              })),
+              email: u.email,
+              name: u.name,
+              title: u.title || undefined,
+              department: u.department || undefined,
+            })),
           };
         } catch (error: any) {
           logger.error("list_workspace_users failed", {
@@ -316,15 +322,11 @@ export function createEmailTools(context?: ScheduleContext) {
       inputSchema: z.object({
         query: z
           .string()
-          .describe(
-            "Name or email to search for, e.g. 'Rahel Thoma' or 'trewim.ch'"
-          ),
+          .describe("Name or email to search for, e.g. 'Rahel Thoma' or 'trewim.ch'"),
       }),
       execute: async ({ query }) => {
         try {
-          const { lookupContact } = await import(
-            "../lib/contact-lookup.js"
-          );
+          const { lookupContact } = await import("../lib/contact-lookup.js");
           const contacts = await lookupContact(query);
           return {
             ok: true,
@@ -354,24 +356,17 @@ export function createEmailTools(context?: ScheduleContext) {
         time_min: z
           .string()
           .optional()
-          .describe(
-            "Start of time range (ISO 8601). Defaults to now."
-          ),
+          .describe("Start of time range (ISO 8601). Defaults to now."),
         time_max: z
           .string()
           .optional()
-          .describe(
-            "End of time range (ISO 8601). E.g. '2026-02-28T23:59:59Z'"
-          ),
+          .describe("End of time range (ISO 8601). E.g. '2026-02-28T23:59:59Z'"),
         max_results: z
           .number()
           .optional()
           .default(20)
           .describe("Maximum events to return (default 20)"),
-        query: z
-          .string()
-          .optional()
-          .describe("Free-text search to filter events"),
+        query: z.string().optional().describe("Free-text search to filter events"),
         user_name: z
           .string()
           .optional()
@@ -387,8 +382,10 @@ export function createEmailTools(context?: ScheduleContext) {
       }),
       execute: async ({ time_min, time_max, max_results, query, user_name, calendar_id }) => {
         try {
-          const { userId: resolvedUserId, error: resolveError } =
-            await resolveEffectiveUserId(user_name, context);
+          const { userId: resolvedUserId, error: resolveError } = await resolveEffectiveUserId(
+            user_name,
+            context,
+          );
           if (resolveError) {
             return { ok: false, error: resolveError };
           }
@@ -419,7 +416,10 @@ export function createEmailTools(context?: ScheduleContext) {
             start: e.start?.dateTime || e.start?.date || "",
             end: e.end?.dateTime || e.end?.date || "",
             location: e.location || undefined,
-            attendees: e.attendees?.map((a: any) => ({ email: a.email || "", responseStatus: a.responseStatus })),
+            attendees: e.attendees?.map((a: any) => ({
+              email: a.email || "",
+              responseStatus: a.responseStatus,
+            })),
             htmlLink: e.htmlLink || undefined,
             status: e.status || undefined,
             organizer: e.organizer
@@ -438,7 +438,10 @@ export function createEmailTools(context?: ScheduleContext) {
           };
         }
       },
-      slack: { status: "Checking calendar...", output: (r) => r.ok === false ? r.error : `${r.events?.length ?? r.count ?? 0} events` },
+      slack: {
+        status: "Checking calendar...",
+        output: (r) => (r.ok === false ? r.error : `${r.events?.length ?? r.count ?? 0} events`),
+      },
     }),
 
     create_event: defineTool({
@@ -446,18 +449,11 @@ export function createEmailTools(context?: ScheduleContext) {
         "Create a calendar event with optional attendees. Defaults to the caller's account. Set user_name to create on another user's calendar (requires their OAuth access). Sends email invitations to all attendees.",
       inputSchema: z.object({
         summary: z.string().describe("Event title"),
-        start: z
-          .string()
-          .describe("Start time (ISO 8601), e.g. '2026-02-20T10:00:00+01:00'"),
-        end: z
-          .string()
-          .describe("End time (ISO 8601), e.g. '2026-02-20T11:00:00+01:00'"),
+        start: z.string().describe("Start time (ISO 8601), e.g. '2026-02-20T10:00:00+01:00'"),
+        end: z.string().describe("End time (ISO 8601), e.g. '2026-02-20T11:00:00+01:00'"),
         description: z.string().optional().describe("Event description"),
         location: z.string().optional().describe("Event location or meeting link"),
-        attendees: z
-          .array(z.string())
-          .optional()
-          .describe("List of attendee email addresses"),
+        attendees: z.array(z.string()).optional().describe("List of attendee email addresses"),
         user_name: z
           .string()
           .optional()
@@ -467,21 +463,26 @@ export function createEmailTools(context?: ScheduleContext) {
       }),
       execute: async ({ summary, start, end, description, location, attendees, user_name }) => {
         try {
-          const { userId: resolvedUserId, error: resolveError } =
-            await resolveEffectiveUserId(user_name, context);
+          const { userId: resolvedUserId, error: resolveError } = await resolveEffectiveUserId(
+            user_name,
+            context,
+          );
           if (resolveError) {
             return { ok: false, error: resolveError };
           }
 
           const { createEvent } = await import("../lib/calendar.js");
-          const event = await createEvent({
-            summary,
-            start,
-            end,
-            description: description || undefined,
-            location: location || undefined,
-            attendees: attendees || undefined,
-          }, resolvedUserId);
+          const event = await createEvent(
+            {
+              summary,
+              start,
+              end,
+              description: description || undefined,
+              location: location || undefined,
+              attendees: attendees || undefined,
+            },
+            resolvedUserId,
+          );
           if (!event) {
             return {
               ok: false,
@@ -511,14 +512,8 @@ export function createEmailTools(context?: ScheduleContext) {
         event_id: z.string().describe("The calendar event ID to update"),
         summary: z.string().optional().describe("New event title"),
         description: z.string().optional().describe("New event description"),
-        start: z
-          .string()
-          .optional()
-          .describe("New start time (ISO 8601)"),
-        end: z
-          .string()
-          .optional()
-          .describe("New end time (ISO 8601)"),
+        start: z.string().optional().describe("New start time (ISO 8601)"),
+        end: z.string().optional().describe("New end time (ISO 8601)"),
         location: z.string().optional().describe("New event location or meeting link"),
         attendees: z
           .array(z.string())
@@ -531,23 +526,38 @@ export function createEmailTools(context?: ScheduleContext) {
             "Access another user's calendar instead of the caller's. The display name, real name, or username, e.g. 'Joan' or '@joan'.",
           ),
       }),
-      execute: async ({ event_id, summary, description, start, end, location, attendees, user_name }) => {
+      execute: async ({
+        event_id,
+        summary,
+        description,
+        start,
+        end,
+        location,
+        attendees,
+        user_name,
+      }) => {
         try {
-          const { userId: resolvedUserId, error: resolveError } =
-            await resolveEffectiveUserId(user_name, context);
+          const { userId: resolvedUserId, error: resolveError } = await resolveEffectiveUserId(
+            user_name,
+            context,
+          );
           if (resolveError) {
             return { ok: false, error: resolveError };
           }
 
           const { updateEvent } = await import("../lib/calendar.js");
-          const event = await updateEvent(event_id, {
-            summary: summary || undefined,
-            description: description || undefined,
-            start: start || undefined,
-            end: end || undefined,
-            location: location || undefined,
-            attendees: attendees || undefined,
-          }, resolvedUserId);
+          const event = await updateEvent(
+            event_id,
+            {
+              summary: summary || undefined,
+              description: description || undefined,
+              start: start || undefined,
+              end: end || undefined,
+              location: location || undefined,
+              attendees: attendees || undefined,
+            },
+            resolvedUserId,
+          );
           if (!event) {
             return {
               ok: false,
@@ -571,7 +581,8 @@ export function createEmailTools(context?: ScheduleContext) {
     }),
 
     delete_event: defineTool({
-      description: "Delete a calendar event by its event ID. Defaults to the caller's account. Set user_name to delete from another user's calendar (requires their OAuth access).",
+      description:
+        "Delete a calendar event by its event ID. Defaults to the caller's account. Set user_name to delete from another user's calendar (requires their OAuth access).",
       inputSchema: z.object({
         event_id: z.string().describe("The calendar event ID to delete"),
         user_name: z
@@ -583,8 +594,10 @@ export function createEmailTools(context?: ScheduleContext) {
       }),
       execute: async ({ event_id, user_name }) => {
         try {
-          const { userId: resolvedUserId, error: resolveError } =
-            await resolveEffectiveUserId(user_name, context);
+          const { userId: resolvedUserId, error: resolveError } = await resolveEffectiveUserId(
+            user_name,
+            context,
+          );
           if (resolveError) {
             return { ok: false, error: resolveError };
           }
@@ -617,18 +630,10 @@ export function createEmailTools(context?: ScheduleContext) {
       description:
         "Find available meeting slots across multiple people's calendars. Uses the free/busy API to find gaps where everyone is free. Defaults to the caller's account. Set user_name to query via another user's OAuth token (requires their OAuth access).",
       inputSchema: z.object({
-        emails: z
-          .array(z.string())
-          .describe("Email addresses of people to check availability for"),
-        time_min: z
-          .string()
-          .describe("Start of search range (ISO 8601)"),
-        time_max: z
-          .string()
-          .describe("End of search range (ISO 8601)"),
-        duration_minutes: z
-          .number()
-          .describe("Required meeting duration in minutes, e.g. 30"),
+        emails: z.array(z.string()).describe("Email addresses of people to check availability for"),
+        time_min: z.string().describe("Start of search range (ISO 8601)"),
+        time_max: z.string().describe("End of search range (ISO 8601)"),
+        duration_minutes: z.number().describe("Required meeting duration in minutes, e.g. 30"),
         user_name: z
           .string()
           .optional()
@@ -638,19 +643,24 @@ export function createEmailTools(context?: ScheduleContext) {
       }),
       execute: async ({ emails, time_min, time_max, duration_minutes, user_name }) => {
         try {
-          const { userId: resolvedUserId, error: resolveError } =
-            await resolveEffectiveUserId(user_name, context);
+          const { userId: resolvedUserId, error: resolveError } = await resolveEffectiveUserId(
+            user_name,
+            context,
+          );
           if (resolveError) {
             return { ok: false, error: resolveError };
           }
 
           const { findAvailableSlots } = await import("../lib/calendar.js");
-          const slots = await findAvailableSlots({
-            emails,
-            timeMin: time_min,
-            timeMax: time_max,
-            durationMinutes: duration_minutes,
-          }, resolvedUserId);
+          const slots = await findAvailableSlots(
+            {
+              emails,
+              timeMin: time_min,
+              timeMax: time_max,
+              durationMinutes: duration_minutes,
+            },
+            resolvedUserId,
+          );
           if (!slots) {
             return {
               ok: false,
@@ -706,18 +716,9 @@ export function createGmailEATools(context?: ScheduleContext) {
         body: z.string().describe("Email body text"),
         cc: z.string().optional().describe("CC email address"),
         bcc: z.string().optional().describe("BCC email address"),
-        in_reply_to: z
-          .string()
-          .optional()
-          .describe("Message-ID to reply to (for threading)"),
-        references: z
-          .string()
-          .optional()
-          .describe("References header (for threading)"),
-        thread_id: z
-          .string()
-          .optional()
-          .describe("Gmail thread ID to add the draft to"),
+        in_reply_to: z.string().optional().describe("Message-ID to reply to (for threading)"),
+        references: z.string().optional().describe("References header (for threading)"),
+        thread_id: z.string().optional().describe("Gmail thread ID to add the draft to"),
         quoted_message: z
           .string()
           .optional()
@@ -763,7 +764,10 @@ export function createGmailEATools(context?: ScheduleContext) {
 
           const callerId = context?.userId;
           if (callerId && callerId !== resolvedUserId && !(await hasRole(callerId, "admin"))) {
-            return { ok: false, error: "You can only access your own email. Ask an admin for help." };
+            return {
+              ok: false,
+              error: "You can only access your own email. Ask an admin for help.",
+            };
           }
 
           const { createDraft } = await import("../lib/gmail.js");
@@ -841,7 +845,10 @@ export function createGmailEATools(context?: ScheduleContext) {
 
           const callerId = context?.userId;
           if (callerId && callerId !== resolvedUserId && !(await hasRole(callerId, "admin"))) {
-            return { ok: false, error: "You can only access your own email. Ask an admin for help." };
+            return {
+              ok: false,
+              error: "You can only access your own email. Ask an admin for help.",
+            };
           }
 
           const { listDrafts } = await import("../lib/gmail.js");
@@ -884,9 +891,7 @@ export function createGmailEATools(context?: ScheduleContext) {
         query: z
           .string()
           .optional()
-          .describe(
-            "Gmail search query, e.g. 'from:someone@example.com' or 'is:unread'",
-          ),
+          .describe("Gmail search query, e.g. 'from:someone@example.com' or 'is:unread'"),
         max_results: z
           .number()
           .min(1)
@@ -894,11 +899,7 @@ export function createGmailEATools(context?: ScheduleContext) {
           .optional()
           .default(10)
           .describe("Maximum emails to return (default 10)"),
-        unread_only: z
-          .boolean()
-          .optional()
-          .default(false)
-          .describe("Only show unread emails"),
+        unread_only: z.boolean().optional().default(false).describe("Only show unread emails"),
         page_token: z
           .string()
           .optional()
@@ -922,7 +923,10 @@ export function createGmailEATools(context?: ScheduleContext) {
 
           const callerId = context?.userId;
           if (callerId && callerId !== resolvedUserId && !(await hasRole(callerId, "admin"))) {
-            return { ok: false, error: "You can only access your own email. Ask an admin for help." };
+            return {
+              ok: false,
+              error: "You can only access your own email. Ask an admin for help.",
+            };
           }
 
           const { readUserEmails } = await import("../lib/gmail.js");
@@ -968,9 +972,7 @@ export function createGmailEATools(context?: ScheduleContext) {
           .describe(
             "The display name, real name, or username of the Gmail account owner. Defaults to the caller's account.",
           ),
-        message_id: z
-          .string()
-          .describe("The Gmail message ID to read"),
+        message_id: z.string().describe("The Gmail message ID to read"),
       }),
       execute: async ({ user_name, message_id }) => {
         try {
@@ -990,7 +992,10 @@ export function createGmailEATools(context?: ScheduleContext) {
 
           const callerId = context?.userId;
           if (callerId && callerId !== resolvedUserId && !(await hasRole(callerId, "admin"))) {
-            return { ok: false, error: "You can only access your own email. Ask an admin for help." };
+            return {
+              ok: false,
+              error: "You can only access your own email. Ask an admin for help.",
+            };
           }
 
           const { readUserEmail } = await import("../lib/gmail.js");
@@ -1029,9 +1034,7 @@ export function createGmailEATools(context?: ScheduleContext) {
           .describe(
             "The display name, real name, or username of the Gmail account owner. Defaults to the caller's account.",
           ),
-        draft_id: z
-          .string()
-          .describe("The Gmail draft ID to delete"),
+        draft_id: z.string().describe("The Gmail draft ID to delete"),
       }),
       execute: async ({ user_name, draft_id }) => {
         try {
@@ -1051,7 +1054,10 @@ export function createGmailEATools(context?: ScheduleContext) {
 
           const callerId = context?.userId;
           if (callerId && callerId !== resolvedUserId && !(await hasRole(callerId, "admin"))) {
-            return { ok: false, error: "You can only access your own email. Ask an admin for help." };
+            return {
+              ok: false,
+              error: "You can only access your own email. Ask an admin for help.",
+            };
           }
 
           const { deleteDraft } = await import("../lib/gmail.js");
@@ -1090,16 +1096,9 @@ export function createGmailEATools(context?: ScheduleContext) {
           .describe(
             "The display name, real name, or username of the Gmail account owner. Defaults to the caller's account.",
           ),
-        message_id: z
-          .string()
-          .describe("The Gmail message ID containing the attachment"),
-        attachment_id: z
-          .string()
-          .describe("The attachment ID from read_user_email results"),
-        filename: z
-          .string()
-          .optional()
-          .describe("Original filename (for display purposes)"),
+        message_id: z.string().describe("The Gmail message ID containing the attachment"),
+        attachment_id: z.string().describe("The attachment ID from read_user_email results"),
+        filename: z.string().optional().describe("Original filename (for display purposes)"),
         mime_type: z
           .string()
           .optional()
@@ -1112,7 +1111,14 @@ export function createGmailEATools(context?: ScheduleContext) {
             "When true, writes the file to /home/user/downloads/{filename} on the sandbox instead of returning base64. Use when you need to process the file with shell tools.",
           ),
       }),
-      execute: async ({ user_name, message_id, attachment_id, filename, mime_type, save_to_disk }) => {
+      execute: async ({
+        user_name,
+        message_id,
+        attachment_id,
+        filename,
+        mime_type,
+        save_to_disk,
+      }) => {
         try {
           let resolvedUserId: string;
           if (user_name) {
@@ -1130,12 +1136,13 @@ export function createGmailEATools(context?: ScheduleContext) {
 
           const callerId = context?.userId;
           if (callerId && callerId !== resolvedUserId && !(await hasRole(callerId, "admin"))) {
-            return { ok: false, error: "You can only access your own email. Ask an admin for help." };
+            return {
+              ok: false,
+              error: "You can only access your own email. Ask an admin for help.",
+            };
           }
 
-          const { getUserEmailAttachment, readUserEmail } = await import(
-            "../lib/gmail.js"
-          );
+          const { getUserEmailAttachment, readUserEmail } = await import("../lib/gmail.js");
 
           let resolvedFilename = filename;
           let resolvedMimeType = mime_type;
@@ -1143,9 +1150,7 @@ export function createGmailEATools(context?: ScheduleContext) {
           if (!resolvedFilename || !resolvedMimeType) {
             const email = await readUserEmail(resolvedUserId, message_id);
             if (email) {
-              const att = email.attachments.find(
-                (a: any) => a.attachmentId === attachment_id,
-              );
+              const att = email.attachments.find((a: any) => a.attachmentId === attachment_id);
               if (att) {
                 resolvedFilename = resolvedFilename || att.filename;
                 resolvedMimeType = resolvedMimeType || att.mimeType;
@@ -1153,11 +1158,7 @@ export function createGmailEATools(context?: ScheduleContext) {
             }
           }
 
-          const result = await getUserEmailAttachment(
-            resolvedUserId,
-            message_id,
-            attachment_id,
-          );
+          const result = await getUserEmailAttachment(resolvedUserId, message_id, attachment_id);
 
           if (!result) {
             return {
@@ -1178,9 +1179,14 @@ export function createGmailEATools(context?: ScheduleContext) {
           });
 
           if (save_to_disk) {
-            const { writeToSandbox } = await import("../lib/sandbox.js");
+            const { writeToSandbox, resolveSandboxUserId } = await import("../lib/sandbox.js");
             const buf = Buffer.from(result.data, "base64");
-            const savedPath = await writeToSandbox(resolvedName, buf);
+            // Caller's sandbox (where run_command executes), not the mailbox owner's.
+            const savedPath = await writeToSandbox(
+              resolvedName,
+              buf,
+              resolveSandboxUserId(context?.userId),
+            );
             return {
               ok: true,
               saved_to_disk: true,
@@ -1240,7 +1246,11 @@ export function createGmailEATools(context?: ScheduleContext) {
 
           const callerId = context?.userId;
           if (callerId && callerId !== resolvedUserId && !(await hasRole(callerId, "admin"))) {
-            return { ok: false, error: "You can only generate an auth URL for your own account. Ask an admin for help." };
+            return {
+              ok: false,
+              error:
+                "You can only generate an auth URL for your own account. Ask an admin for help.",
+            };
           }
 
           const { generateAuthUrlForUser } = await import("../lib/gmail.js");
@@ -1268,4 +1278,3 @@ export function createGmailEATools(context?: ScheduleContext) {
     }),
   };
 }
-

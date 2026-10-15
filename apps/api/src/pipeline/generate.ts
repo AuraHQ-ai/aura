@@ -1,18 +1,18 @@
 import {
   streamText,
-  convertToModelMessages,
   isStepCount,
   type LanguageModel,
   type ModelMessage,
-  type UIMessage,
   type StepResult,
   type LanguageModelUsage,
 } from "ai";
 import { createInteractivePrepareStep } from "./prepare-step.js";
+import { repairLeakedToolCall } from "./sanitize-tool-markup.js";
 import { buildCachedSystemMessages, getEscalationModel } from "../lib/ai.js";
 import { getDeferredToolManifest } from "../tools/deferred.js";
 import { appendDeferredToolsBlock } from "../personality/system-prompt.js";
 import { aiTelemetry, withTrace } from "../lib/langfuse.js";
+import { closeMcpClients } from "../tools/mcp.js";
 
 /**
  * Channel-agnostic agentic stream.
@@ -58,10 +58,9 @@ export function createAgenticStream(options: AgenticStreamOptions) {
   const stepModelIds: string[] = [];
   // Deferred-tool manifest is environment-level, so it rides in the cached
   // environment layer ahead of the conversation — not the volatile runtime tail.
-  const environmentContext = appendDeferredToolsBlock(
-    options.environmentContext,
-    getDeferredToolManifest(options.tools),
-  ) ?? options.environmentContext;
+  const environmentContext =
+    appendDeferredToolsBlock(options.environmentContext, getDeferredToolManifest(options.tools)) ??
+    options.environmentContext;
   const prepareStep = createInteractivePrepareStep({
     stablePrefix: options.stablePrefix,
     environmentContext,
@@ -95,10 +94,7 @@ export function createAgenticStream(options: AgenticStreamOptions) {
       sessionId: options.threadTs ?? options.channelId ?? undefined,
       userId: options.userId,
       userName: options.userName,
-      tags: [
-        `channel:${options.channelId ?? "unknown"}`,
-        `model:${options.modelId}`,
-      ],
+      tags: [`channel:${options.channelId ?? "unknown"}`, `model:${options.modelId}`],
       ...(options.userId ? { metadata: { slackUserId: options.userId } } : {}),
     },
     () =>
@@ -107,6 +103,7 @@ export function createAgenticStream(options: AgenticStreamOptions) {
         instructions: system,
         messages: options.messages,
         tools: options.tools,
+        experimental_repairToolCall: repairLeakedToolCall,
         prepareStep,
         stopWhen: isStepCount(options.maxSteps ?? 250),
         telemetry: aiTelemetry("agent-chat", {
@@ -114,13 +111,13 @@ export function createAgenticStream(options: AgenticStreamOptions) {
           channelId: options.channelId ?? "unknown",
           ...(options.invocationId ? { invocationId: options.invocationId } : {}),
         }),
-        onEnd: options.onFinish
-          ? (event) =>
-              options.onFinish?.({
-                ...event,
-                stepModelIds: [...stepModelIds],
-              })
-          : undefined,
+        onEnd: (event) => {
+          void closeMcpClients(options.tools);
+          options.onFinish?.({
+            ...event,
+            stepModelIds: [...stepModelIds],
+          });
+        },
       }),
   );
 }

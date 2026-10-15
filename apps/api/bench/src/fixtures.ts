@@ -186,7 +186,9 @@ interface LongMemEvalRecord {
 export async function loadLongMemEval(): Promise<BenchCase[]> {
   const path = await corpusPath("longmemeval");
   if (!path) {
-    logger.warn("LongMemEval subset not present — run bench/scripts/fetch-longmemeval.ts to vendor it.");
+    logger.warn(
+      "LongMemEval subset not present — run bench/scripts/fetch-longmemeval.ts to vendor it.",
+    );
     return [];
   }
   const records = JSON.parse(await readFile(path, "utf8")) as LongMemEvalRecord[];
@@ -195,8 +197,7 @@ export async function loadLongMemEval(): Promise<BenchCase[]> {
     const id = r.question_id ?? r.id ?? `lme-${idx}`;
     const category = r.category ?? r.question_type ?? "unknown";
     const goldAnswer = r.goldAnswer ?? r.answer ?? "";
-    const abstention =
-      r.abstention ?? (category === "abstention" || category === "abstain");
+    const abstention = r.abstention ?? (category === "abstention" || category === "abstain");
 
     const sessions =
       r.sessions ??
@@ -219,9 +220,7 @@ export async function loadLongMemEval(): Promise<BenchCase[]> {
         turns: s.turns.map((t, i) => ({
           diaId: `${s.id ?? "s"}:${i + 1}`,
           role:
-            t.role === "assistant" || t.role === "bot" || t.role === "ai"
-              ? "assistant"
-              : "user",
+            t.role === "assistant" || t.role === "bot" || t.role === "ai" ? "assistant" : "user",
           speaker: (t as any).speaker,
           content: t.content,
         })),
@@ -356,20 +355,17 @@ export async function loadLoCoMo(): Promise<BenchCase[]> {
 
     for (const [qIdx, q] of (conv.qa ?? []).entries()) {
       const categoryKey = String(q.category ?? "");
-      const category =
-        LOCOMO_CATEGORY_NAMES[categoryKey] ?? `cat_${categoryKey}`;
+      const category = LOCOMO_CATEGORY_NAMES[categoryKey] ?? `cat_${categoryKey}`;
       // Category 5 ("adversarial") often has answer = "" / null when the
       // correct behaviour is to refuse. Treat that as an abstention case.
-      const goldAnswer =
-        q.answer ?? (q as any).adversarial_answer ?? "";
+      const goldAnswer = q.answer ?? (q as any).adversarial_answer ?? "";
       const abstention =
         category === "adversarial" &&
-        (goldAnswer === null || goldAnswer === "" ||
+        (goldAnswer === null ||
+          goldAnswer === "" ||
           (Array.isArray(goldAnswer) && goldAnswer.length === 0));
       const evidenceDiaIds = q.evidence ?? [];
-      const evidenceSessionIds = [
-        ...new Set(evidenceDiaIds.map((d) => d.split(":")[0])),
-      ];
+      const evidenceSessionIds = [...new Set(evidenceDiaIds.map((d) => d.split(":")[0]))];
 
       cases.push({
         id: `${conversationId}-q${qIdx}`,
@@ -460,9 +456,7 @@ export async function loadExternalCorpus(filePath: string): Promise<BenchCase[]>
   const raw = await readFile(abs, "utf8");
   const parsed = JSON.parse(raw);
   if (!Array.isArray(parsed)) {
-    throw new Error(
-      `--corpus-file expects an array of BenchCase, got ${typeof parsed} at ${abs}`,
-    );
+    throw new Error(`--corpus-file expects an array of BenchCase, got ${typeof parsed} at ${abs}`);
   }
   return parsed as BenchCase[];
 }
@@ -541,11 +535,7 @@ export const SUBSET_PER_CATEGORY = {
  * `stratifiedSample` (per-category), this caps the grand total — used by
  * `--cases=N` for quick smoke runs. Output is stable per (cases, total, seed).
  */
-export function sampleTotal(
-  cases: BenchCase[],
-  total: number,
-  seed = 4711,
-): BenchCase[] {
+export function sampleTotal(cases: BenchCase[], total: number, seed = 4711): BenchCase[] {
   if (!Number.isFinite(total) || total <= 0 || cases.length <= total) {
     return cases;
   }

@@ -36,10 +36,7 @@ import {
   SUBSET_PER_CATEGORY,
   resolveQuestionDate,
 } from "./fixtures.js";
-import {
-  countUniqueConversations,
-  storeMessagesForCases,
-} from "./ingest.js";
+import { countUniqueConversations, storeMessagesForCases } from "./ingest.js";
 import { runTimeline } from "./timeline.js";
 import { resolveBenchRunModelIds } from "./models.js";
 import {
@@ -52,11 +49,7 @@ import {
 import { buildTextSummary, postReport } from "./report.js";
 import { createProgress } from "./progress.js";
 import { createCostMeter, type CostStage } from "./cost-meter.js";
-import {
-  createRunArtifacts,
-  readLatestRunId,
-  type RunArtifacts,
-} from "./artifacts.js";
+import { createRunArtifacts, readLatestRunId, type RunArtifacts } from "./artifacts.js";
 import type { Dashboard } from "./dashboard.js";
 import { getEmbeddingModel } from "../../src/lib/ai.js";
 import { logger, setLogFile, closeLogFile } from "../../src/lib/logger.js";
@@ -68,7 +61,6 @@ import {
   type BenchStage,
   type PerCaseResult,
 } from "./types.js";
-
 
 export interface BenchRunOutput {
   runId: string;
@@ -116,20 +108,13 @@ async function loadAllCases(config: BenchRunConfig): Promise<BenchCase[]> {
   // An explicit --limit wins over the named subset, so you can dial the
   // per-category count up incrementally while iterating.
   const perCategory =
-    config.limit && config.limit > 0
-      ? config.limit
-      : SUBSET_PER_CATEGORY[config.subset];
+    config.limit && config.limit > 0 ? config.limit : SUBSET_PER_CATEGORY[config.subset];
 
   if (config.corpusFile) {
     const cases = await loadExternalCorpus(config.corpusFile);
-    const filtered = config.category
-      ? cases.filter((c) => c.category === config.category)
-      : cases;
-    const sized = Number.isFinite(perCategory)
-      ? stratifiedSample(filtered, perCategory)
-      : filtered;
-    const capped =
-      config.cases && config.cases > 0 ? sampleTotal(sized, config.cases) : sized;
+    const filtered = config.category ? cases.filter((c) => c.category === config.category) : cases;
+    const sized = Number.isFinite(perCategory) ? stratifiedSample(filtered, perCategory) : filtered;
+    const capped = config.cases && config.cases > 0 ? sampleTotal(sized, config.cases) : sized;
     logger.info(`bench: loaded ${capped.length} case(s) from --corpus-file`, {
       file: config.corpusFile,
       requested: filtered.length,
@@ -142,12 +127,8 @@ async function loadAllCases(config: BenchRunConfig): Promise<BenchCase[]> {
   const all: BenchCase[] = [];
   for (const dataset of config.datasets) {
     const cases = await loadDataset(dataset);
-    const filtered = config.category
-      ? cases.filter((c) => c.category === config.category)
-      : cases;
-    const sized = Number.isFinite(perCategory)
-      ? stratifiedSample(filtered, perCategory)
-      : filtered;
+    const filtered = config.category ? cases.filter((c) => c.category === config.category) : cases;
+    const sized = Number.isFinite(perCategory) ? stratifiedSample(filtered, perCategory) : filtered;
     logger.info(`bench: loaded ${sized.length} case(s) from ${dataset}`, {
       requested: filtered.length,
       subset: config.subset,
@@ -225,7 +206,8 @@ function pruneLongMemEvalToQuestionCutoff(cases: BenchCase[]): BenchCase[] {
 export async function runBench(
   partialConfig: Partial<BenchRunConfig> = {},
 ): Promise<BenchRunOutput> {
-  const runId = partialConfig.runId ?? `${new Date().toISOString().replace(/[:.]/g, "-")}-${cryptoSafeId()}`;
+  const runId =
+    partialConfig.runId ?? `${new Date().toISOString().replace(/[:.]/g, "-")}-${cryptoSafeId()}`;
   const config: BenchRunConfig = {
     runId,
     datasets: partialConfig.datasets ?? ["toy"],
@@ -269,8 +251,7 @@ export async function runBench(
   // Any staged control (or legacy --skip-ingest) switches the run to a stable,
   // persistent local workspace so data survives between invocations. Otherwise
   // we use the classic ephemeral per-run workspace that gets wiped at the end.
-  const fromStage: BenchStage =
-    config.fromStage ?? (config.skipIngest ? "score" : "messages");
+  const fromStage: BenchStage = config.fromStage ?? (config.skipIngest ? "score" : "messages");
   const toStage: BenchStage = config.toStage ?? "score";
   const fromIdx = BENCH_STAGE_ORDER.indexOf(fromStage);
   const toIdx = BENCH_STAGE_ORDER.indexOf(toStage);
@@ -299,9 +280,7 @@ export async function runBench(
       // Per-exchange replay produces a different memory corpus, so keep it in a
       // separate workspace to allow A/B'ing against the session cadence.
       `${replay === "exchange" ? "-px" : ""}`;
-  const workspaceId = persistent
-    ? localBenchWorkspaceId(benchKey)
-    : benchWorkspaceId(runId);
+  const workspaceId = persistent ? localBenchWorkspaceId(benchKey) : benchWorkspaceId(runId);
 
   const tty = config.progress ?? Boolean(process.stdout.isTTY);
   // Extraction (producer) and scoring (consumer) concurrency are decoupled —
@@ -403,11 +382,7 @@ export async function runBench(
   // Resolve the effective run id: a --resume points artifacts at a prior run's
   // directory so we append to its cases.jsonl and skip what's already scored.
   const resumeId =
-    config.resume != null
-      ? config.resume.length > 0
-        ? config.resume
-        : readLatestRunId()
-      : null;
+    config.resume != null ? (config.resume.length > 0 ? config.resume : readLatestRunId()) : null;
   const effectiveRunId = resumeId ?? runId;
   const artifacts: RunArtifacts = createRunArtifacts(effectiveRunId);
   // Capture every log line to runs/<id>/run.log while the dashboard owns the TTY.
@@ -553,8 +528,7 @@ export async function runBench(
       }
     };
     for (const r of priorResults) tally(r);
-    const pushScores = () =>
-      dashboard?.setScores({ qaCorrect, qaTotal, recallHit, recallTotal });
+    const pushScores = () => dashboard?.setScores({ qaCorrect, qaTotal, recallHit, recallTotal });
     pushScores();
 
     const extractStage = runExtraction ? makeStage("extract", 0) : null;
@@ -564,8 +538,7 @@ export async function runBench(
     const onResult = (result: PerCaseResult): void => {
       artifacts.appendCase(result);
 
-      const qaOk =
-        result.judgeVerdict === "correct" || result.judgeVerdict === "abstain_ok";
+      const qaOk = result.judgeVerdict === "correct" || result.judgeVerdict === "abstain_ok";
       if (!qaOk) {
         artifacts.appendFailure({
           caseId: result.caseId,
@@ -645,8 +618,7 @@ export async function runBench(
       )) as BenchRunOutput["deltas"];
 
       const embeddingModelObj: any = await getEmbeddingModel().catch(() => null);
-      const embeddingModel =
-        embeddingModelObj?.modelId ?? embeddingModelObj?.id ?? "unknown";
+      const embeddingModel = embeddingModelObj?.modelId ?? embeddingModelObj?.id ?? "unknown";
 
       const totalCostUsd = meter.snapshot().usd;
 

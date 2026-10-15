@@ -5,7 +5,7 @@ description: "Query your data warehouse, inspect schemas, browse sheets, and sea
 
 # BigQuery & Data Tools
 
-Aura connects to Google BigQuery using a base64-encoded service account JSON stored as the encrypted credential `google_bq_credentials`. Access is **strictly read-only** — only `SELECT`/`WITH` statements are accepted; DML, DDL, CALL, EXPORT, and multi-statement queries are always rejected. BigQuery tools use **Standard SQL** (`useLegacySql: false`) and a step-by-step recovery ladder to avoid malformed queries and false permission diagnoses.
+Aura connects to Google BigQuery using a base64-encoded service account JSON stored as the encrypted credential `google_bq_credentials`. Each query call also requires a short `label` (maximum 60 characters) describing the question the query answers; this is shown on the Slack tool card. Use a verb-first phrase such as `counting Stripe MRR for churned ES customers`, not a generic table name. Access is **strictly read-only** — only `SELECT`/`WITH` statements are accepted; DML, DDL, CALL, EXPORT, and multi-statement queries are always rejected. BigQuery tools use **Standard SQL** (`useLegacySql: false`) and a step-by-step recovery ladder to avoid malformed queries and false permission diagnoses.
 
 **BigQuery recovery ladder (follow in order):**
 1. `bq_list_datasets`

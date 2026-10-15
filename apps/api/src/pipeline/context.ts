@@ -1,9 +1,16 @@
 import type { WebClient } from "@slack/web-api";
-import { generateText } from "ai";
+import { generateText, Output } from "ai";
+import { z } from "zod";
 import { getFastModel, withCacheControl } from "../lib/ai.js";
 import type { AppContextEntity } from "../lib/app-context.js";
 import type { ConversationContext, SlackThreadMessage } from "./slack-context.js";
 import { logger } from "../lib/logger.js";
+import { getConfig } from "../lib/settings.js";
+import {
+  jevShouldRespond,
+  SHOULD_RESPOND_GATEWAY_PROVIDER_OPTIONS,
+  type GateTier,
+} from "./should-respond-jev.js";
 import { aiTelemetry, withTrace } from "../lib/langfuse.js";
 import { resolveChannelById } from "../tools/slack.js";
 
@@ -47,7 +54,13 @@ export interface SlackAppMentionEvent {
 
 export type SlackEvent = SlackMessageEvent | SlackAppMentionEvent;
 
-export type ChannelType = "dm" | "mpim" | "dashboard" | "public_channel" | "private_channel" | "slack_list_item";
+export type ChannelType =
+  | "dm"
+  | "mpim"
+  | "dashboard"
+  | "public_channel"
+  | "private_channel"
+  | "slack_list_item";
 
 export interface SlackListItemContext {
   /** The message ts that doubles as the list item's thread_ts */
@@ -89,10 +102,7 @@ export interface MessageContext {
 /**
  * Parse a Slack message event into a structured context object.
  */
-export function buildMessageContext(
-  event: SlackEvent,
-  botUserId: string,
-): MessageContext | null {
+export function buildMessageContext(event: SlackEvent, botUserId: string): MessageContext | null {
   // Skip system/meta subtypes but allow content-bearing ones (forwarded, shared, edited, file_share, etc.)
   const ignoredSubtypes = new Set([
     "channel_join",
@@ -118,7 +128,7 @@ export function buildMessageContext(
     return null;
   }
 
-  let text = "text" in event ? (event.text || "") : "";
+  let text = "text" in event ? event.text || "" : "";
   const userId = "user" in event ? event.user! : "";
   const channelId = event.channel;
 
@@ -195,7 +205,6 @@ export function isChannelGatedOut(
 // "always_process_channels" (which OPENS the gate), "gated_channels" CLOSES it.
 // Enforced in runPipeline — see issue #918.
 
-
 /**
  * Determine if Aura should respond to this message (Tiers 2–4).
  *
@@ -208,6 +217,12 @@ export function isChannelGatedOut(
  * 3. LLM gate: Aura posted recently in the channel (fail-closed)
  * 4. Cold observation: Aura monitors but hasn't been active (fail-closed, high bar)
  */
+const shouldRespondSchema = z.object({
+  respond: z
+    .boolean()
+    .describe("true if Aura should reply to the latest message, false to stay silent"),
+});
+
 export async function shouldRespond(
   context: MessageContext,
   conversation: ConversationContext,
@@ -252,42 +267,70 @@ const SHOULD_RESPOND_PROMPT_PARTICIPANT = `You are deciding whether Aura (a Slac
 Aura is already a participant in this conversation (she has sent messages before).
 
 Rules:
-- Answer RESPOND if the message asks a question, requests an action, continues a conversation that needs Aura's input, shares information Aura should acknowledge, or is clearly directed at Aura.
-- Answer SKIP if the message is just an acknowledgment (thanks, ok, got it, thumbs up), is directed at someone else, or is something where responding would add nothing.
-- When in doubt, lean toward RESPOND — it's better to be helpful than to ignore someone.
+- respond=true if the message asks a question, requests an action, continues a conversation that needs Aura's input, shares information Aura should acknowledge, or is clearly directed at Aura.
+- respond=false if the message is just an acknowledgment (thanks, ok, got it, thumbs up), is directed at someone else, or is something where responding would add nothing.
+- When in doubt, lean toward respond=true — it's better to be helpful than to ignore someone.
 
-Answer with a single word: RESPOND or SKIP.`;
+Return respond=true for RESPOND, respond=false for SKIP.`;
 
 const SHOULD_RESPOND_PROMPT_RECENTLY_ACTIVE = `You are deciding whether Aura (a Slack bot and team assistant) should respond to the latest message.
 
 Aura has been active in this channel recently, but is NOT necessarily a participant in this specific conversation or thread.
 
 Rules:
-- Answer RESPOND if the message asks a question, requests an action, shares information Aura should acknowledge, or is clearly directed at Aura.
-- Answer SKIP if the message is just an acknowledgment (thanks, ok, got it, thumbs up), is directed at someone else, is part of an ongoing conversation between other people that Aura is not involved in, or is something where responding would add nothing.
-- When in doubt, lean toward SKIP — Aura should not intrude on conversations she's not part of.
+- respond=true if the message asks a question, requests an action, shares information Aura should acknowledge, or is clearly directed at Aura.
+- respond=false if the message is just an acknowledgment (thanks, ok, got it, thumbs up), is directed at someone else, is part of an ongoing conversation between other people that Aura is not involved in, or is something where responding would add nothing.
+- When in doubt, lean toward respond=false — Aura should not intrude on conversations she's not part of.
 
-Answer with a single word: RESPOND or SKIP.`;
+Return respond=true for RESPOND, respond=false for SKIP.`;
 
 const SHOULD_RESPOND_PROMPT_COLD_OBSERVATION = `You are deciding whether Aura (a Slack bot and team assistant) should respond to this message in a channel she monitors but hasn't recently participated in.
 
 This is COLD observation — Aura is passively watching. The bar to respond is HIGH.
 
-Answer RESPOND only if:
+Set respond=true only if:
 - Someone is reporting a bug, error, or something broken
 - There's an urgent issue that needs immediate attention
 - Someone is explicitly asking a question Aura could answer (data, metrics, status)
 - The message directly relates to Aura's active work (bug triage, OKRs, team ops)
 
-Answer SKIP for:
+Set respond=false for:
 - General conversation, banter, casual chat
 - Messages directed at specific people
 - Status updates that don't need a response
 - Anything where Aura jumping in uninvited would be annoying
 
-When in doubt, SKIP. Being quiet is better than being noisy.
+When in doubt, respond=false. Being quiet is better than being noisy.
 
-Answer with a single word: RESPOND or SKIP.`;
+Return respond=true for RESPOND, respond=false for SKIP.`;
+
+export type ShouldRespondEngine = "jev" | "haiku_fallback" | "tier_fallback" | "haiku";
+
+export interface ShouldRespondGateLog {
+  engine: ShouldRespondEngine;
+  tier: GateTier;
+  probability?: number;
+  threshold?: number;
+  respond: boolean;
+  latencyMs: number;
+}
+
+/** One structured info line per gate decision. */
+export function logShouldRespondGate(decision: ShouldRespondGateLog): void {
+  const fields: Record<string, unknown> = {
+    engine: decision.engine,
+    tier: decision.tier,
+    respond: decision.respond,
+    latencyMs: decision.latencyMs,
+  };
+  if (typeof decision.probability === "number") {
+    fields.probability = decision.probability;
+  }
+  if (typeof decision.threshold === "number") {
+    fields.threshold = decision.threshold;
+  }
+  logger.info("should-respond gate", fields);
+}
 
 /**
  * Ask the fast model (Haiku) whether Aura should respond to a message.
@@ -307,6 +350,13 @@ async function llmShouldRespond(
   isParticipant: boolean,
   coldObservation: boolean = false,
 ): Promise<boolean> {
+  const gateStartedAt = Date.now();
+  const tier: GateTier = coldObservation
+    ? "cold"
+    : isParticipant
+      ? "participant"
+      : "recently_active";
+  let engine: Exclude<ShouldRespondEngine, "jev" | "tier_fallback"> = "haiku";
   try {
     // Build a concise view of the last few messages
     const messages =
@@ -330,11 +380,59 @@ async function llmShouldRespond(
 
     const userMessage = `Recent conversation:\n${conversationText}\n\nLatest message from ${senderName}:\n${context.text}\n\nShould Aura respond?`;
 
+    // Engine switch (settings key `should_respond_engine`): "jev" (default) or
+    // "haiku". Flip to "haiku" in the settings table to roll back without a deploy.
+    const configuredEngine = (await getConfig("should_respond_engine", "jev")).trim().toLowerCase();
+    if (configuredEngine !== "haiku") {
+      try {
+        const jev = await withTrace(
+          {
+            sessionId: context.threadTs ?? context.messageTs ?? context.channelId,
+            userId: context.userId,
+            tags: [
+              `channel:${context.channelType ?? "unknown"}`,
+              "stage:should-respond",
+              "engine:jev",
+            ],
+          },
+          () =>
+            jevShouldRespond(
+              {
+                tier,
+                now: new Date(),
+                recent: messages,
+                latest: { ts: context.messageTs, from: senderName, text: context.text },
+              },
+              { telemetry: aiTelemetry("should-respond-jev", { tier }) },
+            ),
+        );
+        logShouldRespondGate({
+          engine: "jev",
+          tier,
+          probability: jev.probability,
+          threshold: jev.threshold,
+          respond: jev.respond,
+          latencyMs: jev.latencyMs,
+        });
+        return jev.respond;
+      } catch (jevError: any) {
+        // Jev is a single external dependency in the hot path: fall through to
+        // the typed haiku gate below rather than straight to the tier fallback.
+        engine = "haiku_fallback";
+        logger.warn("Jev gate failed, falling back to fast-model gate", {
+          fallback: "haiku_fallback",
+          error: jevError?.message,
+          tier,
+        });
+      }
+    }
+
     const model = await getFastModel();
     // Share the turn's sessionId (thread) so the gate decision groups with the
     // rest of the conversation in Langfuse's Sessions view. The gate runs before
     // the user's display name is resolved and for messages that may get no
     // response, so it stays its own trace rather than nesting under slack-chat.
+    const haikuStartedAt = Date.now();
     const result = await withTrace(
       {
         sessionId: context.threadTs ?? context.messageTs ?? context.channelId,
@@ -346,20 +444,23 @@ async function llmShouldRespond(
           model,
           instructions: withCacheControl(systemPrompt),
           prompt: userMessage,
-          maxOutputTokens: 5,
+          output: Output.object({ schema: shouldRespondSchema }),
+          maxOutputTokens: 256,
+          temperature: 0,
+          providerOptions: SHOULD_RESPOND_GATEWAY_PROVIDER_OPTIONS,
           telemetry: aiTelemetry("should-respond"),
         }),
     );
 
-    const answer = result.text.trim().toUpperCase();
-    const shouldReply = answer.startsWith("RESPOND");
+    // Typed boolean verdict. Empty/invalid output throws (NoObjectGeneratedError)
+    // and routes through the fallback tiers below instead of reading as "SKIP".
+    const shouldReply = result.output.respond;
 
-    logger.debug("LLM shouldRespond gate", {
-      answer: result.text.trim(),
-      shouldReply,
-      userId: context.userId,
-      channelId: context.channelId,
-      tier: coldObservation ? "cold_observation" : isParticipant ? "participant" : "recently_active",
+    logShouldRespondGate({
+      engine,
+      tier,
+      respond: shouldReply,
+      latencyMs: Date.now() - haikuStartedAt,
     });
 
     return shouldReply;
@@ -367,19 +468,22 @@ async function llmShouldRespond(
     // Tier 2 (participant): fail open — better to over-respond than miss.
     // Tier 3 (recently active) / Tier 4 (cold observation): fail closed.
     const fallback = isParticipant && !coldObservation;
-    logger.error("LLM shouldRespond gate failed", {
+    logger.warn("LLM shouldRespond gate failed, falling back to tier", {
+      fallback: "tier_fallback",
       error: error.message,
-      fallback: fallback ? "RESPOND" : "SKIP",
-      isParticipant,
-      coldObservation,
+      tier,
+    });
+    logShouldRespondGate({
+      engine: "tier_fallback",
+      tier,
+      respond: fallback,
+      latencyMs: Date.now() - gateStartedAt,
     });
     return fallback;
   }
 }
 
-function resolveChannelType(
-  event: SlackEvent,
-): ChannelType {
+function resolveChannelType(event: SlackEvent): ChannelType {
   if ("channel_type" in event) {
     const ct = (event as any).channel_type;
     if (ct === "im") return "dm";
@@ -406,10 +510,7 @@ const userNameCache = new Map<string, string>();
  *
  * The LLM then sees both the name and the ID, so tools can use either.
  */
-export async function resolveSlackEntities(
-  client: WebClient,
-  text: string,
-): Promise<string> {
+export async function resolveSlackEntities(client: WebClient, text: string): Promise<string> {
   // Match all Slack entity references: <@U...>, <#C...|name>, <#C...>
   const entityPattern = /<(@|#)([A-Z0-9]+)(?:\|([^>]*))?>/g;
   const matches = [...text.matchAll(entityPattern)];
@@ -440,20 +541,14 @@ export async function resolveSlackEntities(
   return resolved;
 }
 
-async function resolveUserId(
-  client: WebClient,
-  userId: string,
-): Promise<string> {
+async function resolveUserId(client: WebClient, userId: string): Promise<string> {
   const cached = userNameCache.get(userId);
   if (cached) return cached;
 
   try {
     const result = await client.users.info({ user: userId });
     const name =
-      result.user?.profile?.display_name ||
-      result.user?.real_name ||
-      result.user?.name ||
-      userId;
+      result.user?.profile?.display_name || result.user?.real_name || result.user?.name || userId;
     userNameCache.set(userId, name);
     return name;
   } catch {
@@ -461,10 +556,7 @@ async function resolveUserId(
   }
 }
 
-export async function resolveChannelName(
-  client: WebClient,
-  channelId: string,
-): Promise<string> {
+export async function resolveChannelName(client: WebClient, channelId: string): Promise<string> {
   try {
     const info = await resolveChannelById(client, channelId);
     return info?.name || channelId;

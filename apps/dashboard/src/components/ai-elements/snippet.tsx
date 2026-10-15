@@ -1,4 +1,3 @@
-
 import {
   InputGroup,
   InputGroupAddon,
@@ -31,12 +30,7 @@ export type SnippetProps = ComponentProps<typeof InputGroup> & {
   code: string;
 };
 
-export const Snippet = ({
-  code,
-  className,
-  children,
-  ...props
-}: SnippetProps) => {
+export const Snippet = ({ code, className, children, ...props }: SnippetProps) => {
   const contextValue = useMemo(() => ({ code }), [code]);
 
   return (
@@ -50,23 +44,15 @@ export const Snippet = ({
 
 export type SnippetAddonProps = ComponentProps<typeof InputGroupAddon>;
 
-export const SnippetAddon = (props: SnippetAddonProps) => (
-  <InputGroupAddon {...props} />
-);
+export const SnippetAddon = (props: SnippetAddonProps) => <InputGroupAddon {...props} />;
 
 export type SnippetTextProps = ComponentProps<typeof InputGroupText>;
 
 export const SnippetText = ({ className, ...props }: SnippetTextProps) => (
-  <InputGroupText
-    className={cn("pl-2 font-normal text-muted-foreground", className)}
-    {...props}
-  />
+  <InputGroupText className={cn("pl-2 font-normal text-muted-foreground", className)} {...props} />
 );
 
-export type SnippetInputProps = Omit<
-  ComponentProps<typeof InputGroupInput>,
-  "readOnly" | "value"
->;
+export type SnippetInputProps = Omit<ComponentProps<typeof InputGroupInput>, "readOnly" | "value">;
 
 export const SnippetInput = ({ className, ...props }: SnippetInputProps) => {
   const { code } = useContext(SnippetContext);
@@ -110,10 +96,7 @@ export const SnippetCopyButton = ({
         await navigator.clipboard.writeText(code);
         setIsCopied(true);
         onCopy?.();
-        timeoutRef.current = window.setTimeout(
-          () => setIsCopied(false),
-          timeout
-        );
+        timeoutRef.current = window.setTimeout(() => setIsCopied(false), timeout);
       }
     } catch (error) {
       onError?.(error as Error);
@@ -124,7 +107,7 @@ export const SnippetCopyButton = ({
     () => () => {
       window.clearTimeout(timeoutRef.current);
     },
-    []
+    [],
   );
 
   const Icon = isCopied ? CheckIcon : CopyIcon;

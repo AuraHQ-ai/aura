@@ -9,9 +9,7 @@ import { currentWorkspaceId } from "./workspace-context.js";
  * transaction scoped to a single pooled connection. Supports the full query
  * builder plus raw `tx.execute(sql\`...\`)`.
  */
-export type NeonTx = Parameters<
-  Parameters<NeonDatabase<typeof schema>["transaction"]>[0]
->[0];
+export type NeonTx = Parameters<Parameters<NeonDatabase<typeof schema>["transaction"]>[0]>[0];
 
 /**
  * Run `fn` inside a real interactive Postgres transaction.
@@ -27,15 +25,13 @@ export type NeonTx = Parameters<
  *
  * Multi-tenancy (issue #1393): when called inside a withWorkspace() scope,
  * the ambient workspace id is applied with `SET LOCAL app.workspace_id`
- * right after BEGIN, so the RLS policies (migration 0091) scope every
+ * right after BEGIN, so the RLS policies (migration 0094) scope every
  * statement of the transaction — correct through the Neon `-pooler` host,
  * because PgBouncer pins the backend for the duration of an explicit
  * transaction. Outside any scope, no GUC is set and RLS fails closed under
- * the non-bypassing `aura_app` role (migration 0092).
+ * the non-bypassing `aura_app` role (migration 0095).
  */
-export async function withTransaction<T>(
-  fn: (tx: NeonTx) => Promise<T>,
-): Promise<T> {
+export async function withTransaction<T>(fn: (tx: NeonTx) => Promise<T>): Promise<T> {
   const { pool, kind } = await getSessionPool();
   const workspaceId = currentWorkspaceId();
 
@@ -48,9 +44,7 @@ export async function withTransaction<T>(
 
   return txDb.transaction(async (tx) => {
     if (workspaceId) {
-      await tx.execute(
-        sql`SELECT set_config('app.workspace_id', ${workspaceId}, true)`,
-      );
+      await tx.execute(sql`SELECT set_config('app.workspace_id', ${workspaceId}, true)`);
     }
     return fn(tx as NeonTx);
   });

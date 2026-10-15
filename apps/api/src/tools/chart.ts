@@ -36,9 +36,7 @@ const dataPointSchema = z.object({
     .min(1, "Data point label is required")
     .max(20, "Data point labels must be 20 characters or fewer")
     .describe("X-axis category for this point. Must match an axis_config category."),
-  value: z
-    .number()
-    .describe("Numeric y-axis value. Negative values are allowed."),
+  value: z.number().describe("Numeric y-axis value. Negative values are allowed."),
 });
 
 const seriesSchema = z.object({
@@ -272,16 +270,20 @@ export function createChartTools(client: WebClient, context?: ScheduleContext) {
           .min(1, "Need at least one series")
           .max(6, "Max 6 series")
           .optional()
-          .describe("Data series for line, bar, and area charts. Required for those chart types; do not set for pie."),
+          .describe(
+            "Data series for line, bar, and area charts. Required for those chart types; do not set for pie.",
+          ),
         axis_config: axisConfigSchema
           .optional()
-          .describe("Axis configuration for line, bar, and area charts. Required for those chart types; do not set for pie."),
+          .describe(
+            "Axis configuration for line, bar, and area charts. Required for those chart types; do not set for pie.",
+          ),
         send_as_reply: z
           .boolean()
           .optional()
           .describe(
             "Post the chart as a thread reply in the current conversation instead of inline. " +
-            "Use when sending multiple charts.",
+              "Use when sending multiple charts.",
           ),
         target_channel: z
           .string()
@@ -358,7 +360,11 @@ export function createChartTools(client: WebClient, context?: ScheduleContext) {
 
           try {
             const result = await postChart(
-              client, context.channelId, chartBlock, message, context.threadTs,
+              client,
+              context.channelId,
+              chartBlock,
+              message,
+              context.threadTs,
             );
             logger.info("draw_chart tool called (reply)", {
               channelId: context.channelId,
@@ -401,9 +407,7 @@ export function createChartTools(client: WebClient, context?: ScheduleContext) {
             channelId = resolved.id;
           }
 
-          const result = await postChart(
-            client, channelId, chartBlock, message, thread_ts,
-          );
+          const result = await postChart(client, channelId, chartBlock, message, thread_ts);
 
           const targetLabel = target_user || target_channel;
           logger.info("draw_chart tool called (targeted)", {

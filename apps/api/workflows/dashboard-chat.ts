@@ -117,9 +117,7 @@ async function prepareDashboardTurn(
     });
   }
 
-  const modelMessages = await convertToModelMessages(
-    sanitizeAssistantPartOrder(input.messages),
-  );
+  const modelMessages = await convertToModelMessages(sanitizeAssistantPartOrder(input.messages));
 
   const systemMessages = buildCachedSystemMessages(
     prompt.stablePrefix,
@@ -193,6 +191,7 @@ async function executeDashboardTool(
     }
     if (validation?.success) toolInput = validation.value;
 
+    const { closeMcpClients } = await import("../src/tools/mcp.js");
     const result = await executionContext.run(
       {
         triggeredBy: ctx.userId,
@@ -203,6 +202,7 @@ async function executeDashboardTool(
       },
       () => t.execute(toolInput, { toolCallId, messages: [] }),
     );
+    await closeMcpClients(tools);
 
     // Tools with toModelOutput produce native content parts (images, files)
     // — pass that shape through so the model sees the file, not base64 JSON.

@@ -16,16 +16,11 @@ import { formatTimestamp } from "../lib/temporal.js";
  */
 export const TABLE_BLOCK_KEY = "__table_block";
 
-function buildTableBlock(
-  rows: string[][],
-  columnAlignments?: ("left" | "center" | "right")[],
-) {
+function buildTableBlock(rows: string[][], columnAlignments?: ("left" | "center" | "right")[]) {
   const colCount = rows[0].length;
   return {
     type: "table" as const,
-    rows: rows.map((row) =>
-      row.map((cell) => ({ type: "raw_text" as const, text: cell })),
-    ),
+    rows: rows.map((row) => row.map((cell) => ({ type: "raw_text" as const, text: cell }))),
     column_settings: columnAlignments
       ? columnAlignments.map((align) => ({ align, is_wrapped: true }))
       : Array.from({ length: colCount }, () => ({ is_wrapped: true })),
@@ -99,7 +94,7 @@ export function createTableTools(client: WebClient, context?: ScheduleContext) {
           .optional()
           .describe(
             "Post the table as a thread reply in the current conversation instead of inline. " +
-            "Use when sending multiple tables.",
+              "Use when sending multiple tables.",
           ),
         target_channel: z
           .string()
@@ -181,7 +176,11 @@ export function createTableTools(client: WebClient, context?: ScheduleContext) {
 
           try {
             const result = await postTable(
-              client, context.channelId, tableBlock, message, context.threadTs,
+              client,
+              context.channelId,
+              tableBlock,
+              message,
+              context.threadTs,
             );
             logger.info("draw_table tool called (reply)", {
               channelId: context.channelId,
@@ -224,9 +223,7 @@ export function createTableTools(client: WebClient, context?: ScheduleContext) {
             channelId = resolved.id;
           }
 
-          const result = await postTable(
-            client, channelId, tableBlock, message, thread_ts,
-          );
+          const result = await postTable(client, channelId, tableBlock, message, thread_ts);
 
           const targetLabel = target_user || target_channel;
           logger.info("draw_table tool called (targeted)", {

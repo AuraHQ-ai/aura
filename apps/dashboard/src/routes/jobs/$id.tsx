@@ -5,9 +5,22 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { Switch } from "@/components/ui/switch";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { DetailSkeleton } from "@/components/page-skeleton";
@@ -91,15 +104,15 @@ function JobDetailPage() {
   });
 
   if (isLoading) return <DetailSkeleton />;
-  if (error) return <div className="text-destructive text-sm">Failed to load job: {error.message}</div>;
+  if (error)
+    return <div className="text-destructive text-sm">Failed to load job: {error.message}</div>;
   if (!data) return null;
 
   const { job, executions } = data;
 
   const trimmedEnvVar = newEnvVar.trim();
   const canAddEnvVar =
-    ENV_VAR_NAME_REGEX.test(trimmedEnvVar) &&
-    !(job.envAllowlist ?? []).includes(trimmedEnvVar);
+    ENV_VAR_NAME_REGEX.test(trimmedEnvVar) && !(job.envAllowlist ?? []).includes(trimmedEnvVar);
 
   function addEnvVar() {
     if (!canAddEnvVar) return;
@@ -113,11 +126,15 @@ function JobDetailPage() {
     <div className="space-y-4">
       <div className="flex items-center gap-3 flex-wrap">
         <Button variant="ghost" size="icon-sm" asChild>
-          <Link to="/jobs"><ArrowLeft className="h-4 w-4" /></Link>
+          <Link to="/jobs">
+            <ArrowLeft className="h-4 w-4" />
+          </Link>
         </Button>
         <div className="min-w-0 flex-1">
           <h1 className="text-base font-semibold">{job.name}</h1>
-          {job.description && <p className="text-sm text-muted-foreground truncate">{job.description}</p>}
+          {job.description && (
+            <p className="text-sm text-muted-foreground truncate">{job.description}</p>
+          )}
         </div>
         <div className="flex items-center gap-2 shrink-0">
           <Switch
@@ -134,31 +151,41 @@ function JobDetailPage() {
 
       <div className="grid gap-3 grid-cols-2 lg:grid-cols-4">
         <Card>
-          <CardHeader><CardTitle>Schedule</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle>Schedule</CardTitle>
+          </CardHeader>
           <CardContent>
             <span className="font-mono text-[13px]">{job.cronSchedule || "One-shot"}</span>
           </CardContent>
         </Card>
         <Card>
-          <CardHeader><CardTitle>Executions</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle>Executions</CardTitle>
+          </CardHeader>
           <CardContent>
             <div className="text-xl font-bold">{job.executionCount}</div>
           </CardContent>
         </Card>
         <Card>
-          <CardHeader><CardTitle className="text-sm">Priority</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle className="text-sm">Priority</CardTitle>
+          </CardHeader>
           <CardContent>
             <Badge variant="outline">{job.priority}</Badge>
           </CardContent>
         </Card>
         <Card>
-          <CardHeader><CardTitle className="text-sm">Last Run</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle className="text-sm">Last Run</CardTitle>
+          </CardHeader>
           <CardContent>
             <span className="text-sm">{formatDate(job.lastExecutedAt)}</span>
           </CardContent>
         </Card>
         <Card>
-          <CardHeader><CardTitle className="text-sm">Model</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle className="text-sm">Model</CardTitle>
+          </CardHeader>
           <CardContent>
             <Select
               value={job.model ?? "__default"}
@@ -171,8 +198,10 @@ function JobDetailPage() {
             >
               <SelectTrigger className="w-full">
                 <SelectValue>
-                  {JOB_MODEL_SELECT_OPTIONS.find((o) => o.value === (job.model ?? "__default"))
-                    ?.label}
+                  {
+                    JOB_MODEL_SELECT_OPTIONS.find((o) => o.value === (job.model ?? "__default"))
+                      ?.label
+                  }
                 </SelectValue>
               </SelectTrigger>
               <SelectContent>
@@ -189,7 +218,9 @@ function JobDetailPage() {
           </CardContent>
         </Card>
         <Card>
-          <CardHeader><CardTitle className="text-sm">Prompt Mode</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle className="text-sm">Prompt Mode</CardTitle>
+          </CardHeader>
           <CardContent className="space-y-2">
             <Select
               value={job.promptMode ?? "__default"}
@@ -202,8 +233,10 @@ function JobDetailPage() {
             >
               <SelectTrigger className="w-full">
                 <SelectValue>
-                  {PROMPT_MODE_OPTIONS.find((o) => o.value === (job.promptMode ?? "__default"))
-                    ?.label}
+                  {
+                    PROMPT_MODE_OPTIONS.find((o) => o.value === (job.promptMode ?? "__default"))
+                      ?.label
+                  }
                 </SelectValue>
               </SelectTrigger>
               <SelectContent>
@@ -221,7 +254,9 @@ function JobDetailPage() {
           </CardContent>
         </Card>
         <Card className="col-span-2">
-          <CardHeader><CardTitle className="text-sm">Env Allowlist</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle className="text-sm">Env Allowlist</CardTitle>
+          </CardHeader>
           <CardContent className="space-y-2">
             {job.envAllowlist === null ? (
               <div className="flex items-center justify-between gap-2">
@@ -244,6 +279,7 @@ function JobDetailPage() {
                     <Badge key={name} variant="secondary" className="font-mono text-xs gap-1">
                       {name}
                       <button
+                        type="button"
                         onClick={() =>
                           updateMutation.mutate({
                             envAllowlist: job.envAllowlist!.filter((n) => n !== name),
@@ -258,7 +294,9 @@ function JobDetailPage() {
                     </Badge>
                   ))}
                   {job.envAllowlist.length === 0 && (
-                    <span className="text-sm text-muted-foreground">Empty — no env vars allowed.</span>
+                    <span className="text-sm text-muted-foreground">
+                      Empty — no env vars allowed.
+                    </span>
                   )}
                 </div>
                 <div className="flex items-center gap-2">
@@ -300,8 +338,12 @@ function JobDetailPage() {
 
       <Tabs defaultValue="executions">
         <TabsList>
-          <TabsTrigger value="executions"><Play /> Executions</TabsTrigger>
-          <TabsTrigger value="playbook"><BookOpen /> Playbook</TabsTrigger>
+          <TabsTrigger value="executions">
+            <Play /> Executions
+          </TabsTrigger>
+          <TabsTrigger value="playbook">
+            <BookOpen /> Playbook
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="executions">
@@ -323,7 +365,11 @@ function JobDetailPage() {
                   <TableRow key={exec.id}>
                     <TableCell className="text-sm">
                       {exec.conversationTraceId ? (
-                        <Link to="/conversations/$id" params={{ id: exec.conversationTraceId }} className="hover:underline">
+                        <Link
+                          to="/conversations/$id"
+                          params={{ id: exec.conversationTraceId }}
+                          className="hover:underline"
+                        >
                           {formatDate(exec.startedAt)}
                         </Link>
                       ) : (
@@ -332,11 +378,15 @@ function JobDetailPage() {
                     </TableCell>
                     <TableCell className="text-sm">{formatDate(exec.finishedAt)}</TableCell>
                     <TableCell>
-                      <Badge variant={
-                        exec.status === "completed" ? "success" :
-                        exec.status === "failed" ? "destructive" :
-                        "secondary"
-                      }>
+                      <Badge
+                        variant={
+                          exec.status === "completed"
+                            ? "success"
+                            : exec.status === "failed"
+                              ? "destructive"
+                              : "secondary"
+                        }
+                      >
                         {exec.status}
                       </Badge>
                     </TableCell>
@@ -354,7 +404,9 @@ function JobDetailPage() {
                 ))}
                 {executions.length === 0 && (
                   <TableRow>
-                    <TableCell colSpan={7} className="text-center text-muted-foreground py-8">No executions yet</TableCell>
+                    <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
+                      No executions yet
+                    </TableCell>
                   </TableRow>
                 )}
               </TableBody>

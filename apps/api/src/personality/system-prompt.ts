@@ -7,6 +7,11 @@ import { logger } from "../lib/logger.js";
 import type { ConversationThread } from "../memory/retrieve.js";
 import type { ChannelType } from "../pipeline/context.js";
 import type { SandboxEnvVarInfo } from "../lib/sandbox.js";
+import { formatMcpServers, type McpServerHintEntry } from "../lib/mcp-hints.js";
+import { isMcpToolName } from "../lib/mcp-names.js";
+
+export type { McpServerHintEntry };
+export { formatMcpServers };
 
 export interface PersonProfile {
   slackUserId: string;
@@ -192,9 +197,11 @@ function formatUserProfile(profile: UserProfile, interlocutor?: PersonProfile): 
 
   // Enrich with people DB fields (gender, pronouns, language, role, notes)
   if (interlocutor) {
-    const PRONOUN_MAP: Record<string, string> = { male: 'he/him', female: 'she/her' };
-    if (interlocutor.gender && PRONOUN_MAP[interlocutor.gender]) parts.push(`Communication style: ${PRONOUN_MAP[interlocutor.gender]} pronouns`);
-    if (interlocutor.preferredLanguage) parts.push(`Preferred language: ${interlocutor.preferredLanguage}`);
+    const PRONOUN_MAP: Record<string, string> = { male: "he/him", female: "she/her" };
+    if (interlocutor.gender && PRONOUN_MAP[interlocutor.gender])
+      parts.push(`Communication style: ${PRONOUN_MAP[interlocutor.gender]} pronouns`);
+    if (interlocutor.preferredLanguage)
+      parts.push(`Preferred language: ${interlocutor.preferredLanguage}`);
     if (interlocutor.jobTitle) parts.push(`Role: ${interlocutor.jobTitle}`);
     if (interlocutor.managerName) parts.push(`Manager: ${interlocutor.managerName}`);
     if (interlocutor.notes) parts.push(`Notes: ${interlocutor.notes}`);
@@ -202,22 +209,15 @@ function formatUserProfile(profile: UserProfile, interlocutor?: PersonProfile): 
 
   if (style) {
     const styleParts: string[] = [];
-    if (style.verbosity === "terse")
-      styleParts.push("they tend to be brief — match that");
-    if (style.verbosity === "verbose")
-      styleParts.push("they like detailed responses");
-    if (style.formality === "casual")
-      styleParts.push("they're casual — be casual back");
+    if (style.verbosity === "terse") styleParts.push("they tend to be brief — match that");
+    if (style.verbosity === "verbose") styleParts.push("they like detailed responses");
+    if (style.formality === "casual") styleParts.push("they're casual — be casual back");
     if (style.formality === "formal")
       styleParts.push("they're more formal — adjust your tone slightly");
-    if (style.emojiUsage === "heavy")
-      styleParts.push("they use emoji — you can mirror lightly");
-    if (style.emojiUsage === "none")
-      styleParts.push("they don't use emoji — skip them");
-    if (style.preferredFormat === "bullets")
-      styleParts.push("they prefer bullet-point answers");
-    if (style.preferredFormat === "prose")
-      styleParts.push("they prefer prose answers");
+    if (style.emojiUsage === "heavy") styleParts.push("they use emoji — you can mirror lightly");
+    if (style.emojiUsage === "none") styleParts.push("they don't use emoji — skip them");
+    if (style.preferredFormat === "bullets") styleParts.push("they prefer bullet-point answers");
+    if (style.preferredFormat === "prose") styleParts.push("they prefer prose answers");
     if (styleParts.length > 0) {
       parts.push(`Communication style: ${styleParts.join("; ")}`);
     }
@@ -236,8 +236,8 @@ function formatUserProfile(profile: UserProfile, interlocutor?: PersonProfile): 
  * Format @mentioned people for compact injection into the conversation layer.
  */
 function formatMentionedPeople(people: PersonProfile[]): string {
-  if (!people.length) return '';
-  const lines = people.map(p => {
+  if (!people.length) return "";
+  const lines = people.map((p) => {
     const parts = [`<@${p.slackUserId}>`];
     if (p.displayName) parts.push(p.displayName);
     if (p.gender) parts.push(p.gender);
@@ -245,11 +245,10 @@ function formatMentionedPeople(people: PersonProfile[]): string {
     if (p.jobTitle) parts.push(p.jobTitle);
     if (p.managerName) parts.push(`reports to: ${p.managerName}`);
     if (p.notes) parts.push(p.notes);
-    return `- ${parts.join(' | ')}`;
+    return `- ${parts.join(" | ")}`;
   });
-  return lines.join('\n');
+  return lines.join("\n");
 }
-
 
 /**
  * Format entity summaries as a structured knowledge block.
@@ -257,9 +256,7 @@ function formatMentionedPeople(people: PersonProfile[]): string {
 function formatEntitySummaries(summaries: EntitySummary[]): string {
   if (summaries.length === 0) return "";
 
-  const entries = summaries
-    .map((s) => `**${s.name}** (${s.type}):\n${s.summary}`)
-    .join("\n\n");
+  const entries = summaries.map((s) => `**${s.name}** (${s.type}):\n${s.summary}`).join("\n\n");
 
   return `These are compiled profiles of key entities. Use them as primary context -- they're synthesized from hundreds of individual memories.\n\n${entries}`;
 }
@@ -355,19 +352,21 @@ const CAPABILITY_DOMAINS: Array<{
   {
     label: "BigQuery",
     envNames: ["GOOGLE_BQ_CREDENTIALS"],
-    wrappers: [
-      "bq_list_datasets",
-      "bq_list_tables",
-      "bq_inspect_table",
-      "bq_execute_query",
-    ],
+    wrappers: ["bq_list_datasets", "bq_list_tables", "bq_inspect_table", "bq_execute_query"],
     guidance: "use the BigQuery tools, especially `bq_execute_query`, not bq CLI curl",
   },
   {
     label: "E2B Sandboxes",
     envNames: ["E2B_API_KEY", "E2B_PAT"],
-    wrappers: ["run_command", "run_command_detached", "check_command", "dispatch_headless", "run_subagent"],
-    guidance: "use run_command for short inline work; use run_command_detached for long work as a suspend point that resumes via webhook, falling back to check_command polling only when webhook env is missing; do not call E2B APIs directly",
+    wrappers: [
+      "run_command",
+      "run_command_detached",
+      "check_command",
+      "dispatch_headless",
+      "run_subagent",
+    ],
+    guidance:
+      "use run_command for short inline work; use run_command_detached for long work as a suspend point that resumes via webhook, falling back to check_command polling only when webhook env is missing; do not call E2B APIs directly",
   },
 ];
 
@@ -397,10 +396,7 @@ function formatEnvVar(info: SandboxEnvVarInfo): string {
   return `${base} (${scopeLabel}, resolved for caller${owner})`;
 }
 
-function formatCapabilities(
-  envVars: SandboxEnvVarInfo[],
-  availableToolNames?: string[],
-): string {
+function formatCapabilities(envVars: SandboxEnvVarInfo[], availableToolNames?: string[]): string {
   const byName = new Map<string, SandboxEnvVarInfo>();
   for (const envVar of envVars) {
     if (!byName.has(envVar.envName)) byName.set(envVar.envName, envVar);
@@ -408,14 +404,12 @@ function formatCapabilities(
   const names = [...byName.keys()].sort();
   if (names.length === 0) return "";
 
-  const availableTools = availableToolNames
-    ? new Set(availableToolNames)
-    : null;
+  const availableTools = availableToolNames ? new Set(availableToolNames) : null;
   const covered = new Set<string>();
   const lines: string[] = [
     "Scoped secrets are available as environment variables in the sandbox. The names below are identifiers only -- never paste or log secret values. There is no `get_credential` or `http_request` tool.",
     "",
-    "To call external APIs, use sandbox `curl`, `python`, or `typescript` and read the key from its env var (for example: `-H \"X-Claap-Key: $CLAAP_API_KEY\"`). For workflows that need a real browser, use `browse` (Browserbase) with stealth mode. Prefer typed Aura tools and safe CLIs when they exist.",
+    'To call external APIs, use sandbox `curl`, `python`, or `typescript` and read the key from its env var (for example: `-H "X-Claap-Key: $CLAAP_API_KEY"`). For workflows that need a real browser, use `browse` (Browserbase) with stealth mode. Prefer typed Aura tools and safe CLIs when they exist.',
     "",
     "Hard rule: handle secret names only; never print env var values, echo secrets, or include them in logs or chat.",
     "",
@@ -424,14 +418,11 @@ function formatCapabilities(
   for (const domain of CAPABILITY_DOMAINS) {
     const presentEnvNames = domain.envNames.filter((name) => names.includes(name));
     if (presentEnvNames.length === 0) continue;
-    presentEnvNames.forEach((name) => covered.add(name));
+    for (const name of presentEnvNames) covered.add(name);
 
-    const presentWrappers = domain.wrappers?.filter((name) =>
-      availableTools ? availableTools.has(name) : true,
-    ) ?? [];
-    const wrapperText = presentWrappers.length > 0
-      ? ` -> ${formatToolList(presentWrappers)}`
-      : "";
+    const presentWrappers =
+      domain.wrappers?.filter((name) => (availableTools ? availableTools.has(name) : true)) ?? [];
+    const wrapperText = presentWrappers.length > 0 ? ` -> ${formatToolList(presentWrappers)}` : "";
     lines.push(
       `- ${domain.label}: ${presentEnvNames.map((name) => formatEnvVar(byName.get(name)!)).join(" / ")}${wrapperText} -- ${domain.guidance}`,
     );
@@ -459,6 +450,7 @@ export function formatDeferredTools(
   const seen = new Set<string>();
   const entries = deferredTools
     .filter((tool) => {
+      if (isMcpToolName(tool.name)) return false;
       if (immediateTools.has(tool.name) || seen.has(tool.name)) return false;
       seen.add(tool.name);
       return true;
@@ -481,6 +473,16 @@ export function appendDeferredToolsBlock(
   const block = formatDeferredTools(deferredTools, immediateToolNames);
   if (!block) return prompt;
   if (prompt?.includes("<deferred_tools>")) return prompt;
+  return prompt ? `${prompt}\n\n${block}` : block;
+}
+
+export function appendMcpServersBlock(
+  prompt: string | undefined,
+  servers: McpServerHintEntry[] | undefined,
+): string | undefined {
+  const block = formatMcpServers(servers);
+  if (!block) return prompt;
+  if (prompt?.includes("<mcp_servers>")) return prompt;
   return prompt ? `${prompt}\n\n${block}` : block;
 }
 
@@ -534,10 +536,7 @@ export async function buildStablePrefix(): Promise<string> {
       .select({ topic: notes.topic, category: notes.category, summary: notes.summary })
       .from(notes)
       .where(
-        and(
-          eq(notes.injectInContext, true),
-          or(isNull(notes.expiresAt), gt(notes.expiresAt, now))
-        )
+        and(eq(notes.injectInContext, true), or(isNull(notes.expiresAt), gt(notes.expiresAt, now))),
       )
       .orderBy(notes.category, desc(notes.importance), notes.topic);
 
@@ -626,9 +625,7 @@ You are Aura, an AI agent, executing a scheduled job in task mode. Execute the t
  * Layer 1 (stablePrefix): identical across all requests (via buildStablePrefix).
  * Layer 2 (conversationContext): varies per conversation thread.
  */
-export async function buildSystemPrompt(
-  context: SystemPromptContext,
-): Promise<SystemPromptLayers> {
+export async function buildSystemPrompt(context: SystemPromptContext): Promise<SystemPromptLayers> {
   // ── Layer 1: Stable prefix ──────────────────────────────────────────
   const stablePrefix = await buildStablePrefix();
 
@@ -636,26 +633,33 @@ export async function buildSystemPrompt(
   const contextParts: string[] = [];
 
   // Setting (channel/DM + current time)
-  const settingText = context.channelType === "dm"
-    ? `You're in a private DM. Be conversational and personal.`
-    : context.channelType === "mpim"
-      ? `You're in a group DM (MPIM). Be conversational and personal.`
-      : `You're in the ${context.channelContext} channel. Respond in-thread. Adapt your tone to the channel.`;
+  const settingText =
+    context.channelType === "dm"
+      ? `You're in a private DM. Be conversational and personal.`
+      : context.channelType === "mpim"
+        ? `You're in a group DM (MPIM). Be conversational and personal.`
+        : `You're in the ${context.channelContext} channel. Respond in-thread. Adapt your tone to the channel.`;
   contextParts.push(`  <setting>\n${settingText}\n  </setting>`);
 
   // User profile
   if (context.userProfile) {
-    contextParts.push(`  <person>\n${formatUserProfile(context.userProfile, context.interlocutor)}\n  </person>`);
+    contextParts.push(
+      `  <person>\n${formatUserProfile(context.userProfile, context.interlocutor)}\n  </person>`,
+    );
   }
 
   // Mentioned people
   if (context.mentionedPeople?.length) {
-    contextParts.push(`  <mentioned_people>\n${formatMentionedPeople(context.mentionedPeople)}\n  </mentioned_people>`);
+    contextParts.push(
+      `  <mentioned_people>\n${formatMentionedPeople(context.mentionedPeople)}\n  </mentioned_people>`,
+    );
   }
 
   // Entity summaries (higher-signal than individual memories, placed first)
   if (context.entitySummaries && context.entitySummaries.length > 0) {
-    contextParts.push(`  <entity_summaries>\n${formatEntitySummaries(context.entitySummaries)}\n  </entity_summaries>`);
+    contextParts.push(
+      `  <entity_summaries>\n${formatEntitySummaries(context.entitySummaries)}\n  </entity_summaries>`,
+    );
   }
 
   // Retrieved memories
@@ -697,6 +701,7 @@ export function buildEnvironmentContext(context: {
   availableToolNames?: string[];
   deferredTools?: DeferredToolSummary[];
   immediateToolNames?: string[];
+  mcpServers?: McpServerHintEntry[];
 }): string {
   const parts: string[] = [];
 
@@ -708,10 +713,10 @@ export function buildEnvironmentContext(context: {
   const storage = formatStorage(envVars.map((envVar) => envVar.envName));
   if (storage) parts.push(storage);
 
-  const deferredTools = formatDeferredTools(
-    context.deferredTools,
-    context.immediateToolNames,
-  );
+  const mcpServers = formatMcpServers(context.mcpServers);
+  if (mcpServers) parts.push(mcpServers);
+
+  const deferredTools = formatDeferredTools(context.deferredTools, context.immediateToolNames);
   if (deferredTools) parts.push(deferredTools);
 
   return parts.join("\n\n");

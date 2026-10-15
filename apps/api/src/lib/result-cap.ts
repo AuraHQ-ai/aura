@@ -56,9 +56,7 @@ function buildMarker(
   totalChars: number,
   items?: { shown: number; total: number },
 ): string {
-  const itemsPart = items
-    ? ` (showing ${items.shown} of ${items.total} items)`
-    : "";
+  const itemsPart = items ? ` (showing ${items.shown} of ${items.total} items)` : "";
   return `... [truncated ${omittedChars} chars of ${totalChars}${itemsPart} — narrow the query or paginate]`;
 }
 
@@ -84,11 +82,7 @@ function truncateStringWithMarker(value: string, maxChars: number): string {
  * attachments (email) — truncating mid-base64 corrupts them, and their
  * model-visible cost is image/file tokens, not text chars.
  */
-function isBinaryPayloadField(
-  obj: Record<string, unknown>,
-  key: string,
-  value: unknown,
-): boolean {
+function isBinaryPayloadField(obj: Record<string, unknown>, key: string, value: unknown): boolean {
   if (typeof value !== "string" || value.length < 512) return false;
   if (/base64/i.test(key)) return true;
   if (key === "content" && obj.encoding === "base64") return true;
@@ -111,11 +105,7 @@ const MARKER_RESERVE = 200;
  *    { _truncated: true, truncated_result: "..." } so the result is never
  *    malformed JSON pretending to be complete.
  */
-export function capToolResult(
-  result: unknown,
-  maxChars: number,
-  toolName: string,
-): unknown {
+export function capToolResult(result: unknown, maxChars: number, toolName: string): unknown {
   if (result == null || typeof result === "number" || typeof result === "boolean") {
     return result;
   }
@@ -139,10 +129,7 @@ export function capToolResult(
     if (serialized.length <= maxChars) return result;
 
     let items = result.slice();
-    while (
-      items.length > 0 &&
-      JSON.stringify(items).length + MARKER_RESERVE > maxChars
-    ) {
+    while (items.length > 0 && JSON.stringify(items).length + MARKER_RESERVE > maxChars) {
       items = items.slice(0, Math.floor(items.length / 2));
     }
     recordCap(toolName, "array-items", serialized.length, maxChars);
@@ -198,11 +185,10 @@ export function capToolResult(
         ...rest,
         [arrayKey]: items,
         _truncated: true,
-        _note: buildMarker(
-          serialized.length - JSON.stringify(items).length,
-          serialized.length,
-          { shown: items.length, total: allItems.length },
-        ),
+        _note: buildMarker(serialized.length - JSON.stringify(items).length, serialized.length, {
+          shown: items.length,
+          total: allItems.length,
+        }),
       };
     } while (JSON.stringify(candidate).length > maxChars && items.length > 0);
     recordCap(toolName, "object-array-items", serialized.length, maxChars);

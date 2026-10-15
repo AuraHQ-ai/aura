@@ -8,8 +8,10 @@ const dbMock = vi.hoisted(() => {
   const state = {
     rows: [] as Array<Record<string, unknown>>,
     whereCalls: [] as unknown[],
+    insertedValues: [] as Array<Record<string, unknown>>,
     select: vi.fn(),
     update: vi.fn(),
+    insert: vi.fn(),
   };
 
   function createQuery() {
@@ -40,6 +42,17 @@ const dbMock = vi.hoisted(() => {
 
   state.select.mockImplementation(() => createQuery());
 
+  state.insert.mockImplementation(() => {
+    const query: any = {
+      values: vi.fn((arg: Record<string, unknown>) => {
+        state.insertedValues.push(arg);
+        return query;
+      }),
+      onConflictDoUpdate: vi.fn(() => Promise.resolve()),
+    };
+    return query;
+  });
+
   state.update.mockImplementation(() => {
     let setArg: Record<string, unknown> = {};
     const query: any = {
@@ -48,9 +61,7 @@ const dbMock = vi.hoisted(() => {
         return query;
       }),
       where: vi.fn((condition: Predicate) => {
-        state.rows = state.rows.map((row) =>
-          condition(row) ? { ...row, ...setArg } : row,
-        );
+        state.rows = state.rows.map((row) => (condition(row) ? { ...row, ...setArg } : row));
         return Promise.resolve();
       }),
     };
@@ -84,6 +95,7 @@ const schemaMock = vi.hoisted(() => {
       enabled: column("enabled"),
       archivedAt: column("archivedAt"),
       createdAt: column("createdAt"),
+      promptMode: column("promptMode"),
     },
     jobExecutions: {
       jobId: column("jobId"),
@@ -94,10 +106,8 @@ const schemaMock = vi.hoisted(() => {
 
 const drizzleMock = vi.hoisted(() => {
   const keyOf = (column: { key: string }) => column.key;
-  const predicate = (
-    kind: string,
-    fn: (row: Record<string, unknown>) => boolean,
-  ): Predicate => Object.assign(fn, { kind });
+  const predicate = (kind: string, fn: (row: Record<string, unknown>) => boolean): Predicate =>
+    Object.assign(fn, { kind });
 
   return {
     eq: vi.fn((column: { key: string }, value: unknown) =>
@@ -114,19 +124,13 @@ const drizzleMock = vi.hoisted(() => {
     ),
     and: vi.fn((...conditions: Array<Predicate | undefined>) => {
       const activeConditions = conditions.filter(Boolean) as Predicate[];
-      return predicate("and", (row) =>
-        activeConditions.every((condition) => condition(row)),
-      );
+      return predicate("and", (row) => activeConditions.every((condition) => condition(row)));
     }),
     or: vi.fn((...conditions: Array<Predicate | undefined>) => {
       const activeConditions = conditions.filter(Boolean) as Predicate[];
-      return predicate("or", (row) =>
-        activeConditions.some((condition) => condition(row)),
-      );
+      return predicate("or", (row) => activeConditions.some((condition) => condition(row)));
     }),
-    not: vi.fn((condition: Predicate) =>
-      predicate("not", (row) => !condition(row)),
-    ),
+    not: vi.fn((condition: Predicate) => predicate("not", (row) => !condition(row))),
     desc: vi.fn((column: { key: string }) => ({ column })),
     sql: vi.fn(),
   };
@@ -139,6 +143,7 @@ vi.mock("../db/client.js", () => ({
   db: {
     select: dbMock.select,
     update: dbMock.update,
+    insert: dbMock.insert,
   },
 }));
 
@@ -200,14 +205,14 @@ function baseJob(overrides: Record<string, unknown> = {}) {
     enabled: 1,
     archivedAt: null,
     createdAt: new Date("2026-05-01T00:00:00.000Z"),
+    promptMode: "task",
     ...overrides,
   };
 }
 
 async function listJobs(input: Record<string, unknown> = {}) {
   const { createJobTools } = await import("./jobs.js");
-  const tool = createJobTools(undefined, { timezone: "UTC" } as any)
-    .list_jobs as any;
+  const tool = createJobTools(undefined, { timezone: "UTC" } as any).list_jobs as any;
 
   return tool.execute(tool.inputSchema.parse(input));
 }
@@ -218,6 +223,7 @@ describe("list_jobs", () => {
     vi.setSystemTime(new Date("2026-05-20T08:00:00.000Z"));
     dbMock.rows = [];
     dbMock.whereCalls = [];
+    dbMock.insertedValues = [];
     vi.clearAllMocks();
   });
 
@@ -346,9 +352,24 @@ describe("list_jobs", () => {
       createdAt: new Date("2026-02-16T00:00:00.000Z"),
     });
     dbMock.rows = [
-      baseJob({ id: "job-1", name: "one-shot-1", status: "pending", createdAt: new Date("2026-05-19T00:00:00.000Z") }),
-      baseJob({ id: "job-2", name: "one-shot-2", status: "pending", createdAt: new Date("2026-05-18T00:00:00.000Z") }),
-      baseJob({ id: "job-3", name: "one-shot-3", status: "pending", createdAt: new Date("2026-05-17T00:00:00.000Z") }),
+      baseJob({
+        id: "job-1",
+        name: "one-shot-1",
+        status: "pending",
+        createdAt: new Date("2026-05-19T00:00:00.000Z"),
+      }),
+      baseJob({
+        id: "job-2",
+        name: "one-shot-2",
+        status: "pending",
+        createdAt: new Date("2026-05-18T00:00:00.000Z"),
+      }),
+      baseJob({
+        id: "job-3",
+        name: "one-shot-3",
+        status: "pending",
+        createdAt: new Date("2026-05-17T00:00:00.000Z"),
+      }),
       legacyRecurring,
     ];
 
@@ -372,8 +393,18 @@ describe("list_jobs", () => {
         cronSchedule: "0 9 * * *",
         createdAt: new Date("2026-05-20T00:00:00.000Z"),
       }),
-      baseJob({ id: "job-1", name: "one-shot-1", status: "pending", createdAt: new Date("2026-05-19T00:00:00.000Z") }),
-      baseJob({ id: "job-2", name: "one-shot-2", status: "pending", createdAt: new Date("2026-05-18T00:00:00.000Z") }),
+      baseJob({
+        id: "job-1",
+        name: "one-shot-1",
+        status: "pending",
+        createdAt: new Date("2026-05-19T00:00:00.000Z"),
+      }),
+      baseJob({
+        id: "job-2",
+        name: "one-shot-2",
+        status: "pending",
+        createdAt: new Date("2026-05-18T00:00:00.000Z"),
+      }),
     ];
 
     const result = await listJobs({ status: "all", limit: 2 });
@@ -405,9 +436,7 @@ describe("list_jobs", () => {
       count: 1,
     });
 
-    await expect(
-      listJobs({ status: "all", include_archived: true }),
-    ).resolves.toMatchObject({
+    await expect(listJobs({ status: "all", include_archived: true })).resolves.toMatchObject({
       ok: true,
       jobs: [
         expect.objectContaining({ name: "live-job" }),
@@ -418,16 +447,23 @@ describe("list_jobs", () => {
   });
 });
 
-async function updateJob(
-  input: Record<string, unknown>,
-  context: Record<string, unknown> = {},
-) {
+async function updateJob(input: Record<string, unknown>, context: Record<string, unknown> = {}) {
   const { createJobTools } = await import("./jobs.js");
-  const tool = createJobTools(undefined, { timezone: "UTC", ...context } as any)
-    .update_job as any;
+  const tool = createJobTools(undefined, { timezone: "UTC", ...context } as any).update_job as any;
 
   return tool.execute(tool.inputSchema.parse(input));
 }
+
+describe("update_job recurring status guard", () => {
+  it("rejects completed status for recurring jobs", async () => {
+    dbMock.rows = [baseJob({ name: "weekly-check", cronSchedule: "0 9 * * 1" })];
+    const result = await updateJob({ name: "weekly-check", updates: { status: "completed" } });
+    expect(result).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("cannot be marked completed"),
+    });
+  });
+});
 
 describe("update_job requested_by transfer", () => {
   beforeEach(() => {
@@ -435,6 +471,7 @@ describe("update_job requested_by transfer", () => {
     vi.setSystemTime(new Date("2026-05-20T08:00:00.000Z"));
     dbMock.rows = [];
     dbMock.whereCalls = [];
+    dbMock.insertedValues = [];
     vi.clearAllMocks();
   });
 
@@ -502,4 +539,75 @@ describe("update_job requested_by transfer", () => {
     expect(result.error).toContain("Nobody Real");
     expect(dbMock.rows[0].requestedBy).toBe("U_REQUESTER");
   });
+
+  it("accepts a partial update with no prompt_mode and leaves the existing value untouched", async () => {
+    dbMock.rows = [baseJob({ promptMode: "task" })];
+
+    const result = await updateJob({
+      name: "one-shot",
+      updates: { description: "updated description only" },
+    });
+
+    expect(result.ok).toBe(true);
+    expect(dbMock.rows[0].promptMode).toBe("task");
+    expect(dbMock.rows[0].description).toBe("updated description only");
+  });
+});
+
+async function createJobTool() {
+  const { createJobTools } = await import("./jobs.js");
+  return createJobTools(undefined, { timezone: "UTC" } as any).create_job as any;
+}
+
+describe("create_job prompt_mode", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-05-20T08:00:00.000Z"));
+    dbMock.rows = [];
+    dbMock.whereCalls = [];
+    dbMock.insertedValues = [];
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("rejects a call with prompt_mode omitted at the schema layer", async () => {
+    const tool = await createJobTool();
+    const parsed = tool.inputSchema.safeParse({
+      description: "Remind Joan to review PR #1284",
+      execute_in: "2 hours",
+    });
+
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(
+        parsed.error.issues.some((issue: { path: PropertyKey[] }) =>
+          issue.path.includes("prompt_mode"),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  it.each(["full", "task"] as const)(
+    "persists the exact prompt_mode passed (%s)",
+    async (promptMode) => {
+      const tool = await createJobTool();
+      const input = {
+        name: `job-${promptMode}`,
+        description: "do the thing",
+        execute_in: "2 hours",
+        prompt_mode: promptMode,
+      };
+      const parsed = tool.inputSchema.parse(input);
+      const result = await tool.execute(parsed);
+
+      expect(result.ok).toBe(true);
+      expect(dbMock.insertedValues).toHaveLength(1);
+      expect(dbMock.insertedValues[0].promptMode).toBe(promptMode);
+      expect(result.message).toContain(`prompt: ${promptMode}`);
+      expect(result.message).toContain("model: medium (default)");
+    },
+  );
 });

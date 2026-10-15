@@ -12,17 +12,8 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Command,
   CommandEmpty,
@@ -97,19 +88,14 @@ function CredentialsPage() {
       if (search) params.set("search", search);
       params.set("page", String(page));
       params.set("limit", String(PAGE_SIZE));
-      return apiGet<{ items: CredentialRow[]; total: number }>(
-        `/credentials?${params}`,
-      );
+      return apiGet<{ items: CredentialRow[]; total: number }>(`/credentials?${params}`);
     },
     placeholderData: keepPreviousData,
   });
 
   const { data: users = [] } = useQuery({
     queryKey: ["users-list-for-credentials"],
-    queryFn: () =>
-      apiGet<{ items: WorkspaceUser[] }>("/users?limit=500").then(
-        (d) => d.items,
-      ),
+    queryFn: () => apiGet<{ items: WorkspaceUser[] }>("/users?limit=500").then((d) => d.items),
     enabled: showCreate,
   });
 
@@ -121,9 +107,7 @@ function CredentialsPage() {
   const ownerLabel =
     selectedOwner?.displayName ||
     selectedOwner?.slackUserId ||
-    (newOwnerId === session?.slackUserId
-      ? session.name || session.slackUserId
-      : null);
+    (newOwnerId === session?.slackUserId ? session.name || session.slackUserId : null);
 
   const createMutation = useMutation({
     mutationFn: (payload: {
@@ -146,9 +130,7 @@ function CredentialsPage() {
 
   if (error && !data)
     return (
-      <div className="text-destructive text-sm">
-        Failed to load credentials: {error.message}
-      </div>
+      <div className="text-destructive text-sm">Failed to load credentials: {error.message}</div>
     );
 
   const credentials = data?.items ?? [];
@@ -158,9 +140,7 @@ function CredentialsPage() {
     <div className="flex flex-col gap-4 flex-1 min-h-0">
       <div className="flex items-center justify-between">
         <h1 className="text-lg font-semibold tracking-tight">Credentials</h1>
-        <span className="text-sm text-muted-foreground">
-          {isLoading ? "…" : `${total} total`}
-        </span>
+        <span className="text-sm text-muted-foreground">{isLoading ? "…" : `${total} total`}</span>
       </div>
 
       <div className="flex items-center gap-2">
@@ -181,7 +161,12 @@ function CredentialsPage() {
         </Button>
       </div>
 
-      <div className={cn("flex-1 min-h-0 rounded-xl border overflow-auto transition-opacity", isFetching && !isLoading && "opacity-50")}>
+      <div
+        className={cn(
+          "flex-1 min-h-0 rounded-xl border overflow-auto transition-opacity",
+          isFetching && !isLoading && "opacity-50",
+        )}
+      >
         <Table className="min-w-[650px]">
           <TableHeader>
             <TableRow>
@@ -197,10 +182,7 @@ function CredentialsPage() {
               <TableRowsSkeleton columns={5} />
             ) : credentials.length === 0 ? (
               <TableRow>
-                <TableCell
-                  colSpan={5}
-                  className="text-center text-muted-foreground py-8"
-                >
+                <TableCell colSpan={5} className="text-center text-muted-foreground py-8">
                   No credentials found
                 </TableCell>
               </TableRow>
@@ -220,11 +202,7 @@ function CredentialsPage() {
                     <Badge variant="secondary">{cred.type}</Badge>
                   </TableCell>
                   <TableCell>
-                    <Badge
-                      variant={
-                        SCOPE_LABELS[cred.scope]?.variant ?? "secondary"
-                      }
-                    >
+                    <Badge variant={SCOPE_LABELS[cred.scope]?.variant ?? "secondary"}>
                       {SCOPE_LABELS[cred.scope]?.label ?? cred.scope}
                     </Badge>
                   </TableCell>
@@ -248,8 +226,11 @@ function CredentialsPage() {
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Type</label>
+              <label htmlFor="cred-type" className="text-sm font-medium">
+                Type
+              </label>
               <select
+                id="cred-type"
                 value={newType}
                 onChange={(e) => setNewType(e.target.value)}
                 className="h-9 w-full rounded-md border border-input bg-transparent px-2.5 text-sm"
@@ -259,13 +240,13 @@ function CredentialsPage() {
               </select>
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Owner</label>
-              <Popover
-                open={ownerPickerOpen}
-                onOpenChange={setOwnerPickerOpen}
-              >
+              <label htmlFor="cred-owner" className="text-sm font-medium">
+                Owner
+              </label>
+              <Popover open={ownerPickerOpen} onOpenChange={setOwnerPickerOpen}>
                 <PopoverTrigger asChild>
                   <Button
+                    id="cred-owner"
                     variant="outline"
                     role="combobox"
                     aria-expanded={ownerPickerOpen}
@@ -275,10 +256,7 @@ function CredentialsPage() {
                     <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
                   </Button>
                 </PopoverTrigger>
-                <PopoverContent
-                  className="w-[--radix-popover-trigger-width] p-0"
-                  align="start"
-                >
+                <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
                   <Command>
                     <CommandInput placeholder="Search users…" />
                     <CommandList>
@@ -296,14 +274,10 @@ function CredentialsPage() {
                             <Check
                               className={cn(
                                 "mr-2 h-4 w-4",
-                                newOwnerId === user.slackUserId
-                                  ? "opacity-100"
-                                  : "opacity-0",
+                                newOwnerId === user.slackUserId ? "opacity-100" : "opacity-0",
                               )}
                             />
-                            <span>
-                              {user.displayName || user.slackUserId}
-                            </span>
+                            <span>{user.displayName || user.slackUserId}</span>
                             <span className="ml-auto text-xs text-muted-foreground">
                               {user.slackUserId}
                             </span>
@@ -316,8 +290,11 @@ function CredentialsPage() {
               </Popover>
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Name</label>
+              <label htmlFor="cred-name" className="text-sm font-medium">
+                Name
+              </label>
               <Input
+                id="cred-name"
                 placeholder="e.g. github_token"
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
@@ -327,8 +304,11 @@ function CredentialsPage() {
               </p>
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Scope</label>
+              <label htmlFor="cred-scope" className="text-sm font-medium">
+                Scope
+              </label>
               <select
+                id="cred-scope"
                 value={newScope}
                 onChange={(e) => setNewScope(e.target.value)}
                 className="h-9 w-full rounded-md border border-input bg-transparent px-2.5 text-sm"
@@ -344,8 +324,11 @@ function CredentialsPage() {
               </p>
             </div>
             <div className="space-y-1.5">
-              <label className="text-sm font-medium">Value</label>
+              <label htmlFor="cred-value" className="text-sm font-medium">
+                Value
+              </label>
               <Input
+                id="cred-value"
                 type="password"
                 placeholder="Secret value"
                 value={newValue}
@@ -353,10 +336,7 @@ function CredentialsPage() {
               />
             </div>
             <div className="flex justify-end gap-2 pt-1">
-              <Button
-                variant="outline"
-                onClick={() => setShowCreate(false)}
-              >
+              <Button variant="outline" onClick={() => setShowCreate(false)}>
                 Cancel
               </Button>
               <Button
@@ -369,12 +349,7 @@ function CredentialsPage() {
                     scope: newScope,
                   })
                 }
-                disabled={
-                  !newName ||
-                  !newValue ||
-                  !newOwnerId ||
-                  createMutation.isPending
-                }
+                disabled={!newName || !newValue || !newOwnerId || createMutation.isPending}
               >
                 {createMutation.isPending ? "Creating..." : "Create"}
               </Button>

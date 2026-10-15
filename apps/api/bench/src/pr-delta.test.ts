@@ -58,9 +58,7 @@ describe("loadBaselineEntry", () => {
     const latest = {
       schemaVersion: 1,
       source: "history.jsonl",
-      entries: [
-        makeEntry({ runId: "latest", commit: "latest333" }),
-      ],
+      entries: [makeEntry({ runId: "latest", commit: "latest333" })],
     };
     expect(loadBaselineEntry(JSON.stringify(latest), scope)?.commit).toBe("latest333");
   });

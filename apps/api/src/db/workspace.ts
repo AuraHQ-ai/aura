@@ -5,7 +5,7 @@
  * Establishes an ambient workspace scope (AsyncLocalStorage) and routes the
  * shared `db` export through a handle that carries the tenant id into every
  * statement as a transaction-local GUC, so the RLS policies added in
- * migration 0091 evaluate against the right tenant — including the ~400
+ * migration 0094 evaluate against the right tenant — including the ~400
  * pre-existing call sites that never mention workspace_id.
  *
  * TRANSPORT — one HTTP round trip on the hot path (review round 3)
@@ -151,10 +151,16 @@ export async function getSessionPool(): Promise<{ pool: PoolLike; kind: DriverKi
           const ws = await import("ws");
           neonConfig.webSocketConstructor = ws.default as unknown as typeof WebSocket;
         }
-        return { pool: new Pool({ connectionString: url }) as unknown as PoolLike, kind: "neon" as const };
+        return {
+          pool: new Pool({ connectionString: url }) as unknown as PoolLike,
+          kind: "neon" as const,
+        };
       }
       const pg = await import("pg");
-      return { pool: new pg.default.Pool({ connectionString: url }) as unknown as PoolLike, kind: "pg" as const };
+      return {
+        pool: new pg.default.Pool({ connectionString: url }) as unknown as PoolLike,
+        kind: "pg" as const,
+      };
     })();
     poolPromise.catch(() => {
       // Allow a retry on the next call instead of caching the failure forever.
@@ -169,7 +175,7 @@ export async function getSessionPool(): Promise<{ pool: PoolLike; kind: DriverKi
  * policies are INERT for roles with BYPASSRLS or superuser (BYPASSRLS beats
  * FORCE ROW LEVEL SECURITY — FORCE only removes the *owner* exemption). On
  * production Neon, `neondb_owner` has BYPASSRLS, which is exactly why
- * migration 0092 introduces the non-bypassing `aura_app` role. This check
+ * migration 0095 introduces the non-bypassing `aura_app` role. This check
  * runs once per process, on the first workspace scope: if the connected role
  * is RLS-exempt it logs a hard error (single-tenant prod keeps running — the
  * failure mode is "containment inert", not "app down") and THROWS when
@@ -194,9 +200,13 @@ function assertNonBypassingRole(probe: () => Promise<RoleRow | undefined>): Prom
           `RLS containment is INERT: database role "${row.role}" has ` +
           `${row.rolsuper ? "SUPERUSER" : "BYPASSRLS"}, which exempts it from every ` +
           `row-level-security policy (FORCE does not override role attributes). ` +
-          `Point DATABASE_URL at the non-privileged "aura_app" role (migration 0092, ` +
+          `Point DATABASE_URL at the non-privileged "aura_app" role (migration 0095, ` +
           `see the PR #1396 runbook).`;
-        logger.error(message, { role: row.role, rolbypassrls: row.rolbypassrls, rolsuper: row.rolsuper });
+        logger.error(message, {
+          role: row.role,
+          rolbypassrls: row.rolbypassrls,
+          rolsuper: row.rolsuper,
+        });
         if (process.env.MULTI_TENANT === "true") {
           throw new Error(message);
         }

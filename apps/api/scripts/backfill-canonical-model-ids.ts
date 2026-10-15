@@ -1,10 +1,6 @@
 import { and, asc, eq, gt, inArray, isNotNull } from "drizzle-orm";
 import { db } from "../src/db/client.js";
-import {
-  conversationMessages,
-  conversationTraces,
-  type DetailedTokenUsage,
-} from "@aura/db/schema";
+import { conversationMessages, conversationTraces, type DetailedTokenUsage } from "@aura/db/schema";
 import {
   computeConversationCost,
   resolveCanonicalStepModelId,
@@ -23,10 +19,7 @@ async function main() {
 
   for (;;) {
     const traceFilter = lastTraceId
-      ? and(
-          isNotNull(conversationTraces.modelId),
-          gt(conversationTraces.id, lastTraceId),
-        )
+      ? and(isNotNull(conversationTraces.modelId), gt(conversationTraces.id, lastTraceId))
       : isNotNull(conversationTraces.modelId);
 
     const traces = await db
@@ -49,9 +42,7 @@ async function main() {
       }
 
       if (processed % BATCH_SIZE === 0) {
-        console.log(
-          JSON.stringify({ processed, updated, skipped, lastTraceId }),
-        );
+        console.log(JSON.stringify({ processed, updated, skipped, lastTraceId }));
       }
     }
 
@@ -67,10 +58,7 @@ async function main() {
           isNotNull(conversationMessages.tokenUsage),
         ),
       )
-      .orderBy(
-        asc(conversationMessages.conversationId),
-        asc(conversationMessages.orderIndex),
-      );
+      .orderBy(asc(conversationMessages.conversationId), asc(conversationMessages.orderIndex));
 
     const messagesByTraceId = new Map<string, typeof assistantMessages>();
     for (const message of assistantMessages) {
@@ -104,9 +92,7 @@ async function main() {
       const pricedAt = syncedAtByWorkspace.get(workspaceId) ?? new Date();
 
       const fallbackTraceUsage =
-        stepUsages.length === 0 &&
-        trace.modelId != null &&
-        trace.tokenUsage != null
+        stepUsages.length === 0 && trace.modelId != null && trace.tokenUsage != null
           ? [
               {
                 modelId: trace.modelId,
@@ -138,9 +124,7 @@ async function main() {
 
       const cost = await computeConversationCost(usagesToPrice, pricedAt, workspaceId);
       const firstResolvedModelId =
-        traceMessages[0]?.resolvedModelId
-        ?? trace.resolvedModelId
-        ?? null;
+        traceMessages[0]?.resolvedModelId ?? trace.resolvedModelId ?? null;
 
       await db
         .update(conversationTraces)

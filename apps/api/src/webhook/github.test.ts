@@ -30,10 +30,7 @@ import {
 const SECRET = "github-webhook-secret";
 
 function sign(rawBody: string, secret = SECRET): string {
-  return (
-    "sha256=" +
-    crypto.createHmac("sha256", secret).update(rawBody, "utf8").digest("hex")
-  );
+  return `sha256=${crypto.createHmac("sha256", secret).update(rawBody, "utf8").digest("hex")}`;
 }
 
 function createDatabaseMock(selectRows: any[] = []) {
@@ -98,7 +95,7 @@ describe("verifyGitHubWebhookSignature", () => {
 
   it("rejects an invalid signature", () => {
     const body = JSON.stringify({ hello: "world" });
-    expect(verifyGitHubWebhookSignature(body, "sha256=" + "0".repeat(64), SECRET)).toBe(false);
+    expect(verifyGitHubWebhookSignature(body, `sha256=${"0".repeat(64)}`, SECRET)).toBe(false);
   });
 
   it("rejects a signature computed with the wrong secret", () => {
@@ -122,7 +119,9 @@ describe("parseClosingIssueReferences", () => {
   it("extracts issue numbers from closing keywords", () => {
     expect(parseClosingIssueReferences("Fixes #7")).toEqual([7]);
     expect(parseClosingIssueReferences("fixes #7, closes #12\nResolves #99")).toEqual([7, 12, 99]);
-    expect(parseClosingIssueReferences("Fixed #3 and resolved #4 and closed #5")).toEqual([3, 4, 5]);
+    expect(parseClosingIssueReferences("Fixed #3 and resolved #4 and closed #5")).toEqual([
+      3, 4, 5,
+    ]);
   });
 
   it("ignores plain references and empty bodies", () => {
@@ -158,7 +157,7 @@ describe("GitHub webhook endpoint", () => {
     const app = createGitHubWebhookApp(database);
 
     const response = await request(app, "pull_request", prPayload(), {
-      signature: "sha256=" + "0".repeat(64),
+      signature: `sha256=${"0".repeat(64)}`,
     });
 
     expect(response.status).toBe(401);
@@ -226,11 +225,7 @@ describe("GitHub webhook endpoint", () => {
     const { database, calls } = createDatabaseMock();
     const app = createGitHubWebhookApp(database);
 
-    const response = await request(
-      app,
-      "pull_request",
-      prPayload({ action: "ready_for_review" }),
-    );
+    const response = await request(app, "pull_request", prPayload({ action: "ready_for_review" }));
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({
@@ -238,9 +233,7 @@ describe("GitHub webhook endpoint", () => {
       handled: true,
       action: "ready_for_review",
     });
-    expect(calls.values).toHaveBeenCalledWith(
-      expect.objectContaining({ state: "open" }),
-    );
+    expect(calls.values).toHaveBeenCalledWith(expect.objectContaining({ state: "open" }));
   });
 
   it("closes referenced open issues when a PR with 'Fixes #N' is merged", async () => {
@@ -288,8 +281,8 @@ describe("GitHub webhook endpoint", () => {
 
   it("does not close issues that are already closed", async () => {
     const { database } = createDatabaseMock();
-    const fetchImpl = vi.fn(async () =>
-      new Response(JSON.stringify({ state: "closed", number: 7 }), { status: 200 }),
+    const fetchImpl = vi.fn(
+      async () => new Response(JSON.stringify({ state: "closed", number: 7 }), { status: 200 }),
     );
     const app = createGitHubWebhookApp(database, { fetchImpl, githubToken: "gh-token" });
 
@@ -328,9 +321,7 @@ describe("GitHub webhook endpoint", () => {
       expect.objectContaining({ merged: false, closedIssues: [] }),
     );
     expect(fetchImpl).not.toHaveBeenCalled();
-    expect(calls.values).toHaveBeenCalledWith(
-      expect.objectContaining({ state: "closed" }),
-    );
+    expect(calls.values).toHaveBeenCalledWith(expect.objectContaining({ state: "closed" }));
   });
 
   it("survives a failing issue-close call (fail-soft per issue)", async () => {
@@ -380,11 +371,7 @@ describe("GitHub webhook endpoint", () => {
     const { database, calls } = createDatabaseMock();
     const app = createGitHubWebhookApp(database);
 
-    const response = await request(
-      app,
-      "pull_request",
-      prPayload({ action: "synchronize" }),
-    );
+    const response = await request(app, "pull_request", prPayload({ action: "synchronize" }));
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({

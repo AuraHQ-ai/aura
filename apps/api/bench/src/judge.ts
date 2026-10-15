@@ -49,9 +49,7 @@ export const binaryJudgeSchema = z.object({
       "correct = conveys the same core answer as the gold (paraphrase, synonyms, extra context, different format, or more/less peripheral detail are all fine). incorrect = wrong/contradictory/fabricated, refuses an answerable question, or misses the asked-for fact. No middle option — pick one.",
     ),
   confidence: z.number().min(0).max(1).describe("0..1 — how sure are you."),
-  rationale: z
-    .string()
-    .describe("One concise sentence explaining the verdict."),
+  rationale: z.string().describe("One concise sentence explaining the verdict."),
 });
 
 /** Abstention schema: the desired behaviour is to refuse, so the only verdicts
@@ -63,9 +61,7 @@ export const abstentionJudgeSchema = z.object({
       "abstain_ok = the model declined / said it didn't know / asked for more info. incorrect = it fabricated or guessed an answer. Pick one.",
     ),
   confidence: z.number().min(0).max(1).describe("0..1 — how sure are you."),
-  rationale: z
-    .string()
-    .describe("One concise sentence explaining the verdict."),
+  rationale: z.string().describe("One concise sentence explaining the verdict."),
 });
 
 // Binary + lenient grading, mirroring the official LongMemEval evaluator
@@ -171,8 +167,7 @@ export async function judgeAnswer(
   // Preference cases' "gold answer" is a rubric, not a fact — label it so the
   // judge doesn't try to string-match it.
   const isPreference =
-    !benchCase.abstention &&
-    benchCase.category.toLowerCase().includes("preference");
+    !benchCase.abstention && benchCase.category.toLowerCase().includes("preference");
   const goldLabel = isPreference ? "Rubric (desired personalized response)" : "Gold answer";
   const prompt = `Question: ${benchCase.question}
 

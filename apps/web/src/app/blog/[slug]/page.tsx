@@ -62,7 +62,9 @@ export default async function BlogPostPage({ params }: Props) {
       <article style={{ padding: "64px 0 80px" }}>
         {/* Breadcrumb */}
         <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "40px" }}>
-          <Link href="/blog" style={{ fontSize: "13px", color: "var(--text-muted)" }}>Blog</Link>
+          <Link href="/blog" style={{ fontSize: "13px", color: "var(--text-muted)" }}>
+            Blog
+          </Link>
           <span style={{ color: "var(--col-border)" }}>/</span>
         </div>
 
@@ -80,7 +82,14 @@ export default async function BlogPostPage({ params }: Props) {
           >
             {post.title}
           </h1>
-          <p style={{ fontSize: "1.0625rem", color: "var(--text-secondary)", lineHeight: 1.6, marginBottom: "20px" }}>
+          <p
+            style={{
+              fontSize: "1.0625rem",
+              color: "var(--text-secondary)",
+              lineHeight: 1.6,
+              marginBottom: "20px",
+            }}
+          >
             {post.excerpt}
           </p>
           <div
@@ -104,7 +113,9 @@ export default async function BlogPostPage({ params }: Props) {
           {post.tags.length > 0 && (
             <div style={{ display: "flex", gap: "6px", flexWrap: "wrap", marginTop: "14px" }}>
               {post.tags.map((tag) => (
-                <span key={tag} className="tag">{tag}</span>
+                <span key={tag} className="tag">
+                  {tag}
+                </span>
               ))}
             </div>
           )}
@@ -122,7 +133,14 @@ export default async function BlogPostPage({ params }: Props) {
             padding: "48px 0",
           }}
         >
-          <h2 style={{ fontSize: "1rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: "24px" }}>
+          <h2
+            style={{
+              fontSize: "1rem",
+              fontWeight: 600,
+              color: "var(--text-primary)",
+              marginBottom: "24px",
+            }}
+          >
             Related posts
           </h2>
           <div style={{ display: "flex", flexDirection: "column", gap: "0" }}>
@@ -137,10 +155,24 @@ export default async function BlogPostPage({ params }: Props) {
                   textDecoration: "none",
                 }}
               >
-                <h3 style={{ fontSize: "0.9375rem", fontWeight: 600, color: "var(--text-primary)", marginBottom: "4px" }}>
+                <h3
+                  style={{
+                    fontSize: "0.9375rem",
+                    fontWeight: 600,
+                    color: "var(--text-primary)",
+                    marginBottom: "4px",
+                  }}
+                >
                   {r.title}
                 </h3>
-                <p style={{ fontSize: "0.875rem", color: "var(--text-secondary)", lineHeight: 1.6, margin: 0 }}>
+                <p
+                  style={{
+                    fontSize: "0.875rem",
+                    color: "var(--text-secondary)",
+                    lineHeight: 1.6,
+                    margin: 0,
+                  }}
+                >
                   {r.excerpt}
                 </p>
               </Link>

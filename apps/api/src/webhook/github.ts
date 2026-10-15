@@ -23,23 +23,17 @@ export function verifyGitHubWebhookSignature(
 ): boolean {
   if (!secret || !signature) return false;
 
-  const expected =
-    "sha256=" +
-    crypto.createHmac("sha256", secret).update(rawBody, "utf8").digest("hex");
+  const expected = `sha256=${crypto.createHmac("sha256", secret).update(rawBody, "utf8").digest("hex")}`;
 
   try {
-    return crypto.timingSafeEqual(
-      Buffer.from(expected, "utf8"),
-      Buffer.from(signature, "utf8"),
-    );
+    return crypto.timingSafeEqual(Buffer.from(expected, "utf8"), Buffer.from(signature, "utf8"));
   } catch {
     return false;
   }
 }
 
 // GitHub's closing keywords: https://docs.github.com/en/issues/tracking-your-work-with-issues/linking-a-pull-request-to-an-issue
-const CLOSING_KEYWORD_PATTERN =
-  /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
+const CLOSING_KEYWORD_PATTERN = /\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)/gi;
 
 /** Extracts issue numbers referenced via closing keywords ("Fixes #N") in a PR body. */
 export function parseClosingIssueReferences(body: string | null | undefined): number[] {
@@ -103,12 +97,10 @@ async function closeIssueIfOpen(
     // Issues API also returns PRs — never try to "close" a PR reference.
     if (issue.json?.pull_request) return "not_found";
 
-    const patch = await githubRest(
-      "PATCH",
-      `/repos/${repo}/issues/${issueNumber}`,
-      options,
-      { state: "closed", state_reason: "completed" },
-    );
+    const patch = await githubRest("PATCH", `/repos/${repo}/issues/${issueNumber}`, options, {
+      state: "closed",
+      state_reason: "completed",
+    });
     return patch.status === 200 ? "closed" : "failed";
   } catch (error) {
     logger.warn("GitHub webhook: failed to close referenced issue", {
@@ -126,10 +118,7 @@ function getWorkspaceId(): string {
 
 type GitHubWebhookOptions = GitHubApiOptions;
 
-export function createGitHubWebhookApp(
-  database: any = db,
-  options: GitHubWebhookOptions = {},
-) {
+export function createGitHubWebhookApp(database: any = db, options: GitHubWebhookOptions = {}) {
   const app = new Hono();
 
   app.post("/", async (c) => {
@@ -203,11 +192,7 @@ async function upsertPullRequest(
     .insert(githubPullRequests)
     .values(values)
     .onConflictDoUpdate({
-      target: [
-        githubPullRequests.workspaceId,
-        githubPullRequests.repo,
-        githubPullRequests.number,
-      ],
+      target: [githubPullRequests.workspaceId, githubPullRequests.repo, githubPullRequests.number],
       set: {
         title: values.title,
         url: values.url,
@@ -289,10 +274,7 @@ async function handleIssuesEvent(c: any, database: any, payload: any) {
     .select()
     .from(githubPullRequests)
     .where(
-      and(
-        eq(githubPullRequests.workspaceId, getWorkspaceId()),
-        eq(githubPullRequests.repo, repo),
-      ),
+      and(eq(githubPullRequests.workspaceId, getWorkspaceId()), eq(githubPullRequests.repo, repo)),
     );
   const referencing = (linkedPrs as Array<{ number: number; linkedIssues: number[] }>)
     .filter((row) => row.linkedIssues?.includes(issue.number))

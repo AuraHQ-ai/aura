@@ -156,10 +156,7 @@ describe("query planning helpers (#276 / #1056)", () => {
 
   it("mergeRoundRobin gives every list representation", () => {
     const m = (id: string) => ({ id }) as Memory;
-    const merged = mergeRoundRobin(
-      [[m("a1"), m("a2")], [m("b1"), m("b2")], [m("c1")]],
-      3,
-    );
+    const merged = mergeRoundRobin([[m("a1"), m("a2")], [m("b1"), m("b2")], [m("c1")]], 3);
     expect(merged.map((x) => x.id)).toEqual(["a1", "b1", "c1"]);
   });
 });
@@ -249,9 +246,7 @@ describe("retrieveMemories temporal validity", () => {
       similarity: 0.9,
     });
 
-    retrieveMocks.dbExecute
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([expired, active]);
+    retrieveMocks.dbExecute.mockResolvedValueOnce([]).mockResolvedValueOnce([expired, active]);
 
     const result = await retrieveMemories({
       query: "launch incident",
@@ -311,9 +306,7 @@ describe("retrieveMemories temporal validity", () => {
     });
     const asOf = new Date("2026-01-10T00:00:00.000Z");
 
-    retrieveMocks.dbExecute
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([replayVisible]);
+    retrieveMocks.dbExecute.mockResolvedValueOnce([]).mockResolvedValueOnce([replayVisible]);
 
     const result = await retrieveMemories({
       query: "launch incident",
@@ -400,9 +393,7 @@ describe("provenance-aware retrieval scoring (#949 / #950)", () => {
       similarity: 0.9,
     });
 
-    retrieveMocks.dbExecute
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([deliverable]);
+    retrieveMocks.dbExecute.mockResolvedValueOnce([]).mockResolvedValueOnce([deliverable]);
 
     const result = await retrieve();
 
@@ -452,9 +443,7 @@ describe("provenance-aware retrieval scoring (#949 / #950)", () => {
       rrf_score: 0.03,
     });
 
-    retrieveMocks.dbExecute
-      .mockResolvedValueOnce([])
-      .mockResolvedValueOnce([disputed, current]);
+    retrieveMocks.dbExecute.mockResolvedValueOnce([]).mockResolvedValueOnce([disputed, current]);
 
     const result = await retrieve();
 

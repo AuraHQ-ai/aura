@@ -6,7 +6,7 @@ import { z } from "zod";
 import { db } from "../db/client.js";
 import { resources } from "@aura/db/schema";
 import type { ScheduleContext } from "@aura/db/schema";
-import { getFastModel } from "../lib/ai.js";
+import { getFastModel, getMediumModel } from "../lib/ai.js";
 import { embedText } from "../lib/embeddings.js";
 import { logger } from "../lib/logger.js";
 import { aiTelemetry } from "../lib/langfuse.js";
@@ -48,7 +48,10 @@ function mergeMetadata(
 }
 
 function normalizeMarkdown(text: string): string {
-  return text.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  return text
+    .replace(/\r\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function truncate(text: string, maxChars: number): string {
@@ -73,10 +76,7 @@ function extractHtmlTitle(html: string): string | null {
 function deriveTitleFromUrl(url: string): string {
   try {
     const parsed = new URL(url);
-    const lastPath = parsed.pathname
-      .split("/")
-      .filter(Boolean)
-      .at(-1);
+    const lastPath = parsed.pathname.split("/").filter(Boolean).at(-1);
     return lastPath || parsed.hostname || url;
   } catch {
     return url;
@@ -117,9 +117,7 @@ async function fetchUrlAsMarkdown(url: string): Promise<{
   contentType: string;
 }> {
   if (await isPrivateUrl(url)) {
-    throw new Error(
-      "Blocked: URL resolves to a private/internal network address",
-    );
+    throw new Error("Blocked: URL resolves to a private/internal network address");
   }
 
   let currentUrl = url;
@@ -142,9 +140,7 @@ async function fetchUrlAsMarkdown(url: string): Promise<{
       if (!location) break;
       currentUrl = new URL(location, currentUrl).toString();
       if (await isPrivateUrl(currentUrl)) {
-        throw new Error(
-          "Blocked: redirect resolves to a private/internal network address",
-        );
+        throw new Error("Blocked: redirect resolves to a private/internal network address");
       }
       continue;
     }
@@ -194,24 +190,25 @@ async function fetchUrlAsMarkdown(url: string): Promise<{
   };
 }
 
+// Reasoning-tier fast models (e.g. tencent/hy3) can burn the entire output
+// budget on hidden reasoning and return text="" with finishReason "length"
+// (verified: 2048/2048 reasoning tokens on a one-line prompt). Summaries are
+// low-volume and quality-sensitive, so try medium first and fall back to fast.
+const SUMMARY_MAX_OUTPUT_TOKENS = 2_048;
+
 async function summarizeResource(input: {
   url: string;
   title: string | null;
   source: string;
   content: string;
 }): Promise<string> {
-  const model = await getFastModel();
   const maxChars = 24_000;
   const boundedContent =
     input.content.length > maxChars
       ? `${input.content.slice(0, maxChars)}\n\n[content truncated for summarization]`
       : input.content;
 
-  const { text } = await generateText({
-    model,
-    maxOutputTokens: 320,
-    telemetry: aiTelemetry("resource-summary"),
-    prompt: `Summarize this resource in ~200 words for fast retrieval.
+  const prompt = `Summarize this resource in ~200 words for fast retrieval.
 
 Focus on:
 - what this resource is
@@ -224,14 +221,43 @@ URL: ${input.url}
 Title: ${input.title ?? "(unknown)"}
 
 Resource content:
-${boundedContent}`,
-  });
+${boundedContent}`;
 
-  const summary = text.trim();
-  if (!summary) {
-    throw new Error("Summary generation returned empty output");
+  const attempts: Array<{ tier: string; getModel: () => Promise<any> }> = [
+    { tier: "medium", getModel: async () => (await getMediumModel()).model },
+    { tier: "fast", getModel: () => getFastModel() },
+  ];
+
+  let lastFinishReason: string | undefined;
+  for (const { tier, getModel } of attempts) {
+    try {
+      const model = await getModel();
+      const { text, finishReason } = await generateText({
+        model,
+        maxOutputTokens: SUMMARY_MAX_OUTPUT_TOKENS,
+        telemetry: aiTelemetry("resource-summary"),
+        prompt,
+      });
+      const summary = text.trim();
+      if (summary) return summary;
+      lastFinishReason = finishReason;
+      logger.warn("resource summary empty, trying next model tier", {
+        url: input.url,
+        tier,
+        finishReason,
+      });
+    } catch (error) {
+      logger.warn("resource summary attempt failed", {
+        url: input.url,
+        tier,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
-  return summary;
+
+  throw new Error(
+    `Summary generation returned empty output${lastFinishReason ? ` (finishReason=${lastFinishReason})` : ""}`,
+  );
 }
 
 interface ResourceSearchRow {
@@ -278,12 +304,9 @@ export function createResourceTools(context?: ScheduleContext) {
           .describe(
             "Optional parent resource URL for hierarchy (e.g., file -> repo, notion child -> parent).",
           ),
-        title: z
-          .string()
-          .optional()
-          .describe("Optional title override."),
+        title: z.string().optional().describe("Optional title override."),
         metadata: z
-          .record(z.unknown())
+          .record(z.string(), z.unknown())
           .optional()
           .describe("Flexible source-specific metadata to store on the resource."),
         content_markdown: z
@@ -335,14 +358,19 @@ export function createResourceTools(context?: ScheduleContext) {
           const current = currentRows[0];
 
           resolvedSource =
-            source ?? (current?.source as ResourceSource | undefined) ?? inferSourceFromUrl(normalizedUrl);
+            source ??
+            (current?.source as ResourceSource | undefined) ??
+            inferSourceFromUrl(normalizedUrl);
           const mergedMetadata = mergeMetadata(current?.metadata, metadata);
 
           const nextParentUrl = parent_url ?? current?.parentUrl ?? null;
           let nextTitle = title?.trim() || current?.title || null;
 
           if (/^https?:\/\//i.test(normalizedUrl) && (await isPrivateUrl(normalizedUrl))) {
-            return { ok: false, error: "Blocked: URL resolves to a private/internal network address" };
+            return {
+              ok: false,
+              error: "Blocked: URL resolves to a private/internal network address",
+            };
           }
 
           await db
@@ -375,9 +403,7 @@ export function createResourceTools(context?: ScheduleContext) {
 
           if (!content) {
             if (!/^https?:\/\//i.test(normalizedUrl)) {
-              throw new Error(
-                "content_markdown is required for non-HTTP URLs.",
-              );
+              throw new Error("content_markdown is required for non-HTTP URLs.");
             }
 
             let tavilySucceeded = false;
@@ -415,8 +441,7 @@ export function createResourceTools(context?: ScheduleContext) {
           }
 
           const contentHash = sha256(content);
-          const unchanged =
-            current?.status === "ready" && current.contentHash === contentHash;
+          const unchanged = current?.status === "ready" && current.contentHash === contentHash;
 
           if (unchanged) {
             await db
@@ -494,8 +519,7 @@ export function createResourceTools(context?: ScheduleContext) {
             crawled_at: now.toISOString(),
           };
         } catch (error: any) {
-          const errorMessage =
-            error instanceof Error ? error.message : String(error);
+          const errorMessage = error instanceof Error ? error.message : String(error);
           await db
             .update(resources)
             .set({
@@ -520,26 +544,25 @@ export function createResourceTools(context?: ScheduleContext) {
           };
         }
       },
-      slack: { status: "Ingesting resource...", detail: (i) => i.url, output: (r) => r.ok === false ? r.error : `Ingested '${r.title || r.url}'` },
+      slack: {
+        status: "Ingesting resource...",
+        detail: (i) => i.url,
+        output: (r) => (r.ok === false ? r.error : `Ingested '${r.title || r.url}'`),
+      },
     }),
 
     search_resources: defineTool({
       description:
         "Search ingested resources (status=ready). Use mode='semantic' for conceptual discovery across resource summaries, and mode='text' for exact keyword/full-text search within full markdown content. Optionally filter by source. Returns resource-level matches with URL, title, source, summary, crawl time, and score.",
       inputSchema: z.object({
-        query: z
-          .string()
-          .describe("Query text used for semantic or text search."),
+        query: z.string().describe("Query text used for semantic or text search."),
         mode: z
           .enum(["text", "semantic"])
           .default("semantic")
           .describe(
             "Search mode: semantic (vector on summary embedding) or text (Postgres full-text on content). Default semantic.",
           ),
-        source: z
-          .enum(RESOURCE_SOURCES)
-          .optional()
-          .describe("Optional source filter."),
+        source: z.enum(RESOURCE_SOURCES).optional().describe("Optional source filter."),
         limit: z
           .number()
           .min(1)
@@ -590,12 +613,9 @@ export function createResourceTools(context?: ScheduleContext) {
                 title: r.title,
                 source: r.source,
                 summary: r.summary,
-                crawled_at: r.crawled_at
-                  ? formatTimestamp(r.crawled_at, context?.timezone)
-                  : null,
-                similarity: r.similarity != null
-                  ? Math.round(Number(r.similarity) * 1000) / 1000
-                  : null,
+                crawled_at: r.crawled_at ? formatTimestamp(r.crawled_at, context?.timezone) : null,
+                similarity:
+                  r.similarity != null ? Math.round(Number(r.similarity) * 1000) / 1000 : null,
               })),
             };
           }
@@ -668,9 +688,7 @@ export function createResourceTools(context?: ScheduleContext) {
               source: r.source,
               summary: r.summary,
               snippet: r.snippet ?? null,
-              crawled_at: r.crawled_at
-                ? formatTimestamp(r.crawled_at, context?.timezone)
-                : null,
+              crawled_at: r.crawled_at ? formatTimestamp(r.crawled_at, context?.timezone) : null,
               score: r.rank != null ? Math.round(Number(r.rank) * 1000) / 1000 : null,
             })),
           };
@@ -687,7 +705,11 @@ export function createResourceTools(context?: ScheduleContext) {
           };
         }
       },
-      slack: { status: "Searching resources...", detail: (i) => i.query, output: (r) => r.ok === false ? r.error : `${r.count ?? 0} results` },
+      slack: {
+        status: "Searching resources...",
+        detail: (i) => i.query,
+        output: (r) => (r.ok === false ? r.error : `${r.count ?? 0} results`),
+      },
     }),
 
     get_resource: defineTool({
@@ -757,22 +779,25 @@ export function createResourceTools(context?: ScheduleContext) {
           };
         }
       },
-      slack: { status: "Loading resource...", detail: (i) => i.url, output: (r) => r.ok === false ? r.error : 'Resource loaded' },
+      slack: {
+        status: "Loading resource...",
+        detail: (i) => i.url,
+        output: (r) => (r.ok === false ? r.error : "Resource loaded"),
+      },
     }),
 
     list_resources: defineTool({
       description:
         "List resources in the knowledge base. Useful for browsing what has been ingested before doing targeted retrieval. Supports optional source and status filtering. Defaults to status=ready.",
       inputSchema: z.object({
-        source: z
-          .enum(RESOURCE_SOURCES)
-          .optional()
-          .describe("Optional source filter."),
+        source: z.enum(RESOURCE_SOURCES).optional().describe("Optional source filter."),
         status: z
           .enum(["pending", "ready", "error"])
           .optional()
           .default("ready")
-          .describe("Optional status filter (default ready). Use to check what failed or is still processing."),
+          .describe(
+            "Optional status filter (default ready). Use to check what failed or is still processing.",
+          ),
         limit: z
           .number()
           .min(1)
@@ -815,9 +840,7 @@ export function createResourceTools(context?: ScheduleContext) {
               source: r.source,
               summary: r.summary ? truncate(r.summary, 150) : null,
               parent_url: r.parent_url,
-              crawled_at: r.crawled_at
-                ? formatTimestamp(r.crawled_at, context?.timezone)
-                : null,
+              crawled_at: r.crawled_at ? formatTimestamp(r.crawled_at, context?.timezone) : null,
             })),
           };
         } catch (error: any) {
@@ -831,7 +854,10 @@ export function createResourceTools(context?: ScheduleContext) {
           };
         }
       },
-      slack: { status: "Listing resources...", output: (r) => r.ok === false ? r.error : `${r.count ?? 0} resources` },
+      slack: {
+        status: "Listing resources...",
+        output: (r) => (r.ok === false ? r.error : `${r.count ?? 0} resources`),
+      },
     }),
   };
 }

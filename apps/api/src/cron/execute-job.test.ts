@@ -81,9 +81,7 @@ const sendJobOpsNoticeMock = vi.hoisted(() =>
     target: "ops_channel" as const,
   })),
 );
-const buildStablePrefixMock = vi.hoisted(() =>
-  vi.fn(async () => "full stable prefix"),
-);
+const buildStablePrefixMock = vi.hoisted(() => vi.fn(async () => "full stable prefix"));
 const buildTaskPrefixMock = vi.hoisted(() => vi.fn(() => "minimal task prefix"));
 
 vi.mock("../db/client.js", () => ({
@@ -109,6 +107,7 @@ vi.mock("../lib/sandbox.js", () => ({
   getSandboxEnvs: sandboxMock.getSandboxEnvs,
   filterEnvsByAllowlist: sandboxMock.filterEnvsByAllowlist,
   truncateOutput: (value: string, maxChars: number) => value.slice(0, maxChars),
+  resolveSandboxUserId: (userId?: string | null) => userId || "aura",
 }));
 
 vi.mock("../personality/system-prompt.js", () => ({
@@ -233,13 +232,10 @@ describe("executeJob outcome persistence", () => {
   it("writes a pending-review succeeded outcome for script-only success", async () => {
     sandboxMock.commandRun.mockResolvedValue({
       exitCode: 0,
-      stdout: "{\"ok\":true,\"summary\":\"done\"}",
+      stdout: '{"ok":true,"summary":"done"}',
       stderr: "",
     });
-    queueDbResults(
-      [{ id: "job-1" }],
-      [{ id: "exec-1" }],
-    );
+    queueDbResults([{ id: "job-1" }], [{ id: "exec-1" }]);
 
     const { executeJob } = await import("./execute-job.js");
     await expect(executeJob(baseJob() as any, "heartbeat")).resolves.toBe(true);
@@ -254,7 +250,7 @@ describe("executeJob outcome persistence", () => {
           output: expect.objectContaining({
             type: "script",
             script: expect.objectContaining({
-              stdout: "{\"ok\":true,\"summary\":\"done\"}",
+              stdout: '{"ok":true,"summary":"done"}',
               stderr: "",
               exit_code: 0,
             }),
@@ -273,15 +269,12 @@ describe("executeJob outcome persistence", () => {
       stdout: "partial output",
       stderr: "boom",
     });
-    queueDbResults(
-      [{ id: "job-1" }],
-      [{ id: "exec-1" }],
-    );
+    queueDbResults([{ id: "job-1" }], [{ id: "exec-1" }]);
 
     const { executeJob } = await import("./execute-job.js");
-    await expect(
-      executeJob(baseJob({ retries: 2 }) as any, "heartbeat"),
-    ).rejects.toThrow("Script exited with code 2");
+    await expect(executeJob(baseJob({ retries: 2 }) as any, "heartbeat")).rejects.toThrow(
+      "Script exited with code 2",
+    );
 
     expect(insertValues()).toEqual(
       expect.arrayContaining([
@@ -308,15 +301,12 @@ describe("executeJob outcome persistence", () => {
 
   it("writes an errored outcome for caught non-script failures", async () => {
     createHeadlessAgentMock.mockRejectedValue(new Error("model unavailable"));
-    queueDbResults(
-      [{ id: "job-1" }],
-      [{ id: "exec-1" }],
-    );
+    queueDbResults([{ id: "job-1" }], [{ id: "exec-1" }]);
 
     const { executeJob } = await import("./execute-job.js");
-    await expect(
-      executeJob(baseJob({ script: null }) as any, "heartbeat"),
-    ).rejects.toThrow("model unavailable");
+    await expect(executeJob(baseJob({ script: null }) as any, "heartbeat")).rejects.toThrow(
+      "model unavailable",
+    );
 
     expect(insertValues()).toEqual(
       expect.arrayContaining([
@@ -343,7 +333,7 @@ describe("executeJob outcome persistence", () => {
     vi.stubGlobal("fetch", fetchMock);
     sandboxMock.commandRun.mockResolvedValue({
       exitCode: 0,
-      stdout: "{\"ok\":true,\"summary\":\"done\"}",
+      stdout: '{"ok":true,"summary":"done"}',
       stderr: "",
     });
     queueDbResults(
@@ -374,12 +364,15 @@ describe("executeJob outcome persistence", () => {
   it("does not fail the worker when the supervisor webhook rejects", async () => {
     process.env.CRON_SECRET = "test-secret";
     process.env.AURA_PUBLIC_URL = "https://aura.test";
-    vi.stubGlobal("fetch", vi.fn(async () => {
-      throw new Error("network down");
-    }));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new Error("network down");
+      }),
+    );
     sandboxMock.commandRun.mockResolvedValue({
       exitCode: 0,
-      stdout: "{\"ok\":true,\"summary\":\"done\"}",
+      stdout: '{"ok":true,"summary":"done"}',
       stderr: "",
     });
     queueDbResults(
@@ -444,12 +437,14 @@ describe("executeJob reply-routing prompt", () => {
     expect(prompt).toContain("output exactly `NO_OP`");
   });
 
-  it("does not inject reply-routing for jobs without a channel", async () => {
+  it("includes the no-channel clause when the job has no output channel", async () => {
+    const { NO_CHANNEL_CLAUSE } = await import("./execute-job.js");
     const prompt = await capturePromptForJob({ channelId: null, threadTs: null });
 
-    expect(prompt).not.toContain("Post your results");
-    expect(prompt).not.toContain("post NOTHING");
-    expect(prompt).not.toContain("NO_OP");
+    expect(prompt).toContain(NO_CHANNEL_CLAUSE);
+    expect(prompt).toContain("<@U_REQUESTER>");
+    expect(prompt).not.toContain("using send_channel_message");
+    expect(prompt).not.toContain("Post your results to channel");
   });
 });
 
@@ -547,7 +542,9 @@ describe("executeJob NO_OP sentinel contract", () => {
     const expectedMarker = `${NO_OP_RESULT_MARKER} (no new signups today)`;
     const setArgs = updateSetArgs();
     expect(setArgs.find((arg) => "summary" in arg)).toMatchObject({ summary: expectedMarker });
-    expect(setArgs.find((arg) => "lastResult" in arg)).toMatchObject({ lastResult: expectedMarker });
+    expect(setArgs.find((arg) => "lastResult" in arg)).toMatchObject({
+      lastResult: expectedMarker,
+    });
 
     expect(jobOutcomeInsert()?.output).toMatchObject({
       no_op: true,
@@ -626,9 +623,10 @@ describe("parseContinuationTag (issue #1320)", () => {
 
   it("parses the :dN depth suffix and strips it from the topic", async () => {
     const { parseContinuationTag } = await import("./execute-job.js");
-    expect(
-      parseContinuationTag("[CONTINUE:turn-deadline-abc123:d2] resume the work"),
-    ).toEqual({ topic: "turn-deadline-abc123", depth: 2 });
+    expect(parseContinuationTag("[CONTINUE:turn-deadline-abc123:d2] resume the work")).toEqual({
+      topic: "turn-deadline-abc123",
+      depth: 2,
+    });
   });
 
   it("keeps colons that are part of the topic itself", async () => {
@@ -754,7 +752,9 @@ describe("findSlackPostingToolCalls", () => {
 
   it("counts upload_file only when it targets a channel (explicit or job fallback)", async () => {
     const { findSlackPostingToolCalls } = await import("./execute-job.js");
-    const uploadWithout = [{ toolCalls: [{ toolName: "upload_file", input: { filename: "a.csv" } }] }];
+    const uploadWithout = [
+      { toolCalls: [{ toolName: "upload_file", input: { filename: "a.csv" } }] },
+    ];
     const uploadWith = [
       { toolCalls: [{ toolName: "upload_file", input: { filename: "a.csv", channel: "C1" } }] },
     ];
@@ -856,10 +856,7 @@ describe("executeJob scoped execution (issue #1302)", () => {
 
     const { executeJob } = await import("./execute-job.js");
     await expect(
-      executeJob(
-        baseJob({ script: null, envAllowlist: ["META_ADMIN_TOKEN"] }) as any,
-        "heartbeat",
-      ),
+      executeJob(baseJob({ script: null, envAllowlist: ["META_ADMIN_TOKEN"] }) as any, "heartbeat"),
     ).rejects.toThrow("stop-after-capture");
 
     expect(storeDuringGenerate?.envAllowlist).toEqual(["META_ADMIN_TOKEN"]);
@@ -884,10 +881,7 @@ describe("executeJob scoped execution (issue #1302)", () => {
 
     const { executeJob } = await import("./execute-job.js");
     await expect(
-      executeJob(
-        baseJob({ script: null, envAllowlist: ["META_ADMIN_TOKEN"] }) as any,
-        "heartbeat",
-      ),
+      executeJob(baseJob({ script: null, envAllowlist: ["META_ADMIN_TOKEN"] }) as any, "heartbeat"),
     ).rejects.toThrow("stop-after-capture");
 
     // Tool building (createSlackTools → resolveUserCredentials) runs inside
@@ -916,10 +910,7 @@ describe("executeJob scoped execution (issue #1302)", () => {
 
     const { executeJob } = await import("./execute-job.js");
     await expect(
-      executeJob(
-        baseJob({ envAllowlist: ["META_ADMIN_TOKEN"] }) as any,
-        "heartbeat",
-      ),
+      executeJob(baseJob({ envAllowlist: ["META_ADMIN_TOKEN"] }) as any, "heartbeat"),
     ).resolves.toBe(true);
 
     expect(sandboxMock.filterEnvsByAllowlist).toHaveBeenCalledWith(
@@ -986,10 +977,7 @@ describe("executeJob required-credential availability (issue #1344)", () => {
 
     const { executeJob } = await import("./execute-job.js");
     await expect(
-      executeJob(
-        baseJob({ requiredCredentialIds: ["cred-admin"] }) as any,
-        "heartbeat",
-      ),
+      executeJob(baseJob({ requiredCredentialIds: ["cred-admin"] }) as any, "heartbeat"),
     ).rejects.toThrow(/meta_admin_token/);
 
     // Ops notice is actionable: names the credential AND the job owner.
@@ -1027,10 +1015,7 @@ describe("executeJob required-credential availability (issue #1344)", () => {
 
     const { executeJob } = await import("./execute-job.js");
     await expect(
-      executeJob(
-        baseJob({ requiredCredentialIds: ["cred-admin"] }) as any,
-        "heartbeat",
-      ),
+      executeJob(baseJob({ requiredCredentialIds: ["cred-admin"] }) as any, "heartbeat"),
     ).rejects.toThrow(/not available to job owner U_REQUESTER/);
 
     expect(resolveUserCredentialsMock).toHaveBeenCalledWith("U_REQUESTER");
@@ -1046,10 +1031,7 @@ describe("executeJob required-credential availability (issue #1344)", () => {
 
     const { executeJob } = await import("./execute-job.js");
     await expect(
-      executeJob(
-        baseJob({ requiredCredentialIds: ["cred-gone"] }) as any,
-        "heartbeat",
-      ),
+      executeJob(baseJob({ requiredCredentialIds: ["cred-gone"] }) as any, "heartbeat"),
     ).rejects.toThrow(/cred-gone no longer exists/);
 
     expect(sendJobOpsNoticeMock).toHaveBeenCalledTimes(1);
@@ -1173,16 +1155,18 @@ describe("isHardFailure", () => {
   it("returns false for a clean exit regardless of output", async () => {
     const { isHardFailure } = await import("./execute-job.js");
     expect(isHardFailure({ exit_code: 0, stdout: "", stderr: "" })).toBe(false);
-    expect(
-      isHardFailure({ exit_code: 0, stdout: "data", stderr: "warning: noise" }),
-    ).toBe(false);
+    expect(isHardFailure({ exit_code: 0, stdout: "data", stderr: "warning: noise" })).toBe(false);
     expect(isHardFailure({ exit_code: null, stdout: "", stderr: "" })).toBe(false);
   });
 
   it("flags exec-failure exit codes 126/127 even with stdout", async () => {
     const { isHardFailure } = await import("./execute-job.js");
     expect(
-      isHardFailure({ exit_code: 127, stdout: "partial", stderr: "bash: python3: command not found" }),
+      isHardFailure({
+        exit_code: 127,
+        stdout: "partial",
+        stderr: "bash: python3: command not found",
+      }),
     ).toBe(true);
     expect(isHardFailure({ exit_code: 126, stdout: "partial", stderr: "" })).toBe(true);
   });

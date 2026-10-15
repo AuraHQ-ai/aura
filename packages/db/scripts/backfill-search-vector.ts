@@ -47,7 +47,8 @@ async function run() {
   const BATCH_SIZE = 500;
   let totalUpdated = 0;
 
-  const [{ nullCount }] = await sql`SELECT count(*)::int AS "nullCount" FROM memories WHERE search_vector IS NULL`;
+  const [{ nullCount }] =
+    await sql`SELECT count(*)::int AS "nullCount" FROM memories WHERE search_vector IS NULL`;
   const toBackfill = nullCount as number;
   const startTime = Date.now();
 
@@ -140,7 +141,9 @@ async function run() {
       count(*) FILTER (WHERE search_vector IS NULL)::int AS without_vector
     FROM memories
   `;
-  console.log(`Total: ${verification.total}, with search_vector: ${verification.with_vector}, without: ${verification.without_vector}`);
+  console.log(
+    `Total: ${verification.total}, with search_vector: ${verification.with_vector}, without: ${verification.without_vector}`,
+  );
 
   const testSearch = await sql`
     SELECT id, ts_rank_cd(search_vector, plainto_tsquery('english', 'test')) AS rank

@@ -47,9 +47,7 @@ vi.mock("@ai-sdk/gateway", () => ({
 }));
 
 const libAiMocks = vi.hoisted(() => ({
-  buildCachedSystemMessages: vi.fn((..._args: unknown[]) => [
-    { role: "system", content: "sys" },
-  ]),
+  buildCachedSystemMessages: vi.fn((..._args: unknown[]) => [{ role: "system", content: "sys" }]),
 }));
 
 vi.mock("../src/lib/ai.js", () => ({
@@ -137,6 +135,22 @@ vi.mock("../src/pipeline/turn-deadline.js", () => ({
   spawnTurnContinuationJob: turnDeadlineMocks.spawnTurnContinuationJob,
 }));
 
+const compactionMocks = vi.hoisted(() => ({
+  compactMessages: vi.fn(async (messages: any[]) => ({
+    messages,
+    compactedCount: 0,
+    summarizedCount: 0,
+    estimatedTokensSaved: 0,
+  })),
+}));
+
+vi.mock("../src/pipeline/compact-messages.js", () => ({
+  compactMessages: compactionMocks.compactMessages,
+  summarizeEvictedToolResult: vi.fn(),
+  pruneEvictSummaryCache: vi.fn(),
+  evictSummaryCache: new Map(),
+}));
+
 const backgroundMocks = vi.hoisted(() => ({
   runBackgroundTasks: vi.fn(async () => {}),
 }));
@@ -185,9 +199,7 @@ function buildInput(): SlackRespondWorkflowInput {
 
 /** dynamicContext (4th positional arg) of the Nth buildCachedSystemMessages call. */
 function dynamicContextOfCall(index: number): string | undefined {
-  return libAiMocks.buildCachedSystemMessages.mock.calls[index]?.[3] as
-    | string
-    | undefined;
+  return libAiMocks.buildCachedSystemMessages.mock.calls[index]?.[3] as string | undefined;
 }
 
 describe("evaluateTurnDeadlines", () => {
@@ -210,6 +222,26 @@ describe("evaluateTurnDeadlines", () => {
   });
 });
 
+function installStreamTextMock() {
+  aiMocks.streamText.mockImplementation(() => {
+    const script = aiMocks.scripts.shift() ?? { finishReason: "stop", text: "fallback" };
+    clock.now += script.advanceMs ?? 0;
+    return {
+      stream: (async function* () {
+        if (script.text) {
+          yield { type: "text-delta", text: script.text };
+        }
+      })(),
+      response: Promise.resolve({
+        messages: [{ role: "assistant", content: script.text ?? "" }],
+        modelId: "test-model",
+      }),
+      finishReason: Promise.resolve(script.finishReason),
+      usage: Promise.resolve({ inputTokens: 1, outputTokens: 2, totalTokens: 3 }),
+    };
+  });
+}
+
 describe("slackRespondWorkflow turn wall-clock budget (issue #1320)", () => {
   let dateNowSpy: ReturnType<typeof vi.spyOn>;
 
@@ -218,23 +250,7 @@ describe("slackRespondWorkflow turn wall-clock budget (issue #1320)", () => {
     clock.now = 1_000_000_000_000;
     dateNowSpy = vi.spyOn(Date, "now").mockImplementation(() => clock.now);
     aiMocks.scripts = [];
-    aiMocks.streamText.mockImplementation(() => {
-      const script = aiMocks.scripts.shift() ?? { finishReason: "stop", text: "fallback" };
-      clock.now += script.advanceMs ?? 0;
-      return {
-        stream: (async function* () {
-          if (script.text) {
-            yield { type: "text-delta", text: script.text };
-          }
-        })(),
-        response: Promise.resolve({
-          messages: [{ role: "assistant", content: script.text ?? "" }],
-          modelId: "test-model",
-        }),
-        finishReason: Promise.resolve(script.finishReason),
-        usage: Promise.resolve({ inputTokens: 1, outputTokens: 2, totalTokens: 3 }),
-      };
-    });
+    installStreamTextMock();
     turnDeadlineMocks.spawnTurnContinuationJob.mockResolvedValue(true);
     turnDeadlineMocks.resolveTurnDeadlines.mockReturnValue({
       softDeadlineMs: 100_000,
@@ -285,9 +301,7 @@ describe("slackRespondWorkflow turn wall-clock budget (issue #1320)", () => {
     expect(dynamicContextOfCall(0)).toBeUndefined();
     expect(dynamicContextOfCall(1)).toBeUndefined();
     const nudged = dynamicContextOfCall(2);
-    expect(nudged).toContain(
-      TURN_SOFT_DEADLINE_MESSAGE.replace("{elapsedSec}", "120"),
-    );
+    expect(nudged).toContain(TURN_SOFT_DEADLINE_MESSAGE.replace("{elapsedSec}", "120"));
     // The soft deadline never withdraws tools.
     expect(toolMocks.createSlackTools).toHaveBeenCalledTimes(3);
     expect(turnDeadlineMocks.spawnTurnContinuationJob).not.toHaveBeenCalled();
@@ -336,9 +350,7 @@ describe("slackRespondWorkflow turn wall-clock budget (issue #1320)", () => {
       step: 3,
     });
 
-    expect(dynamicContextOfCall(3)).toContain(
-      TURN_HARD_DEADLINE_MESSAGE_WITH_CONTINUATION,
-    );
+    expect(dynamicContextOfCall(3)).toContain(TURN_HARD_DEADLINE_MESSAGE_WITH_CONTINUATION);
 
     // The turn still finalizes normally (delivery + persistence parity).
     expect(backgroundMocks.runBackgroundTasks).toHaveBeenCalledTimes(1);
@@ -377,11 +389,86 @@ describe("slackRespondWorkflow turn wall-clock budget (issue #1320)", () => {
     const result = await slackRespondWorkflow(buildInput());
 
     expect(result).toEqual({ interrupted: false, text: "final summary" });
-    expect(dynamicContextOfCall(1)).toContain(
-      TURN_HARD_DEADLINE_MESSAGE_WITHOUT_CONTINUATION,
+    expect(dynamicContextOfCall(1)).toContain(TURN_HARD_DEADLINE_MESSAGE_WITHOUT_CONTINUATION);
+    expect(dynamicContextOfCall(1)).not.toContain(TURN_HARD_DEADLINE_MESSAGE_WITH_CONTINUATION);
+  });
+});
+
+describe("compaction telemetry on the workflow path (issue #1406)", () => {
+  let dateNowSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clock.now = 1_000_000_000_000;
+    dateNowSpy = vi.spyOn(Date, "now").mockImplementation(() => clock.now);
+    aiMocks.scripts = [];
+    installStreamTextMock();
+    turnDeadlineMocks.resolveTurnDeadlines.mockReturnValue({
+      softDeadlineMs: 600_000,
+      hardDeadlineMs: 900_000,
+    });
+    compactionMocks.compactMessages.mockImplementation(async (messages: any[]) => ({
+      messages,
+      compactedCount: 0,
+      summarizedCount: 0,
+      estimatedTokensSaved: 0,
+    }));
+  });
+
+  afterEach(() => {
+    dateNowSpy.mockRestore();
+  });
+
+  it("reports per-turn compaction totals to runBackgroundTasks (issue #1406)", async () => {
+    // Two tool-calling steps, each compacting, then a final answer. The turn
+    // totals must be the SUM across steps and must reach the conversation
+    // trace via runBackgroundTasks -- the legacy prepareStep path does this
+    // through recordCompaction; this path calls compactMessages directly.
+    compactionMocks.compactMessages
+      .mockImplementationOnce(async (messages: any[]) => ({
+        messages,
+        compactedCount: 3,
+        summarizedCount: 1,
+        estimatedTokensSaved: 1_200,
+      }))
+      .mockImplementationOnce(async (messages: any[]) => ({
+        messages,
+        compactedCount: 2,
+        summarizedCount: 0,
+        estimatedTokensSaved: 800,
+      }));
+
+    aiMocks.scripts = [
+      { finishReason: "tool-calls" },
+      { finishReason: "tool-calls" },
+      { finishReason: "stop", text: "done" },
+    ];
+
+    await slackRespondWorkflow(buildInput());
+
+    expect(backgroundMocks.runBackgroundTasks).toHaveBeenCalledTimes(1);
+    expect(backgroundMocks.runBackgroundTasks).toHaveBeenCalledWith(
+      expect.objectContaining({
+        compactionTotals: {
+          compactedToolResults: 5,
+          compactionTokensSaved: 2_000,
+        },
+      }),
     );
-    expect(dynamicContextOfCall(1)).not.toContain(
-      TURN_HARD_DEADLINE_MESSAGE_WITH_CONTINUATION,
+  });
+
+  it("reports zero compaction totals when no step compacts", async () => {
+    aiMocks.scripts = [{ finishReason: "stop", text: "done" }];
+
+    await slackRespondWorkflow(buildInput());
+
+    expect(backgroundMocks.runBackgroundTasks).toHaveBeenCalledWith(
+      expect.objectContaining({
+        compactionTotals: {
+          compactedToolResults: 0,
+          compactionTokensSaved: 0,
+        },
+      }),
     );
   });
 });
@@ -413,9 +500,7 @@ describe("mid-tool cancellation via Stop (issue #1355)", () => {
    * the markdown texts appended to the Slack stream.
    */
   async function runMidToolSupersede(reason: "stopped" | "newer_message") {
-    lockMocks.isInvocationCurrent
-      .mockResolvedValueOnce(true)
-      .mockResolvedValue(false);
+    lockMocks.isInvocationCurrent.mockResolvedValueOnce(true).mockResolvedValue(false);
     lockMocks.getSupersedeReason.mockResolvedValue(reason);
 
     aiMocks.streamText.mockImplementation((opts: any) => ({
@@ -485,9 +570,7 @@ describe("mid-tool cancellation via Stop (issue #1355)", () => {
 
     expect(result).toEqual({ interrupted: true, text: "" });
     expect(
-      appendedMarkdownTexts.some((t) =>
-        t.includes("_[interrupted — new message received]_"),
-      ),
+      appendedMarkdownTexts.some((t) => t.includes("_[interrupted — new message received]_")),
     ).toBe(true);
     expect(appendedMarkdownTexts.some((t) => t.includes("_[stopped]_"))).toBe(false);
   });

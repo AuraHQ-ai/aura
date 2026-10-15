@@ -21,7 +21,7 @@
 --    only removes the *owner* exemption, not the *role attribute* exemption.
 --    THEREFORE: this migration alone enforces NOTHING for connections made as
 --    `neondb_owner`. Enforcement requires the application to connect as the
---    dedicated non-bypassing role `aura_app` created in migration 0092
+--    dedicated non-bypassing role `aura_app` created in migration 0095
 --    (LOGIN, NOSUPERUSER, NOBYPASSRLS, NOCREATEROLE, owns nothing). The
 --    operator cutover — setting the role password out of band and pointing
 --    DATABASE_URL at `aura_app` — is documented in the PR runbook.
@@ -64,7 +64,7 @@
 --               is global -- called out in the PR for reviewer sign-off.)
 --
 -- 39 tenant tables get ENABLE + FORCE + the two policies below, plus a
--- guarded block for the prod-only orphan table `approval_items` (see 0090).
+-- guarded block for the prod-only orphan table `approval_items` (see 0093).
 
 -- messages
 ALTER TABLE "messages" ENABLE ROW LEVEL SECURITY;--> statement-breakpoint
@@ -378,7 +378,7 @@ CREATE POLICY "github_pull_requests_workspace_isolation" ON "github_pull_request
 DROP POLICY IF EXISTS "github_pull_requests_maintenance" ON "github_pull_requests";--> statement-breakpoint
 CREATE POLICY "github_pull_requests_maintenance" ON "github_pull_requests" AS PERMISSIVE FOR ALL USING (current_setting('app.rls_bypass', true) = 'maintenance') WITH CHECK (current_setting('app.rls_bypass', true) = 'maintenance');--> statement-breakpoint
 
--- approval_items (prod-only orphan; exists in no migration -- see 0090)
+-- approval_items (prod-only orphan; exists in no migration -- see 0093)
 DO $$ BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.tables

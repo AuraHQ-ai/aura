@@ -5,13 +5,10 @@ import {
   getSandboxEnvs,
   truncateOutput,
   ensureUserHome,
+  resolveSandboxUserId,
 } from "../lib/sandbox.js";
 import { logger } from "../lib/logger.js";
-import {
-  defineTool,
-  executionContext,
-  markTurnSuspendedByDetachedCommand,
-} from "../lib/tool.js";
+import { defineTool, executionContext, markTurnSuspendedByDetachedCommand } from "../lib/tool.js";
 import { detachedCommands, type DetachedCommand, type ScheduleContext } from "@aura/db/schema";
 import { eq } from "drizzle-orm";
 
@@ -85,14 +82,11 @@ function warnIfWebhookEnvMissing() {
   if (missing.length === 0) return;
 
   warnedAboutWebhookEnv = true;
-  logger.warn(
-    "run_command_detached: webhook callback disabled, env vars missing",
-    {
-      missing,
-      effect:
-        "detached commands will run, but completion webhooks will silently no-op; results only available via check_command polling",
-    },
-  );
+  logger.warn("run_command_detached: webhook callback disabled, env vars missing", {
+    missing,
+    effect:
+      "detached commands will run, but completion webhooks will silently no-op; results only available via check_command polling",
+  });
 }
 
 function getWorkspaceId(context?: ScheduleContext): string {
@@ -176,11 +170,7 @@ async function insertDetachedCommandRow(input: {
 
 async function getDetachedCommandRow(id: string): Promise<DetachedCommand | undefined> {
   const db = await getDb();
-  const rows = await db
-    .select()
-    .from(detachedCommands)
-    .where(eq(detachedCommands.id, id))
-    .limit(1);
+  const rows = await db.select().from(detachedCommands).where(eq(detachedCommands.id, id)).limit(1);
   return rows[0];
 }
 
@@ -239,7 +229,7 @@ export function buildDetachedScript(
     `nohup bash -c ${shellQuote(commandInCwd)} > ${shellQuote(stdoutPath)} 2> ${shellQuote(stderrPath)} &`,
     "pid=$!",
     `printf '%s\\n' "$pid" > ${shellQuote(pidPath)} || exit $?`,
-    "wait \"$pid\"",
+    'wait "$pid"',
     "exit_code=$?",
     `printf '%s\\n' "$exit_code" > ${shellQuote(statusPath)} || exit $?`,
     `if [ -n "\${AURA_PUBLIC_URL:-}" ] && [ -n "\${SANDBOX_WEBHOOK_SECRET:-}" ]; then`,
@@ -319,7 +309,7 @@ export function buildDetachedLaunchScript(
     "else",
     `  nohup bash ${shellQuote(launchScriptPath)} > ${shellQuote(launchOutPath)} 2> ${shellQuote(launchErrPath)} < /dev/null &`,
     "  launcher_pid=$!",
-    "  disown \"$launcher_pid\" 2>/dev/null || true",
+    '  disown "$launcher_pid" 2>/dev/null || true',
     `  printf '%s\\n' "$launcher_pid" > ${shellQuote(launchPidPath)}`,
     "fi",
     "exit 0",
@@ -536,9 +526,7 @@ async function startDetachedCommand(options: {
       diagnostics = `diagnostics failed: ${diagnosticError.message}`;
     }
     const detail = [formatCommandRunResult(launchError), diagnostics].filter(Boolean).join("; ");
-    throw new Error(
-      `Detached command ${id} launch command failed${detail ? ` (${detail})` : ""}`,
-    );
+    throw new Error(`Detached command ${id} launch command failed${detail ? ` (${detail})` : ""}`);
   }
   if (typeof launchResult.exitCode === "number" && launchResult.exitCode !== 0) {
     const detail = formatCommandRunResult(launchResult);
@@ -689,9 +677,10 @@ PY`;
 
   const parsed = JSON.parse((result.stdout || "{}").trim()) as Partial<DetachedCommandStatus>;
   return {
-    status: parsed.status === "running" || parsed.status === "exited" || parsed.status === "not_found"
-      ? parsed.status
-      : "not_found",
+    status:
+      parsed.status === "running" || parsed.status === "exited" || parsed.status === "not_found"
+        ? parsed.status
+        : "not_found",
     exit_code: typeof parsed.exit_code === "number" ? parsed.exit_code : undefined,
     stdout_tail: typeof parsed.stdout_tail === "string" ? parsed.stdout_tail : "",
     stderr_tail: typeof parsed.stderr_tail === "string" ? parsed.stderr_tail : "",
@@ -741,7 +730,10 @@ PY`;
       AURA_COMMAND_ID: id,
     },
   });
-  const parsed = JSON.parse((result.stdout || "{}").trim()) as { stdout?: unknown; stderr?: unknown };
+  const parsed = JSON.parse((result.stdout || "{}").trim()) as {
+    stdout?: unknown;
+    stderr?: unknown;
+  };
   return {
     stdout: typeof parsed.stdout === "string" ? truncateOutput(parsed.stdout, 4000) : "",
     stderr: typeof parsed.stderr === "string" ? truncateOutput(parsed.stderr, 2000) : "",
@@ -766,6 +758,12 @@ export function createSandboxTools(context?: ScheduleContext) {
           .describe(
             "The shell command to run, e.g. 'git clone https://github.com/org/repo.git' or 'cat /home/user/output.txt'",
           ),
+        label: z
+          .string()
+          .max(60)
+          .describe(
+            'Human-readable intent for what THIS command does, shown on the Slack tool card. Verb-first, no trailing period, never generic. Examples: "pulling latest git", "counting churned ES subscribers", "reading respond.ts tool-card section", "restarting the dev server", "installing project dependencies", "running the typecheck"',
+          ),
         workdir: z
           .string()
           .optional()
@@ -782,12 +780,19 @@ export function createSandboxTools(context?: ScheduleContext) {
           ),
       }),
       inputExamples: [
-        { input: { command: "cat /home/user/output.txt", timeout_seconds: 90 } },
+        {
+          input: {
+            command: "cat /home/user/output.txt",
+            timeout_seconds: 90,
+            label: "reading output.txt",
+          },
+        },
         {
           input: {
             command: "git status && git log --oneline -5",
             workdir: "/home/user/repo",
             timeout_seconds: 90,
+            label: "checking git status",
           },
         },
         {
@@ -795,11 +800,12 @@ export function createSandboxTools(context?: ScheduleContext) {
             command: "python analyze.py --input data.csv > results.txt 2>&1",
             workdir: "/home/user/analysis",
             timeout_seconds: 300,
+            label: "analyzing csv with python",
           },
         },
       ],
       execute: async ({ command, workdir, timeout_seconds }) => {
-        const userId = context?.userId || "aura";
+        const userId = resolveSandboxUserId(context?.userId);
         try {
           const sandbox = await getOrCreateSandbox(userId);
           const envs = await getSandboxEnvs(userId);
@@ -886,10 +892,11 @@ export function createSandboxTools(context?: ScheduleContext) {
       slack: {
         status: "Running a command in the sandbox...",
         detail: (input) =>
-          !input.command ? undefined
+          !input.command
+            ? undefined
             : input.command.length <= 120
               ? input.command
-              : input.command.slice(0, 119) + "…",
+              : `${input.command.slice(0, 119)}…`,
         output: (result) => {
           if ("ok" in result && !result.ok) return result.error;
           if (!("exit_code" in result)) return undefined;
@@ -899,7 +906,7 @@ export function createSandboxTools(context?: ScheduleContext) {
           const stdout = typeof r.stdout === "string" ? r.stdout.trim() : "";
           const detail = stderr || stdout;
           if (detail) {
-            const truncated = detail.length <= 180 ? detail : detail.slice(0, 179) + "…";
+            const truncated = detail.length <= 180 ? detail : `${detail.slice(0, 179)}…`;
             return `Exit code ${r.exit_code}: ${truncated}`;
           }
           return `Exit code ${r.exit_code}`;
@@ -916,6 +923,12 @@ export function createSandboxTools(context?: ScheduleContext) {
           .describe(
             "The shell command to start in the background, e.g. 'pnpm test' or 'sleep 300'.",
           ),
+        label: z
+          .string()
+          .max(60)
+          .describe(
+            'Human-readable intent for what THIS command does, shown on the Slack tool card. Verb-first, no trailing period, never generic. Examples: "pulling latest git", "counting churned ES subscribers", "reading respond.ts tool-card section", "restarting the dev server", "installing project dependencies", "running the typecheck"',
+          ),
         workdir: z
           .string()
           .optional()
@@ -923,14 +936,14 @@ export function createSandboxTools(context?: ScheduleContext) {
             "Working directory for the command, e.g. '/home/user/repo'. Defaults to /home/user.",
           ),
         env: z
-          .record(z.string())
+          .record(z.string(), z.string())
           .optional()
           .describe(
             "Additional environment variables for this command. Values are injected into the sandbox process and should not be echoed.",
           ),
       }),
       execute: async ({ command, workdir, env }) => {
-        const userId = context?.userId || "aura";
+        const userId = resolveSandboxUserId(context?.userId);
         try {
           const sandbox = await getOrCreateSandbox(userId);
           const envs = await getSandboxEnvs(userId);
@@ -999,8 +1012,7 @@ export function createSandboxTools(context?: ScheduleContext) {
           return {
             ...detached,
             resume: "none" as const,
-            message:
-              `No webhook resume is available for this turn (no Slack thread or webhook env missing). Do NOT end your turn waiting for a callback — none will arrive. Poll with check_command({ id: '${detached.id}' }) until it exits, then continue.`,
+            message: `No webhook resume is available for this turn (no Slack thread or webhook env missing). Do NOT end your turn waiting for a callback — none will arrive. Poll with check_command({ id: '${detached.id}' }) until it exits, then continue.`,
           };
         } catch (error: any) {
           logger.error("run_command_detached tool failed", {
@@ -1017,10 +1029,11 @@ export function createSandboxTools(context?: ScheduleContext) {
       slack: {
         status: "Starting detached command...",
         detail: (input) =>
-          !input.command ? undefined
+          !input.command
+            ? undefined
             : input.command.length <= 120
               ? input.command
-              : input.command.slice(0, 119) + "…",
+              : `${input.command.slice(0, 119)}…`,
         output: (result) => {
           if ("ok" in result && !result.ok) return result.error;
           if (!("id" in result) || !("pid" in result)) return undefined;
@@ -1036,16 +1049,20 @@ export function createSandboxTools(context?: ScheduleContext) {
         id: z
           .string()
           .regex(/^[a-f0-9]{8}$/)
-          .describe("The 8-character command id returned by run_command_detached or a timed-out run_command."),
+          .describe(
+            "The 8-character command id returned by run_command_detached or a timed-out run_command.",
+          ),
         tail_lines: z
           .number()
           .min(1)
           .max(1000)
           .default(200)
-          .describe("Number of recent stdout/stderr lines to return from each stream. Defaults to 200."),
+          .describe(
+            "Number of recent stdout/stderr lines to return from each stream. Defaults to 200.",
+          ),
       }),
       execute: async ({ id, tail_lines }) => {
-        const userId = context?.userId || "aura";
+        const userId = resolveSandboxUserId(context?.userId);
         try {
           let dbRow: DetachedCommand | undefined;
           try {
@@ -1054,10 +1071,13 @@ export function createSandboxTools(context?: ScheduleContext) {
               return statusFromDbRow(dbRow, tail_lines);
             }
           } catch (dbError: any) {
-            logger.warn("check_command: detached_commands lookup failed, falling back to sandbox files", {
-              id,
-              error: dbError.message,
-            });
+            logger.warn(
+              "check_command: detached_commands lookup failed, falling back to sandbox files",
+              {
+                id,
+                error: dbError.message,
+              },
+            );
           }
 
           const sandbox = await getOrCreateSandbox(userId);
@@ -1077,7 +1097,9 @@ export function createSandboxTools(context?: ScheduleContext) {
             try {
               await updateDetachedCommandRowFromStatus(
                 id,
-                fileStatus.exit_code === undefined ? "killed" : statusFromExitCode(fileStatus.exit_code),
+                fileStatus.exit_code === undefined
+                  ? "killed"
+                  : statusFromExitCode(fileStatus.exit_code),
                 fileStatus,
               );
             } catch (dbError: any) {

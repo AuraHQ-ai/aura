@@ -202,23 +202,14 @@ async function acquireSupervisorLock(
       supervisorAttempts: sql`${jobOutcomes.supervisorAttempts} + 1`,
       updatedAt: new Date(),
     })
-    .where(
-      and(
-        eq(jobOutcomes.id, outcomeId),
-        eq(jobOutcomes.supervisorStatus, "pending_review"),
-      ),
-    )
+    .where(and(eq(jobOutcomes.id, outcomeId), eq(jobOutcomes.supervisorStatus, "pending_review")))
     .returning();
 
   return outcome ?? null;
 }
 
 async function loadSupervisorContext(outcome: ClaimedOutcome): Promise<SupervisorContext> {
-  const [job] = await db
-    .select()
-    .from(jobs)
-    .where(eq(jobs.id, outcome.jobId))
-    .limit(1);
+  const [job] = await db.select().from(jobs).where(eq(jobs.id, outcome.jobId)).limit(1);
 
   if (!job) {
     throw new Error(`Job not found for supervisor outcome ${outcome.id}`);
@@ -435,7 +426,9 @@ function findMatchingSupervisorIssue(
     issues.find((issue) => sameJob(issue) && recent(issue)) ??
     issues.find(
       (issue) =>
-        errorSignature.length > 0 && recent(issue) && signatureFromIssueBody(issue.body) === errorSignature,
+        errorSignature.length > 0 &&
+        recent(issue) &&
+        signatureFromIssueBody(issue.body) === errorSignature,
     ) ??
     null
   );
@@ -680,10 +673,7 @@ async function applySupervisorDecision(
     }
 
     case "disable_job": {
-      await db
-        .update(jobs)
-        .set({ enabled: 0, updatedAt: now })
-        .where(eq(jobs.id, context.job.id));
+      await db.update(jobs).set({ enabled: 0, updatedAt: now }).where(eq(jobs.id, context.job.id));
       await sendSupervisorOpsNotice(
         context.job,
         `${buildUserMessage(decision, `Job \`${context.job.name}\` was disabled by the supervisor.`)}\n\nDecision: disable_job\nReason: ${decision.reasoning}\nDetails: ${link}`,
@@ -694,10 +684,7 @@ async function applySupervisorDecision(
   }
 }
 
-async function finalizeOutcome(
-  outcomeId: string,
-  decision: SupervisorDecision,
-): Promise<void> {
+async function finalizeOutcome(outcomeId: string, decision: SupervisorDecision): Promise<void> {
   await db
     .update(jobOutcomes)
     .set({
@@ -709,7 +696,10 @@ async function finalizeOutcome(
     .where(eq(jobOutcomes.id, outcomeId));
 }
 
-async function releaseOutcomeForRetry(outcome: ClaimedOutcome | null, error: unknown): Promise<void> {
+async function releaseOutcomeForRetry(
+  outcome: ClaimedOutcome | null,
+  error: unknown,
+): Promise<void> {
   if (!outcome) return;
 
   const errorMessage = error instanceof Error ? error.message : String(error);

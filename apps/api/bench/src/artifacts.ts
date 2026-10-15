@@ -88,10 +88,10 @@ export function createRunArtifacts(runId: string): RunArtifacts {
     dir,
     logPath,
     appendCase(result) {
-      fs.appendFileSync(casesPath, JSON.stringify(result) + "\n");
+      fs.appendFileSync(casesPath, `${JSON.stringify(result)}\n`);
     },
     appendFailure(failure) {
-      fs.appendFileSync(failuresPath, JSON.stringify(failure) + "\n");
+      fs.appendFileSync(failuresPath, `${JSON.stringify(failure)}\n`);
     },
     writeManifest(manifest) {
       fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));

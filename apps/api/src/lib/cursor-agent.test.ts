@@ -41,9 +41,7 @@ describe("resolveCursorModel", () => {
   });
 
   it("returns a trimmed explicit model", () => {
-    expect(resolveCursorModel(" claude-sonnet-4.5 ")).toBe(
-      "claude-sonnet-4.5",
-    );
+    expect(resolveCursorModel(" claude-sonnet-4.5 ")).toBe("claude-sonnet-4.5");
   });
 
   it("falls back to CURSOR_DEFAULT_MODEL", () => {
@@ -138,14 +136,10 @@ describe("resolveCursorAgentPrUrl", () => {
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
       const requestUrl = new URL(url);
       expect(requestUrl.pathname).toBe("/repos/AuraHQ-ai/aura/pulls");
-      expect(requestUrl.searchParams.get("head")).toBe(
-        "AuraHQ-ai:cursor/fix-issue-1019",
-      );
+      expect(requestUrl.searchParams.get("head")).toBe("AuraHQ-ai:cursor/fix-issue-1019");
       expect(requestUrl.searchParams.get("state")).toBe("open");
       expect(init?.headers).toMatchObject({ Authorization: "token gh-token" });
-      return jsonResponse([
-        { html_url: "https://github.com/AuraHQ-ai/aura/pull/456" },
-      ]);
+      return jsonResponse([{ html_url: "https://github.com/AuraHQ-ai/aura/pull/456" }]);
     });
 
     const result = await resolveCursorAgentPrUrl({
@@ -167,9 +161,7 @@ describe("resolveCursorAgentPrUrl", () => {
       fetchImpl: fetchMock as unknown as typeof fetch,
     });
 
-    expect(result).toBe(
-      "https://github.com/AuraHQ-ai/aura/tree/cursor/fix-issue-1019",
-    );
+    expect(result).toBe("https://github.com/AuraHQ-ai/aura/tree/cursor/fix-issue-1019");
   });
 
   it("falls back gracefully when GitHub PR lookup throws", async () => {
@@ -189,9 +181,7 @@ describe("resolveCursorAgentPrUrl", () => {
 
 describe("parseGitHubPullRequestUrl", () => {
   it("parses owner, repo, and number from a GitHub PR URL", () => {
-    expect(
-      parseGitHubPullRequestUrl("https://github.com/AuraHQ-ai/aura/pull/1037"),
-    ).toEqual({
+    expect(parseGitHubPullRequestUrl("https://github.com/AuraHQ-ai/aura/pull/1037")).toEqual({
       owner: "AuraHQ-ai",
       repo: "aura",
       number: 1037,
@@ -200,9 +190,7 @@ describe("parseGitHubPullRequestUrl", () => {
 
   it("returns null for non-PR URLs", () => {
     expect(
-      parseGitHubPullRequestUrl(
-        "https://github.com/AuraHQ-ai/aura/tree/feature-branch",
-      ),
+      parseGitHubPullRequestUrl("https://github.com/AuraHQ-ai/aura/tree/feature-branch"),
     ).toBeNull();
   });
 });
@@ -285,14 +273,11 @@ describe("markPullRequestReadyForReview", () => {
 
     expect(result).toBe("already_ready");
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    expect(logger.info).toHaveBeenCalledWith(
-      "Cursor agent webhook: PR already ready for review",
-      {
-        owner: "AuraHQ-ai",
-        repo: "aura",
-        number: 1037,
-      },
-    );
+    expect(logger.info).toHaveBeenCalledWith("Cursor agent webhook: PR already ready for review", {
+      owner: "AuraHQ-ai",
+      repo: "aura",
+      number: 1037,
+    });
   });
 
   it("logs a warning and resolves when GitHub fails", async () => {

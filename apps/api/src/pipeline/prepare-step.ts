@@ -3,6 +3,7 @@ import type { LanguageModel, ModelMessage } from "ai";
 import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import { compactMessages, summarizeEvictedToolResult } from "./compact-messages.js";
 import { sanitizeToolCallIds } from "./sanitize-tool-ids.js";
+import { sanitizeAssistantToolMarkup } from "./sanitize-tool-markup.js";
 import { getModelCapabilities } from "../lib/model-catalog.js";
 import { isInvocationCurrent } from "../lib/invocation-lock.js";
 import { logger } from "../lib/logger.js";
@@ -12,7 +13,10 @@ import {
   type TurnDeadlinePath,
   type TurnDeadlines,
 } from "./turn-deadline.js";
+import { detectToolThrashFromSteps, logToolThrashBreaker, ToolThrashError } from "./tool-thrash.js";
 import type { ModelCapabilities } from "@aura/db/schema";
+
+export { ToolThrashError } from "./tool-thrash.js";
 
 export class InvocationSupersededError extends Error {
   constructor(public readonly invocationId: string) {
@@ -30,6 +34,93 @@ export const WRAP_UP_MESSAGE =
   "IMPORTANT: You're approaching your step limit ({stepCount}/{limit}). " +
   "Start wrapping up — summarize your findings and post results now. " +
   "Do not start new investigations or long tool chains.";
+
+// ── Tool-thrash loop (issue #1524) ───────────────────────────────────────────
+// Identical search-style tools can fire 30+ times with no user-facing text
+// and still miss the 200-step wrap-up / 720s hard deadline. Detect a streak
+// of the same tool name without intervening assistant text and nudge the
+// model to stop and summarize.
+
+/** Consecutive same-tool calls without intervening text that trigger a wrap-up. */
+export const TOOL_LOOP_THRESHOLD = 15;
+
+export const TOOL_LOOP_MESSAGE =
+  "IMPORTANT: You have called `{toolName}` {callCount} times in a row without " +
+  "producing a user-facing reply. This is a tool loop. STOP calling " +
+  "`{toolName}`. Summarize what you already found and post a final answer now. " +
+  "If the results were empty or unhelpful, say so — do not retry the same " +
+  "tool with the same kind of query.";
+
+export interface ToolLoopDetection {
+  toolName: string;
+  callCount: number;
+}
+
+function toolNamesFromStep(step: unknown): string[] {
+  if (!step || typeof step !== "object") return [];
+  const record = step as {
+    toolCalls?: Array<{ toolName?: unknown }>;
+    toolResults?: Array<{ toolName?: unknown }>;
+  };
+  const source =
+    Array.isArray(record.toolCalls) && record.toolCalls.length > 0
+      ? record.toolCalls
+      : Array.isArray(record.toolResults)
+        ? record.toolResults
+        : [];
+  const names: string[] = [];
+  for (const item of source) {
+    const name = item?.toolName;
+    if (typeof name !== "string" || !name) continue;
+    names.push(name);
+  }
+  return names;
+}
+
+function stepHasInterveningText(step: unknown): boolean {
+  if (!step || typeof step !== "object") return false;
+  const text = (step as { text?: unknown }).text;
+  return typeof text === "string" && text.trim().length > 0;
+}
+
+/**
+ * True when the latest streak of the same tool name, with no intervening
+ * assistant text, meets `threshold`. Walks completed SDK steps in order.
+ */
+export function detectToolCallLoop(
+  steps: Array<unknown> | null | undefined,
+  threshold: number = TOOL_LOOP_THRESHOLD,
+): ToolLoopDetection | null {
+  if (!Array.isArray(steps) || steps.length === 0 || threshold <= 0) return null;
+
+  let streakName: string | null = null;
+  let streak = 0;
+
+  for (const step of steps) {
+    if (stepHasInterveningText(step)) {
+      streakName = null;
+      streak = 0;
+    }
+    for (const name of toolNamesFromStep(step)) {
+      if (name === streakName) {
+        streak++;
+      } else {
+        streakName = name;
+        streak = 1;
+      }
+    }
+  }
+
+  if (!streakName || streak < threshold) return null;
+  return { toolName: streakName, callCount: streak };
+}
+
+export function formatToolLoopMessage(detection: ToolLoopDetection): string {
+  return TOOL_LOOP_MESSAGE.replaceAll("{toolName}", detection.toolName).replaceAll(
+    "{callCount}",
+    String(detection.callCount),
+  );
+}
 
 // ── Turn wall-clock deadline messages (issue #1318) ──────────────────────────
 // Exported so the durable WDK path (workflows/slack-respond.ts) reuses the
@@ -66,16 +157,18 @@ export interface CompactionStepStats {
   estimatedTokensSaved: number;
 }
 
-type PrepareStepResult = {
-  system?: string;
-  instructions?: string;
-  providerOptions?: ProviderOptions;
-  model?: LanguageModel;
-  messages?: Array<ModelMessage>;
-  /** Empty past the hard turn deadline so the model must emit final text. */
-  activeTools?: ReadonlyArray<never>;
-  toolChoice?: "auto" | "none" | "required";
-} | undefined;
+type PrepareStepResult =
+  | {
+      system?: string;
+      instructions?: string;
+      providerOptions?: ProviderOptions;
+      model?: LanguageModel;
+      messages?: Array<ModelMessage>;
+      /** Empty past the hard turn deadline so the model must emit final text. */
+      activeTools?: ReadonlyArray<never>;
+      toolChoice?: "auto" | "none" | "required";
+    }
+  | undefined;
 
 type PrepareStepFn = (options: {
   stepNumber: number;
@@ -149,9 +242,10 @@ export function resolveProviderThinkingOptions(
       if (capabilities.thinkingMode === "none") return {};
       return {
         anthropic: {
-          thinking: capabilities.thinkingMode === "adaptive"
-            ? { type: "adaptive" }
-            : { type: "enabled", budgetTokens },
+          thinking:
+            capabilities.thinkingMode === "adaptive"
+              ? { type: "adaptive" }
+              : { type: "enabled", budgetTokens },
         },
       } as ProviderOptions;
     case "openai":
@@ -166,9 +260,8 @@ export function resolveProviderThinkingOptions(
       return {
         google: {
           thinkingConfig: {
-            thinkingBudget: capabilities.thinkingBudget === "dynamic"
-              ? -1
-              : capabilities.thinkingBudget,
+            thinkingBudget:
+              capabilities.thinkingBudget === "dynamic" ? -1 : capabilities.thinkingBudget,
           },
         },
       } as ProviderOptions;
@@ -191,15 +284,10 @@ export async function getProviderThinkingOptions(
   budgetTokens: number,
 ): Promise<ProviderOptions> {
   const catalogCapabilities = await getModelCapabilities(modelId);
-  return resolveProviderThinkingOptions(
-    modelId,
-    catalogCapabilities.capabilities,
-    budgetTokens,
-    {
-      found: catalogCapabilities.found,
-      supportsThinking: catalogCapabilities.supportsThinking,
-    },
-  );
+  return resolveProviderThinkingOptions(modelId, catalogCapabilities.capabilities, budgetTokens, {
+    found: catalogCapabilities.found,
+    supportsThinking: catalogCapabilities.supportsThinking,
+  });
 }
 
 export function createPrepareStep(opts: {
@@ -260,6 +348,7 @@ export function createPrepareStep(opts: {
   let softDeadlineNudgeInjected = false;
   let hardDeadlineTripped = false;
   let continuationJobSpawned = false;
+  let toolLoopNudgeInjected = false;
 
   // Per-turn memo for summarize-on-evict (issue #1330): compaction reruns on
   // every step past the threshold, so summaries are keyed by toolCallId and
@@ -322,28 +411,23 @@ export function createPrepareStep(opts: {
     let modelOverride: LanguageModel | undefined;
 
     // --- Tool failure detection (always active) ---
-    const lastStep = Array.isArray(steps) && steps.length > 0
-      ? steps[steps.length - 1]
-      : null;
+    const lastStep = Array.isArray(steps) && steps.length > 0 ? steps[steps.length - 1] : null;
 
-    const hadToolFailure = lastStep?.toolResults?.some(
-      (r: any) => r.output?.ok === false || r.output?.error,
-    ) ?? false;
+    const hadToolFailure =
+      lastStep?.toolResults?.some((r: any) => r.output?.ok === false || r.output?.error) ?? false;
 
     if (hadToolFailure) failureCount++;
 
     // --- Model escalation: persistent failures → escalation model ---
-    if (
-      stepNumber > 15 &&
-      failureCount >= 3 &&
-      !hasEscalatedModel &&
-      opts.getEscalationModel
-    ) {
+    if (stepNumber > 15 && failureCount >= 3 && !hasEscalatedModel && opts.getEscalationModel) {
       try {
         escalatedModel = await opts.getEscalationModel();
         hasEscalatedModel = true;
         modelOverride = escalatedModel.model;
-        logger.warn("prepareStep: escalating to escalation model", { stepNumber, modelId: escalatedModel.modelId });
+        logger.warn("prepareStep: escalating to escalation model", {
+          stepNumber,
+          modelId: escalatedModel.modelId,
+        });
       } catch (err: any) {
         logger.error("prepareStep: failed to load escalation model", {
           stepNumber,
@@ -358,9 +442,27 @@ export function createPrepareStep(opts: {
 
     // Effective model may have changed via escalation; look up its thinking
     // support via the gateway-sourced catalog (tags.includes("reasoning")).
-    const effectiveModelId = (hasEscalatedModel && escalatedModel) ? escalatedModel.modelId : opts.modelId;
+    const effectiveModelId =
+      hasEscalatedModel && escalatedModel ? escalatedModel.modelId : opts.modelId;
     opts.recordStepModelId?.(stepNumber, effectiveModelId);
     providerOptions = await getCachedProviderThinkingOptions(effectiveModelId, opts.thinkingBudget);
+
+    // --- Execution-side thrash breaker (issue #1524) ---
+    // Consecutive tool-result errors (or a per-turn call cap) abort the turn
+    // instead of feeding another error round-trip to the model. Logged as
+    // `tool_thrash_breaker` so leak/thrash rate is measurable per model.
+    const thrash = detectToolThrashFromSteps(steps);
+    if (thrash) {
+      logToolThrashBreaker({
+        trip: thrash,
+        modelId: effectiveModelId,
+        channelId: opts.channelId,
+        userId: opts.userId,
+        path: opts.turnPath,
+        step: stepNumber,
+      });
+      throw new ToolThrashError(thrash);
+    }
 
     // --- Turn wall-clock deadline (issue #1318) ---
     // The step budget never binds in practice (turns die around step 40 while
@@ -445,19 +547,51 @@ export function createPrepareStep(opts: {
         context: { elapsedMs, step: stepNumber, path: opts.turnPath },
       });
       systemSuffixes.push(
-        TURN_SOFT_DEADLINE_MESSAGE.replace(
-          "{elapsedSec}",
-          String(Math.round(elapsedMs / 1000)),
-        ),
+        TURN_SOFT_DEADLINE_MESSAGE.replace("{elapsedSec}", String(Math.round(elapsedMs / 1000))),
       );
+    }
+
+    // --- Tool-thrash loop (issue #1524) ---
+    // Fires before the wall-clock hard deadline: a silent 15+ streak of the
+    // same tool will otherwise burn the turn to 720s. Re-injected on every
+    // subsequent step while the streak holds, because a later instructions
+    // override (step-limit wrap-up, etc.) would otherwise drop a one-shot
+    // nudge. Telemetry is recorded once.
+    if (!hardDeadlineActive) {
+      const loop = detectToolCallLoop(steps);
+      if (loop) {
+        if (!toolLoopNudgeInjected) {
+          toolLoopNudgeInjected = true;
+          logger.warn("prepareStep: tool-call loop detected — injecting stop/summarize nudge", {
+            toolName: loop.toolName,
+            callCount: loop.callCount,
+            stepNumber,
+          });
+          logError({
+            errorName: "ToolCallLoop",
+            errorMessage: `Turn called ${loop.toolName} ${loop.callCount} times without intervening text; wrap-up nudge injected`,
+            errorCode: "tool_call_loop",
+            channelId: opts.channelId,
+            userId: opts.userId,
+            context: {
+              toolName: loop.toolName,
+              callCount: loop.callCount,
+              step: stepNumber,
+              path: opts.turnPath,
+            },
+          });
+        }
+        systemSuffixes.push(formatToolLoopMessage(loop));
+      }
     }
 
     // --- Step limit warning ---
     if (stepNumber >= threshold) {
       systemSuffixes.push(
-        WRAP_UP_MESSAGE
-          .replace("{stepCount}", String(stepNumber))
-          .replace("{limit}", String(limit)),
+        WRAP_UP_MESSAGE.replace("{stepCount}", String(stepNumber)).replace(
+          "{limit}",
+          String(limit),
+        ),
       );
       logger.info("prepareStep: injecting wrap-up nudge", {
         stepNumber,
@@ -469,11 +603,44 @@ export function createPrepareStep(opts: {
     // cache for the affected steps only — acceptable tradeoff since these
     // nudges fire near the end of a turn.
     if (systemSuffixes.length > 0) {
-      systemOverride = opts.stablePrefix
-        + (opts.environmentContext ? "\n\n" + opts.environmentContext : "")
-        + (opts.conversationContext ? "\n\n" + opts.conversationContext : "")
-        + (opts.dynamicContext ? "\n\n" + opts.dynamicContext : "")
-        + "\n\n" + systemSuffixes.join("\n\n");
+      systemOverride =
+        opts.stablePrefix +
+        (opts.environmentContext ? `\n\n${opts.environmentContext}` : "") +
+        (opts.conversationContext ? `\n\n${opts.conversationContext}` : "") +
+        (opts.dynamicContext ? `\n\n${opts.dynamicContext}` : "") +
+        "\n\n" +
+        systemSuffixes.join("\n\n");
+    }
+
+    // --- Leaked ChatML tool-call markup (issue #1515) ---
+    // GLM-style models emit `<tool_call>…` XML as assistant text (and
+    // sometimes as a tool-call *name*). Strip it from replayed history and
+    // drop XML-named tool_use blocks so they cannot be executed. The error
+    // row carries modelId so leak rate is measurable per model.
+    const markupSanitization = sanitizeAssistantToolMarkup(messages);
+    if (markupSanitization.changed) {
+      logger.warn("prepareStep: stripped leaked tool-call markup from assistant text", {
+        stepNumber,
+        modelId: effectiveModelId,
+        strippedTextCount: markupSanitization.strippedTextCount,
+        droppedLeakedToolCallIds: markupSanitization.droppedLeakedToolCallIds,
+      });
+      logError({
+        errorName: "ToolCallMarkupLeaked",
+        errorMessage:
+          "Model emitted raw ChatML tool-call markup in assistant content; stripped before provider call",
+        errorCode: "tool_call_markup_leaked",
+        channelId: opts.channelId,
+        userId: opts.userId,
+        context: {
+          stepNumber,
+          path: opts.turnPath,
+          modelId: effectiveModelId,
+          strippedTextCount: markupSanitization.strippedTextCount,
+          droppedLeakedToolCallIds: markupSanitization.droppedLeakedToolCallIds,
+          samples: markupSanitization.samples,
+        },
+      });
     }
 
     // --- Tool call id sanitization (issue #1376) ---
@@ -484,7 +651,7 @@ export function createPrepareStep(opts: {
     // drop orphaned tool_results and unpaired tool_uses. The error row is the
     // counter — and it carries the RAW offending ids so we finally learn the
     // actual source instead of guessing.
-    const sanitization = sanitizeToolCallIds(messages);
+    const sanitization = sanitizeToolCallIds(markupSanitization.messages);
     if (sanitization.changed) {
       const summary =
         `${sanitization.normalizedIds.length} id(s) normalized, ` +

@@ -81,7 +81,10 @@ export function sanitizeAssistantPartOrder(messages: UIMessage[]): UIMessage[] {
 
     for (const part of rawParts) {
       if (part.type === "text") textParts.push(part);
-      else if (part.type === "dynamic-tool" || (typeof part.type === "string" && part.type.startsWith("tool-")))
+      else if (
+        part.type === "dynamic-tool" ||
+        (typeof part.type === "string" && part.type.startsWith("tool-"))
+      )
         toolParts.push(part);
       else if (part.type === "reasoning") {
         // Preserve reasoning on the final assistant message so the dashboard can render it.

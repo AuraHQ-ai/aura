@@ -27,7 +27,10 @@ export function benchWorkspaceId(runId: string): string {
  * don't collide.
  */
 export function localBenchWorkspaceId(key: string): string {
-  const slug = key.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const slug = key
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
   return `${BENCH_WORKSPACE_PREFIX}local-${slug || "default"}`;
 }
 
@@ -192,9 +195,7 @@ export async function wipeBenchWorkspace(workspaceId: string): Promise<void> {
   }
 
   try {
-    await db.execute(
-      sql`DELETE FROM workspaces WHERE id = ${workspaceId}`,
-    );
+    await db.execute(sql`DELETE FROM workspaces WHERE id = ${workspaceId}`);
   } catch (error) {
     logger.warn("wipeBenchWorkspace: workspace row delete failed", {
       workspaceId,

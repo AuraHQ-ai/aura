@@ -81,9 +81,7 @@ function queueDbResults(...results: unknown[][]) {
 }
 
 function updateSets() {
-  return dbMock.operations
-    .filter((op) => op.kind === "update")
-    .map((op) => op.setArg ?? {});
+  return dbMock.operations.filter((op) => op.kind === "update").map((op) => op.setArg ?? {});
 }
 
 function baseExecution(overrides: Record<string, unknown> = {}) {
@@ -153,10 +151,10 @@ describe("sweepStuckJobs — selection logic", () => {
     const job = baseJob({ cronSchedule: null });
 
     queueDbResults(
-      [exec],         // stuckExecutions select
-      [job],          // parent jobs select
+      [exec], // stuckExecutions select
+      [job], // parent jobs select
       [{ id: exec.id }], // execution update (claimed)
-      [],             // job update
+      [], // job update
     );
 
     const { sweepStuckJobs } = await import("./job-watchdog.js");
@@ -197,7 +195,7 @@ describe("sweepStuckJobs — selection logic", () => {
       [exec],
       [job],
       [{ id: exec.id }], // execution claimed
-      [],                // job requeued
+      [], // job requeued
     );
 
     const { sweepStuckJobs } = await import("./job-watchdog.js");
@@ -377,7 +375,7 @@ describe("cost aggregation — avgCostPerRunUsd derivation", () => {
     expect(deriveAvg(10, "0.050000")).toBe("0.005000");
     expect(deriveAvg(1, "0.123456")).toBe("0.123456");
     expect(deriveAvg(0, "0.050000")).toBeNull(); // no runs → null
-    expect(deriveAvg(5, null)).toBeNull();        // no cost data → null
+    expect(deriveAvg(5, null)).toBeNull(); // no cost data → null
   });
 
   it("wasWatchdogReset is true iff result contains the WATCHDOG_RESET_MARKER", async () => {
@@ -399,9 +397,7 @@ describe("cost aggregation — avgCostPerRunUsd derivation", () => {
       const runs30d = stat?.runs30d ?? 0;
       const cost30dUsd = stat?.cost30dUsd ?? null;
       const avgCostPerRunUsd =
-        runs30d > 0 && cost30dUsd !== null
-          ? (parseFloat(cost30dUsd) / runs30d).toFixed(6)
-          : null;
+        runs30d > 0 && cost30dUsd !== null ? (parseFloat(cost30dUsd) / runs30d).toFixed(6) : null;
       return { runs30d, cost30dUsd, avgCostPerRunUsd };
     }
 

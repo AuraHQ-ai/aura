@@ -34,11 +34,16 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: pnpm
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      # Lint + format gate (Biome). Fails on errors and unformatted files;
+      # warnings/infos are reported but don't fail the job.
+      - name: Biome
+        run: pnpm exec biome ci .
 
       - name: Build @aura/db
         run: pnpm --filter @aura/db build

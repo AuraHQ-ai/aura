@@ -79,18 +79,9 @@ export async function findUnscoredGroups(
       firstAt: sql<string>`min(${conversationTraces.createdAt})`,
     })
     .from(conversationParts)
-    .innerJoin(
-      conversationMessages,
-      eq(conversationParts.messageId, conversationMessages.id),
-    )
-    .innerJoin(
-      conversationTraces,
-      eq(conversationMessages.conversationId, conversationTraces.id),
-    )
-    .leftJoin(
-      evalResponseScores,
-      eq(evalResponseScores.messageId, conversationMessages.id),
-    )
+    .innerJoin(conversationMessages, eq(conversationParts.messageId, conversationMessages.id))
+    .innerJoin(conversationTraces, eq(conversationMessages.conversationId, conversationTraces.id))
+    .leftJoin(evalResponseScores, eq(evalResponseScores.messageId, conversationMessages.id))
     .where(
       and(
         eq(conversationMessages.role, "assistant"),
@@ -116,9 +107,7 @@ export async function findUnscoredGroups(
   }));
 }
 
-export async function findUnscoredGroupsForRun(
-  maxGroups: number,
-): Promise<UnscoredGroup[]> {
+export async function findUnscoredGroupsForRun(maxGroups: number): Promise<UnscoredGroup[]> {
   const { newest, oldest } = splitGroupBudget(maxGroups);
   const [newestGroups, oldestGroups] = await Promise.all([
     findUnscoredGroups(newest, "desc"),
@@ -152,10 +141,7 @@ interface ScoringTotals {
 }
 
 /** Judge every unscored assistant response in one thread group. */
-export async function scoreGroup(
-  group: UnscoredGroup,
-  deadline: number,
-): Promise<GroupResult> {
+export async function scoreGroup(group: UnscoredGroup, deadline: number): Promise<GroupResult> {
   const traces = group.threadTs
     ? await db
         .select()
@@ -350,9 +336,8 @@ export async function scoreGroupsWithBudget(
     }
   }
 
-  const workers = Array.from(
-    { length: Math.min(JUDGE_CONCURRENCY, groups.length) },
-    () => worker(),
+  const workers = Array.from({ length: Math.min(JUDGE_CONCURRENCY, groups.length) }, () =>
+    worker(),
   );
   await Promise.all(workers);
   return totals;
@@ -374,9 +359,7 @@ evalResponsesApp.get("/api/cron/eval-responses", async (c) => {
 
   const limitParam = parseInt(c.req.query("limit") || "", 10);
   const maxGroups =
-    Number.isFinite(limitParam) && limitParam > 0
-      ? Math.min(limitParam, 200)
-      : DEFAULT_MAX_GROUPS;
+    Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 200) : DEFAULT_MAX_GROUPS;
 
   const start = Date.now();
   const deadline = start + TIME_BUDGET_MS;

@@ -66,7 +66,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS "voice_calls_workspace_conversation_id_idx" ON
 -- migration and not in schema.ts. It is NOT recreated here — the whole block
 -- is guarded so it only runs where the table actually exists (prod), and the
 -- fresh-database replay used by the isolation test stays faithful to the
--- journal. Covered now so RLS (0091) can fence it before it ever grows rows.
+-- journal. Covered now so RLS (0094) can fence it before it ever grows rows.
 DO $$ BEGIN
   IF EXISTS (
     SELECT 1 FROM information_schema.tables

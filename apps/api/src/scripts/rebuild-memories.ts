@@ -38,9 +38,9 @@
  */
 
 import { config } from "dotenv";
-import { resolve, join } from "path";
-import { fileURLToPath } from "url";
-import { mkdirSync, writeFileSync } from "fs";
+import { resolve, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { mkdirSync, writeFileSync } from "node:fs";
 import {
   parseRebuildArgs,
   describeScope,
@@ -80,9 +80,7 @@ function extractRows(result: unknown): ResultRow[] {
 
 // ── Scope filters ────────────────────────────────────────────────────────────
 
-const userFilter = args.scope.user
-  ? sql`AND ${args.scope.user} = ANY(related_user_ids)`
-  : sql``;
+const userFilter = args.scope.user ? sql`AND ${args.scope.user} = ANY(related_user_ids)` : sql``;
 const channelMemoryFilter = args.scope.channel
   ? sql`AND source_channel_id = ${args.scope.channel}`
   : sql``;
@@ -108,9 +106,7 @@ interface ThreadInfo {
 }
 
 async function discoverScopedThreads(): Promise<ThreadInfo[]> {
-  const channelFilter = args.scope.channel
-    ? sql`AND channel_id = ${args.scope.channel}`
-    : sql``;
+  const channelFilter = args.scope.channel ? sql`AND channel_id = ${args.scope.channel}` : sql``;
   const userHaving = args.scope.user
     ? sql`AND BOOL_OR(role = 'user' AND user_id = ${args.scope.user})`
     : sql``;
@@ -276,7 +272,10 @@ async function wipeSandboxWorkspace(workspaceId: string): Promise<void> {
 
 // ── Replay ───────────────────────────────────────────────────────────────────
 
-const usageByModel = new Map<string, { calls: number; inputTokens: number; outputTokens: number }>();
+const usageByModel = new Map<
+  string,
+  { calls: number; inputTokens: number; outputTokens: number }
+>();
 function recordUsage(
   modelId: string,
   usage: { inputTokens?: number; outputTokens?: number },
@@ -322,14 +321,16 @@ async function replayThreads(threads: ThreadInfo[], targetWorkspaceId: string): 
 // ── Artifacts ────────────────────────────────────────────────────────────────
 
 function writeArtifact(dir: string, name: string, data: unknown): void {
-  writeFileSync(join(dir, name), JSON.stringify(data, null, 2) + "\n");
+  writeFileSync(join(dir, name), `${JSON.stringify(data, null, 2)}\n`);
 }
 
 function printUsage(): void {
   if (usageByModel.size === 0) return;
   console.log("\nLLM usage:");
   for (const [modelId, u] of usageByModel) {
-    console.log(`  ${modelId}: ${u.calls} calls, ${u.inputTokens} in / ${u.outputTokens} out tokens`);
+    console.log(
+      `  ${modelId}: ${u.calls} calls, ${u.inputTokens} in / ${u.outputTokens} out tokens`,
+    );
   }
 }
 
@@ -438,7 +439,9 @@ async function main() {
     console.log(`\n=== Apply summary ===`);
     console.log(`Memories added:   ${changes.addedIds.length}`);
     console.log(`Memories updated: ${changes.updatedIds.length}`);
-    console.log(`Memories deleted: ${changes.deletedIds.length} (soft — archived/superseded, see rollback.json)`);
+    console.log(
+      `Memories deleted: ${changes.deletedIds.length} (soft — archived/superseded, see rollback.json)`,
+    );
   }
 
   writeArtifact(outDir, "run.json", {

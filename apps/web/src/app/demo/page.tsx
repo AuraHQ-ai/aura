@@ -8,9 +8,7 @@ const SALES_LEADERBOARD: SlackMessage[] = [
     author: "Jonas Wiesel",
     avatar: "https://unavatar.io/github/wieseljonas",
     timestamp: "9:14 AM",
-    content: [
-      { type: "text", text: "@Aura show the sales leaderboard this week" },
-    ],
+    content: [{ type: "text", text: "@Aura show the sales leaderboard this week" }],
   },
   {
     author: "Aura",
@@ -23,7 +21,8 @@ const SALES_LEADERBOARD: SlackMessage[] = [
         type: "tool_call",
         name: "Querying BigQuery — deals closed this week...",
         status: "ok",
-        detail: "SELECT closer_name, COUNT(*) as deals, SUM(mrr) as mrr FROM deals WHERE closed_at >= CURRENT_DATE - 7 AND stage = 'won' GROUP BY 1 ORDER BY 3 DESC LIMIT 10",
+        detail:
+          "SELECT closer_name, COUNT(*) as deals, SUM(mrr) as mrr FROM deals WHERE closed_at >= CURRENT_DATE - 7 AND stage = 'won' GROUP BY 1 ORDER BY 3 DESC LIMIT 10",
       },
       {
         type: "text",
@@ -41,7 +40,10 @@ const AD_SPEND: SlackMessage[] = [
     avatar: "https://unavatar.io/github/wieseljonas",
     timestamp: "2:31 PM",
     content: [
-      { type: "text", text: "@Aura what's our spend, CTR, CPC and CPA by platform for the sign up conversion event in the last 12 months?" },
+      {
+        type: "text",
+        text: "@Aura what's our spend, CTR, CPC and CPA by platform for the sign up conversion event in the last 12 months?",
+      },
     ],
   },
   {
@@ -55,7 +57,8 @@ const AD_SPEND: SlackMessage[] = [
         type: "tool_call",
         name: "Querying BigQuery — ad performance last 12 months...",
         status: "ok",
-        detail: "SELECT platform, SUM(spend) as spend, SUM(clicks)/SUM(impressions) as ctr, SUM(spend)/SUM(clicks) as cpc, SUM(spend)/SUM(conversions) as cpa FROM ad_performance WHERE event = 'sign_up' AND date >= DATE_SUB(CURRENT_DATE, INTERVAL 12 MONTH) GROUP BY 1 ORDER BY 1",
+        detail:
+          "SELECT platform, SUM(spend) as spend, SUM(clicks)/SUM(impressions) as ctr, SUM(spend)/SUM(clicks) as cpc, SUM(spend)/SUM(conversions) as cpa FROM ad_performance WHERE event = 'sign_up' AND date >= DATE_SUB(CURRENT_DATE, INTERVAL 12 MONTH) GROUP BY 1 ORDER BY 1",
       },
       {
         type: "text",
@@ -73,7 +76,10 @@ const BUILD_FAILING: SlackMessage[] = [
     avatar: "https://unavatar.io/github/wieseljonas",
     timestamp: "6:48 PM",
     content: [
-      { type: "text", text: "@Aura the build is failing on github actions, investigate and suggest a fix" },
+      {
+        type: "text",
+        text: "@Aura the build is failing on github actions, investigate and suggest a fix",
+      },
     ],
   },
   {
@@ -116,10 +122,14 @@ export default function DemoPage() {
       <h2 style={{ fontSize: "16px", fontWeight: 600, marginBottom: "16px" }}>Sales leaderboard</h2>
       <SlackConversation messages={SALES_LEADERBOARD} />
 
-      <h2 style={{ fontSize: "16px", fontWeight: 600, margin: "48px 0 16px" }}>Ad spend by platform</h2>
+      <h2 style={{ fontSize: "16px", fontWeight: 600, margin: "48px 0 16px" }}>
+        Ad spend by platform
+      </h2>
       <SlackConversation messages={AD_SPEND} />
 
-      <h2 style={{ fontSize: "16px", fontWeight: 600, margin: "48px 0 16px" }}>Build failing — investigate and fix</h2>
+      <h2 style={{ fontSize: "16px", fontWeight: 600, margin: "48px 0 16px" }}>
+        Build failing — investigate and fix
+      </h2>
       <SlackConversation messages={BUILD_FAILING} />
     </div>
   );

@@ -69,7 +69,11 @@ describe("updateJobBodySchema (PATCH /api/dashboard/jobs/:id)", () => {
     const omitted = updateJobBodySchema.parse({});
     expect("model" in omitted && omitted.model !== undefined).toBe(false);
 
-    const cleared = updateJobBodySchema.parse({ model: null, envAllowlist: null, promptMode: null });
+    const cleared = updateJobBodySchema.parse({
+      model: null,
+      envAllowlist: null,
+      promptMode: null,
+    });
     expect(cleared.model).toBeNull();
     expect(cleared.envAllowlist).toBeNull();
     expect(cleared.promptMode).toBeNull();

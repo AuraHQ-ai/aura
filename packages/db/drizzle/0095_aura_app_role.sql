@@ -3,7 +3,7 @@
 --
 -- WHY THIS EXISTS
 -- ===============
--- The RLS policies from 0091 are INERT for any role with the BYPASSRLS
+-- The RLS policies from 0094 are INERT for any role with the BYPASSRLS
 -- attribute, and on production Neon the table owner / current app identity
 -- (`neondb_owner`) HAS BYPASSRLS (verified live). FORCE ROW LEVEL SECURITY
 -- does not help: it removes the owner exemption, not the role-attribute

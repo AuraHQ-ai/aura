@@ -49,7 +49,7 @@ psql_super() {
 echo "==> (re)creating disposable database $DB_NAME"
 psql_super -c "DROP DATABASE IF EXISTS $DB_NAME;"
 # Owner role mirrors neondb_owner's capabilities where they matter for the
-# migration chain: owns the tables, can CREATE ROLE (0092 creates aura_app).
+# migration chain: owns the tables, can CREATE ROLE (0095 creates aura_app).
 # It deliberately does NOT get BYPASSRLS -- the tests never run as the owner.
 psql_super -c "DO \$\$ BEGIN
   IF NOT EXISTS (SELECT FROM pg_roles WHERE rolname = '$OWNER_ROLE') THEN
@@ -68,7 +68,7 @@ echo "==> applying full migration chain as the OWNER role (local disposable DB o
 DATABASE_URL="postgres://$OWNER_ROLE:$OWNER_PASS@localhost:$DB_PORT/$DB_NAME" \
   npx tsx scripts/apply-migrations-local.ts
 
-# Out-of-band password step from the 0092 runbook: the migration creates
+# Out-of-band password step from the 0095 runbook: the migration creates
 # aura_app without a password; the operator sets one and points DATABASE_URL
 # at it. Superuser here stands in for the operator.
 echo "==> setting aura_app password out of band (operator runbook step)"
@@ -108,7 +108,7 @@ done
 
 # App traffic goes THROUGH the pooler (as in production). The raw/maintenance
 # client in the tests uses the DIRECT connection (operator sessions are
-# direct per the 0091 runbook — session GUCs are unsafe through a transaction
+# direct per the 0094 runbook — session GUCs are unsafe through a transaction
 # pooler, which is the entire point of the concurrency suite).
 export DATABASE_URL="postgres://$APP_ROLE:$APP_PASS@localhost:$POOLER_PORT/$DB_NAME"
 export DIRECT_DATABASE_URL="postgres://$APP_ROLE:$APP_PASS@localhost:$DB_PORT/$DB_NAME"

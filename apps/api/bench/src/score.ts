@@ -8,13 +8,7 @@ import { db } from "../../src/db/client.js";
 import { benchRuns, type NewBenchRun } from "@aura/db/schema";
 import { logger } from "../../src/lib/logger.js";
 import { BENCH_META_WORKSPACE } from "./workspace.js";
-import type {
-  BenchRunConfig,
-  BenchScore,
-  DatasetId,
-  PerCaseResult,
-  ScoreType,
-} from "./types.js";
+import type { BenchRunConfig, BenchScore, DatasetId, PerCaseResult } from "./types.js";
 
 /**
  * Aggregate per-case results into (dataset, category, scoreType) cells.
@@ -70,13 +64,10 @@ export function aggregateScores(
       if (r.retrievedRecallHit != null) return r.retrievedRecallHit ? 1 : 0;
       return null;
     };
-    const recallScored = group
-      .map((r) => coverageOf(r))
-      .filter((c): c is number => c !== null);
+    const recallScored = group.map((r) => coverageOf(r)).filter((c): c is number => c !== null);
     if (recallScored.length > 0) {
       const nFull = recallScored.filter((c) => c >= 1).length;
-      const meanCoverage =
-        recallScored.reduce((acc, c) => acc + c, 0) / recallScored.length;
+      const meanCoverage = recallScored.reduce((acc, c) => acc + c, 0) / recallScored.length;
       out.push({
         dataset,
         category,
@@ -131,9 +122,7 @@ export interface ContextEfficiency {
  * results recorded before this metric existed) are ignored so the mean stays
  * honest on resumed/mixed runs.
  */
-export function aggregateContextEfficiency(
-  results: PerCaseResult[],
-): ContextEfficiency {
+export function aggregateContextEfficiency(results: PerCaseResult[]): ContextEfficiency {
   const mean = (rows: PerCaseResult[]): ContextEfficiencyStat => {
     const measured = rows.filter((r) => r.memoryTokens != null);
     const n = measured.length;
@@ -151,10 +140,7 @@ export function aggregateContextEfficiency(
   const byDataset = new Map<DatasetId, ContextEfficiencyStat>();
   const datasets = new Set<DatasetId>(results.map((r) => r.dataset));
   for (const dataset of datasets) {
-    byDataset.set(
-      dataset,
-      mean(results.filter((r) => r.dataset === dataset)),
-    );
+    byDataset.set(dataset, mean(results.filter((r) => r.dataset === dataset)));
   }
 
   return { byDataset, overall: mean(results) };
@@ -231,7 +217,10 @@ export async function computeDeltas(
   config: BenchRunConfig,
   scope: { corpusHash: string; caseSetHash: string },
 ): Promise<Map<string, { prior: number | null; delta: number | null; priorRunId: string | null }>> {
-  const out = new Map<string, { prior: number | null; delta: number | null; priorRunId: string | null }>();
+  const out = new Map<
+    string,
+    { prior: number | null; delta: number | null; priorRunId: string | null }
+  >();
   for (const s of scores) {
     out.set(`${s.dataset}|${s.category}|${s.scoreType}`, {
       prior: null,
@@ -273,9 +262,7 @@ export async function computeDeltas(
 
       const matchingScore = scores.find(
         (s) =>
-          s.dataset === row.dataset &&
-          s.category === row.category &&
-          s.scoreType === row.scoreType,
+          s.dataset === row.dataset && s.category === row.category && s.scoreType === row.scoreType,
       )!;
       out.set(key, {
         prior: row.score,

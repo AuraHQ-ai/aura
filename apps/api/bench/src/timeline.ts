@@ -85,9 +85,7 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function runTimeline(
-  opts: RunTimelineOptions,
-): Promise<RunTimelineResult> {
+export async function runTimeline(opts: RunTimelineOptions): Promise<RunTimelineResult> {
   const {
     cases,
     workspaceId,
@@ -370,8 +368,9 @@ export async function runTimeline(
 
   const producerPromise = runExtraction ? runProducer() : Promise.resolve();
   const consumerPromises = runScoring
-    ? Array.from({ length: Math.max(1, Math.min(scoreConcurrency, Math.max(1, pending.length))) }, () =>
-        consumer(),
+    ? Array.from(
+        { length: Math.max(1, Math.min(scoreConcurrency, Math.max(1, pending.length))) },
+        () => consumer(),
       )
     : [];
 

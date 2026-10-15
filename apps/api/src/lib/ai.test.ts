@@ -12,9 +12,7 @@ const mocks = vi.hoisted(() => ({
     const middlewares = Array.isArray(middleware) ? middleware : [middleware];
     return [...middlewares].reverse().reduce((wrapped, mw) => {
       const transform = async (params: any, type: string) =>
-        mw.transformParams
-          ? await mw.transformParams({ params, type, model: wrapped })
-          : params;
+        mw.transformParams ? await mw.transformParams({ params, type, model: wrapped }) : params;
       return {
         ...wrapped,
         doGenerate: async (params: any) => {
@@ -84,7 +82,12 @@ vi.mock("./metrics.js", () => ({
   recordPipelineMetrics: vi.fn(),
 }));
 
-import { withAnthropicFallback, getModelByCategory, isJobModelCategory, LAST_RESORT_MODELS } from "./ai.js";
+import {
+  withAnthropicFallback,
+  getModelByCategory,
+  isJobModelCategory,
+  LAST_RESORT_MODELS,
+} from "./ai.js";
 import { getSetting } from "./settings.js";
 import { logger } from "./logger.js";
 
@@ -181,9 +184,9 @@ describe("getModelByCategory — resolution order", () => {
 
   // Requirement: unknown category → throws
   it("throws for an unknown category (not in LAST_RESORT_MODELS)", async () => {
-    await expect(
-      getModelByCategory("unknown_category" as any),
-    ).rejects.toThrow("No last-resort model configured for unknown category: unknown_category");
+    await expect(getModelByCategory("unknown_category" as any)).rejects.toThrow(
+      "No last-resort model configured for unknown category: unknown_category",
+    );
   });
 });
 
@@ -216,9 +219,7 @@ describe("withAnthropicFallback thinking self-heal", () => {
       doGenerate: vi.fn(),
       doStream: vi
         .fn()
-        .mockRejectedValueOnce(
-          new Error("\"thinking.type.enabled\" is not supported for this model"),
-        )
+        .mockRejectedValueOnce(new Error('"thinking.type.enabled" is not supported for this model'))
         .mockResolvedValueOnce(streamResult),
     };
     mocks.getModelCapabilities.mockResolvedValue({
@@ -228,10 +229,7 @@ describe("withAnthropicFallback thinking self-heal", () => {
       capabilities: { provider: "anthropic", thinkingMode: "adaptive" },
     });
 
-    const wrapped = withAnthropicFallback(
-      gatewayModel as any,
-      "anthropic/claude-opus-4.7",
-    ) as any;
+    const wrapped = withAnthropicFallback(gatewayModel as any, "anthropic/claude-opus-4.7") as any;
 
     await expect(
       wrapped.doStream({
@@ -244,10 +242,10 @@ describe("withAnthropicFallback thinking self-heal", () => {
       }),
     ).resolves.toBe(streamResult);
 
-    expect(mocks.updateModelCapabilities).toHaveBeenCalledWith(
-      "anthropic/claude-opus-4.7",
-      { provider: "anthropic", thinkingMode: "adaptive" },
-    );
+    expect(mocks.updateModelCapabilities).toHaveBeenCalledWith("anthropic/claude-opus-4.7", {
+      provider: "anthropic",
+      thinkingMode: "adaptive",
+    });
     expect(gatewayModel.doStream).toHaveBeenCalledTimes(2);
     expect(gatewayModel.doStream).toHaveBeenNthCalledWith(
       2,
@@ -305,10 +303,7 @@ describe("addToolInputExamplesMiddleware — provider boundary", () => {
       doGenerate: vi.fn(),
     };
 
-    const wrapped = withAnthropicFallback(
-      gatewayModel as any,
-      "openai/gpt-test",
-    ) as any;
+    const wrapped = withAnthropicFallback(gatewayModel as any, "openai/gpt-test") as any;
 
     await wrapped.doStream({
       tools: [
@@ -340,10 +335,7 @@ describe("gatewayFallbackMiddleware — unsupported tool field self-heal", () =>
   it("strips the offending field from every tool and retries once (generate)", async () => {
     const result = { text: "ok" };
     const gatewayModel = {
-      doGenerate: vi
-        .fn()
-        .mockRejectedValueOnce(EXTRA_INPUTS_ERROR)
-        .mockResolvedValueOnce(result),
+      doGenerate: vi.fn().mockRejectedValueOnce(EXTRA_INPUTS_ERROR).mockResolvedValueOnce(result),
       doStream: vi.fn(),
     };
 
@@ -398,9 +390,7 @@ describe("gatewayFallbackMiddleware — unsupported tool field self-heal", () =>
 
     await expect(
       wrapped.doStream({
-        tools: [
-          { type: "function", name: "a", input_examples: [{ input: {} }] },
-        ],
+        tools: [{ type: "function", name: "a", input_examples: [{ input: {} }] }],
       }),
     ).resolves.toBe(streamResult);
 
@@ -416,10 +406,7 @@ describe("gatewayFallbackMiddleware — unsupported tool field self-heal", () =>
       "tools.2.custom.input_examples: Extra inputs are not permitted",
     );
     const gatewayModel = {
-      doGenerate: vi
-        .fn()
-        .mockRejectedValueOnce(wrappedError)
-        .mockResolvedValueOnce(result),
+      doGenerate: vi.fn().mockRejectedValueOnce(wrappedError).mockResolvedValueOnce(result),
       doStream: vi.fn(),
     };
 
@@ -527,9 +514,7 @@ describe("gatewayFallbackMiddleware — missing tool_result self-heal (issue #13
 
   const expectMaterialized = (tools: any[]) => {
     expect(tools.some((t) => t.name === "toolSearch")).toBe(false);
-    expect(
-      tools.some((t) => typeof t.id === "string" && t.id.includes("tool_search")),
-    ).toBe(false);
+    expect(tools.some((t) => typeof t.id === "string" && t.id.includes("tool_search"))).toBe(false);
     for (const tool of tools) {
       expect(tool.providerOptions?.anthropic?.deferLoading).toBeUndefined();
     }
@@ -610,10 +595,7 @@ describe("gatewayFallbackMiddleware — missing tool_result self-heal (issue #13
     const wrappedError = new Error("gateway request failed");
     (wrappedError as any).cause = MISSING_TOOL_RESULT_ERROR;
     const gatewayModel = {
-      doGenerate: vi
-        .fn()
-        .mockRejectedValueOnce(wrappedError)
-        .mockResolvedValueOnce(result),
+      doGenerate: vi.fn().mockRejectedValueOnce(wrappedError).mockResolvedValueOnce(result),
       doStream: vi.fn(),
     };
 
@@ -682,9 +664,9 @@ describe("gatewayFallbackMiddleware — missing tool_result self-heal (issue #13
       "anthropic/claude-sonnet-4.5",
     ) as any;
 
-    await expect(
-      wrapped.doGenerate({ tools: [eagerTool("run_command")] }),
-    ).rejects.toBe(MISSING_TOOL_RESULT_ERROR);
+    await expect(wrapped.doGenerate({ tools: [eagerTool("run_command")] })).rejects.toBe(
+      MISSING_TOOL_RESULT_ERROR,
+    );
 
     expect(gatewayModel.doGenerate).toHaveBeenCalledTimes(1);
     expect(mocks.recordError).not.toHaveBeenCalled();

@@ -10,10 +10,7 @@ import type { Memory } from "@aura/db/schema";
  *   2. The memory was explicitly marked as `shareable` during extraction
  *      (e.g., user said "Tell Maria that I approved the budget").
  */
-export function filterMemoriesByPrivacy(
-  memories: Memory[],
-  currentUserId: string,
-): Memory[] {
+export function filterMemoriesByPrivacy(memories: Memory[], currentUserId: string): Memory[] {
   return memories.filter((memory) => {
     // Channel-sourced memories are always visible
     if (memory.sourceChannelType !== "dm") {

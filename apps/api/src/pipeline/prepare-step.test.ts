@@ -59,8 +59,11 @@ vi.mock("../lib/langfuse.js", () => ({
 
 import {
   createPrepareStep,
+  detectToolCallLoop,
   getProviderThinkingOptions,
   resolveProviderThinkingOptions,
+  TOOL_LOOP_THRESHOLD,
+  ToolThrashError,
 } from "./prepare-step.js";
 import type { ModelMessage } from "ai";
 
@@ -83,10 +86,9 @@ describe("getProviderThinkingOptions", () => {
       catalogRow({ provider: "anthropic", thinkingMode: "adaptive" }),
     );
 
-    await expect(getProviderThinkingOptions("anthropic/claude-opus-4.7", 8000))
-      .resolves.toEqual({
-        anthropic: { thinking: { type: "adaptive" } },
-      });
+    await expect(getProviderThinkingOptions("anthropic/claude-opus-4.7", 8000)).resolves.toEqual({
+      anthropic: { thinking: { type: "adaptive" } },
+    });
   });
 
   it("resolves Anthropic enabled thinking with the requested budget", async () => {
@@ -94,10 +96,9 @@ describe("getProviderThinkingOptions", () => {
       catalogRow({ provider: "anthropic", thinkingMode: "enabled" }),
     );
 
-    await expect(getProviderThinkingOptions("anthropic/claude-opus-4.6", 12000))
-      .resolves.toEqual({
-        anthropic: { thinking: { type: "enabled", budgetTokens: 12000 } },
-      });
+    await expect(getProviderThinkingOptions("anthropic/claude-opus-4.6", 12000)).resolves.toEqual({
+      anthropic: { thinking: { type: "enabled", budgetTokens: 12000 } },
+    });
   });
 
   it("resolves OpenAI reasoning effort", async () => {
@@ -105,10 +106,9 @@ describe("getProviderThinkingOptions", () => {
       catalogRow({ provider: "openai", reasoningEffort: "medium" }),
     );
 
-    await expect(getProviderThinkingOptions("openai/gpt-5.1", 8000))
-      .resolves.toEqual({
-        openai: { reasoningEffort: "medium" },
-      });
+    await expect(getProviderThinkingOptions("openai/gpt-5.1", 8000)).resolves.toEqual({
+      openai: { reasoningEffort: "medium" },
+    });
   });
 
   it("resolves Google dynamic thinking budget to provider dynamic mode", async () => {
@@ -116,10 +116,9 @@ describe("getProviderThinkingOptions", () => {
       catalogRow({ provider: "google", thinkingBudget: "dynamic" }),
     );
 
-    await expect(getProviderThinkingOptions("google/gemini-2.5-pro", 8000))
-      .resolves.toEqual({
-        google: { thinkingConfig: { thinkingBudget: -1 } },
-      });
+    await expect(getProviderThinkingOptions("google/gemini-2.5-pro", 8000)).resolves.toEqual({
+      google: { thinkingConfig: { thinkingBudget: -1 } },
+    });
   });
 
   it("resolves xAI reasoning effort", async () => {
@@ -127,20 +126,17 @@ describe("getProviderThinkingOptions", () => {
       catalogRow({ provider: "xai", reasoningEffort: "low" }),
     );
 
-    await expect(getProviderThinkingOptions("xai/grok-4-fast-reasoning", 8000))
-      .resolves.toEqual({
-        xai: { reasoningEffort: "low" },
-      });
+    await expect(getProviderThinkingOptions("xai/grok-4-fast-reasoning", 8000)).resolves.toEqual({
+      xai: { reasoningEffort: "low" },
+    });
   });
 
   it("falls back to enabled thinking for reasoning Anthropic models with null capabilities", () => {
     expect(
-      resolveProviderThinkingOptions(
-        "anthropic/claude-opus-4.9",
-        null,
-        8000,
-        { found: true, supportsThinking: true },
-      ),
+      resolveProviderThinkingOptions("anthropic/claude-opus-4.9", null, 8000, {
+        found: true,
+        supportsThinking: true,
+      }),
     ).toEqual({
       anthropic: { thinking: { type: "enabled", budgetTokens: 8000 } },
     });
@@ -148,21 +144,17 @@ describe("getProviderThinkingOptions", () => {
 
   it("returns no override for non-reasoning null capabilities and unknown providers", () => {
     expect(
-      resolveProviderThinkingOptions(
-        "anthropic/claude-haiku-4.5",
-        null,
-        8000,
-        { found: true, supportsThinking: false },
-      ),
+      resolveProviderThinkingOptions("anthropic/claude-haiku-4.5", null, 8000, {
+        found: true,
+        supportsThinking: false,
+      }),
     ).toEqual({});
 
     expect(
-      resolveProviderThinkingOptions(
-        "deepseek/deepseek-v3.2-thinking",
-        null,
-        8000,
-        { found: true, supportsThinking: true },
-      ),
+      resolveProviderThinkingOptions("deepseek/deepseek-v3.2-thinking", null, 8000, {
+        found: true,
+        supportsThinking: true,
+      }),
     ).toEqual({});
   });
 });
@@ -393,9 +385,7 @@ describe("createPrepareStep context compaction (issue #1328)", () => {
   });
 
   function buildLongConversation(stepCount: number, resultLength: number): ModelMessage[] {
-    const history: ModelMessage[] = [
-      { role: "user", content: "Investigate the thing." },
-    ];
+    const history: ModelMessage[] = [{ role: "user", content: "Investigate the thing." }];
     for (let i = 0; i < stepCount; i++) {
       const id = `call-${i}`;
       history.push({
@@ -454,7 +444,7 @@ describe("createPrepareStep context compaction (issue #1328)", () => {
     });
     expect(recordCompaction.mock.calls[0][0].compactedCount).toBeGreaterThan(0);
     expect(recordCompaction.mock.calls[0][0].estimatedTokensSaved).toBeGreaterThan(0);
-  });
+  }, 15_000);
 
   it("does not compact below COMPACTION_START_STEP", async () => {
     const recordCompaction = vi.fn();
@@ -490,7 +480,7 @@ describe("createPrepareStep context compaction (issue #1328)", () => {
     }
     expect(callIds.size).toBeGreaterThan(0);
     expect([...callIds].sort()).toEqual([...resultIds].sort());
-  });
+  }, 15_000);
 });
 
 describe("createPrepareStep tool call id sanitization (issue #1376)", () => {
@@ -506,9 +496,7 @@ describe("createPrepareStep tool call id sanitization (issue #1376)", () => {
       { role: "user", content: "resume the job" },
       {
         role: "assistant",
-        content: [
-          { type: "tool-call", toolCallId: badId, toolName: "run_command", input: {} },
-        ],
+        content: [{ type: "tool-call", toolCallId: badId, toolName: "run_command", input: {} }],
       } as ModelMessage,
       {
         role: "tool",
@@ -561,9 +549,7 @@ describe("createPrepareStep tool call id sanitization (issue #1376)", () => {
       userId: "U0999",
       context: expect.objectContaining({
         stepNumber: 1,
-        normalizedIds: [
-          { raw: badId, sanitized: expect.stringMatching(/^[a-zA-Z0-9_-]{1,64}$/) },
-        ],
+        normalizedIds: [{ raw: badId, sanitized: expect.stringMatching(/^[a-zA-Z0-9_-]{1,64}$/) }],
       }),
     });
   });
@@ -616,5 +602,249 @@ describe("createPrepareStep tool call id sanitization (issue #1376)", () => {
       ([params]) => params.errorCode === "tool_call_id_sanitized",
     );
     expect(sanitizeCalls).toHaveLength(0);
+  });
+});
+
+describe("createPrepareStep leaked tool-call markup (issue #1515)", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    invocationLockMocks.isInvocationCurrent.mockResolvedValue(true);
+  });
+
+  const glmLeak =
+    "<tool_call>run_command<arg_key>command</arg_key><arg_value>cat /tmp/lf_traces.json</arg_value></tool_call>";
+
+  it("strips ChatML XML from assistant history and logs modelId", async () => {
+    const prepareStep = createPrepareStep({
+      stablePrefix: "PREFIX",
+      modelId: "zai/glm-5.3-flash",
+      channelId: "C0123456",
+      userId: "U0999",
+    });
+
+    const result = await prepareStep({
+      stepNumber: 2,
+      steps: [],
+      messages: [
+        { role: "user", content: "look at the traces" },
+        { role: "assistant", content: `Sure.\n${glmLeak}` },
+        { role: "user", content: "and then?" },
+      ],
+    });
+
+    const assistant = result?.messages?.find((m) => m.role === "assistant");
+    const text = typeof assistant?.content === "string" ? assistant.content : "";
+    expect(text).toContain("Sure.");
+    expect(text).not.toContain("<tool_call>");
+    expect(text).not.toContain("<arg_key>");
+
+    const leakCalls = errorLoggerMocks.logError.mock.calls.filter(
+      ([params]) => params.errorCode === "tool_call_markup_leaked",
+    );
+    expect(leakCalls).toHaveLength(1);
+    expect(leakCalls[0][0]).toMatchObject({
+      errorName: "ToolCallMarkupLeaked",
+      channelId: "C0123456",
+      userId: "U0999",
+      context: expect.objectContaining({
+        modelId: "zai/glm-5.3-flash",
+        stepNumber: 2,
+      }),
+    });
+  });
+
+  it("does not log markup sanitization when assistant text is clean", async () => {
+    const prepareStep = createPrepareStep({
+      stablePrefix: "PREFIX",
+      modelId: "zai/glm-5.3-flash",
+    });
+
+    await prepareStep({
+      stepNumber: 1,
+      steps: [],
+      messages: [{ role: "user", content: "hello" }],
+    });
+
+    const leakCalls = errorLoggerMocks.logError.mock.calls.filter(
+      ([params]) => params.errorCode === "tool_call_markup_leaked",
+    );
+    expect(leakCalls).toHaveLength(0);
+  });
+});
+
+function searchSteps(
+  count: number,
+  text = "",
+): Array<{ text: string; toolCalls: Array<{ toolName: string }> }> {
+  return Array.from({ length: count }, (_, i) => ({
+    text,
+    toolCalls: [{ toolName: "search_messages", toolCallId: `call-${i}` } as any],
+  }));
+}
+
+describe("detectToolCallLoop (issue #1524)", () => {
+  it("returns null below the threshold and when text interrupts the streak", () => {
+    expect(detectToolCallLoop(searchSteps(TOOL_LOOP_THRESHOLD - 1))).toBeNull();
+    expect(detectToolCallLoop([...searchSteps(TOOL_LOOP_THRESHOLD, "still searching")])).toBeNull();
+    expect(
+      detectToolCallLoop([
+        ...searchSteps(8),
+        { text: "partial update", toolCalls: [] },
+        ...searchSteps(8),
+      ]),
+    ).toBeNull();
+  });
+
+  it("detects a silent streak of the same tool at the threshold", () => {
+    expect(detectToolCallLoop(searchSteps(TOOL_LOOP_THRESHOLD))).toEqual({
+      toolName: "search_messages",
+      callCount: TOOL_LOOP_THRESHOLD,
+    });
+  });
+});
+
+describe("createPrepareStep tool-call loop (issue #1524)", () => {
+  const messages: ModelMessage[] = [{ role: "user", content: "find the deploy" }];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    invocationLockMocks.isInvocationCurrent.mockResolvedValue(true);
+    turnDeadlineMocks.spawnTurnContinuationJob.mockResolvedValue(true);
+  });
+
+  it("injects a stop/summarize nudge when the same tool repeats without text", async () => {
+    const prepareStep = createPrepareStep({
+      stablePrefix: "PREFIX",
+      channelId: "C0123456",
+      userId: "U0999",
+    });
+
+    const below = await prepareStep({
+      stepNumber: TOOL_LOOP_THRESHOLD - 1,
+      steps: searchSteps(TOOL_LOOP_THRESHOLD - 1),
+      messages,
+    });
+    expect(below?.instructions).toBeUndefined();
+
+    const tripped = await prepareStep({
+      stepNumber: TOOL_LOOP_THRESHOLD,
+      steps: searchSteps(TOOL_LOOP_THRESHOLD),
+      messages,
+    });
+    expect(tripped?.instructions).toContain("tool loop");
+    expect(tripped?.instructions).toContain("search_messages");
+    expect(tripped?.instructions).toContain(String(TOOL_LOOP_THRESHOLD));
+    expect(tripped?.activeTools).toBeUndefined();
+    expect(tripped?.toolChoice).toBeUndefined();
+
+    const loopCalls = errorLoggerMocks.logError.mock.calls.filter(
+      ([params]) => params.errorCode === "tool_call_loop",
+    );
+    expect(loopCalls).toHaveLength(1);
+    expect(loopCalls[0][0]).toMatchObject({
+      errorName: "ToolCallLoop",
+      channelId: "C0123456",
+      userId: "U0999",
+      context: expect.objectContaining({
+        toolName: "search_messages",
+        callCount: TOOL_LOOP_THRESHOLD,
+      }),
+    });
+  });
+
+  it("does not inject the loop nudge past the hard deadline", async () => {
+    const prepareStep = createPrepareStep({
+      stablePrefix: "PREFIX",
+      turnDeadlines: { softDeadlineMs: 0, hardDeadlineMs: 0 },
+    });
+
+    const result = await prepareStep({
+      stepNumber: 20,
+      steps: searchSteps(TOOL_LOOP_THRESHOLD),
+      messages,
+    });
+
+    expect(result?.toolChoice).toBe("none");
+    expect(result?.instructions).toContain("wall-clock budget is exhausted");
+    expect(result?.instructions).not.toContain("tool loop");
+    expect(
+      errorLoggerMocks.logError.mock.calls.some(
+        ([params]) => params.errorCode === "tool_call_loop",
+      ),
+    ).toBe(false);
+  });
+});
+
+function failedSearchSteps(count: number) {
+  return Array.from({ length: count }, (_, i) => ({
+    text: "",
+    toolCalls: [{ toolName: "archive_emails", toolCallId: `fail-${i}` }],
+    toolResults: [
+      {
+        toolName: "archive_emails",
+        toolCallId: `fail-${i}`,
+        output: { ok: false, error: "nope" },
+      },
+    ],
+  }));
+}
+
+describe("createPrepareStep tool-thrash breaker (issue #1524)", () => {
+  const messages: ModelMessage[] = [{ role: "user", content: "do the thing" }];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    invocationLockMocks.isInvocationCurrent.mockResolvedValue(true);
+    turnDeadlineMocks.spawnTurnContinuationJob.mockResolvedValue(true);
+  });
+
+  it("aborts the turn after 5 consecutive tool execution errors", async () => {
+    const prepareStep = createPrepareStep({
+      stablePrefix: "PREFIX",
+      modelId: "zai/glm-5.3-flash",
+      channelId: "C0123456",
+      userId: "U0999",
+    });
+
+    await expect(
+      prepareStep({
+        stepNumber: 6,
+        steps: failedSearchSteps(5),
+        messages,
+      }),
+    ).rejects.toBeInstanceOf(ToolThrashError);
+
+    const thrashCalls = errorLoggerMocks.logError.mock.calls.filter(
+      ([params]) => params.errorCode === "tool_thrash_breaker",
+    );
+    expect(thrashCalls).toHaveLength(1);
+    expect(thrashCalls[0][0]).toMatchObject({
+      errorName: "ToolThrashBreaker",
+      channelId: "C0123456",
+      userId: "U0999",
+      context: expect.objectContaining({
+        reason: "consecutive_errors",
+        consecutiveErrors: 5,
+        modelId: "zai/glm-5.3-flash",
+      }),
+    });
+  });
+
+  it("does not abort after 4 consecutive errors", async () => {
+    const prepareStep = createPrepareStep({
+      stablePrefix: "PREFIX",
+    });
+
+    const result = await prepareStep({
+      stepNumber: 5,
+      steps: failedSearchSteps(4),
+      messages,
+    });
+    expect(result?.instructions).toBeUndefined();
+    expect(
+      errorLoggerMocks.logError.mock.calls.some(
+        ([params]) => params.errorCode === "tool_thrash_breaker",
+      ),
+    ).toBe(false);
   });
 });

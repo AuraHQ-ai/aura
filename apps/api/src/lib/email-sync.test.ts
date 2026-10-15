@@ -9,8 +9,9 @@ const mocks = vi.hoisted(() => {
 
   return {
     getGmailClientForUser: vi.fn(),
-    getHeader: vi.fn((headers: Array<{ name: string; value: string }>, name: string) =>
-      headers.find((header) => header.name.toLowerCase() === name.toLowerCase())?.value ?? "",
+    getHeader: vi.fn(
+      (headers: Array<{ name: string; value: string }>, name: string) =>
+        headers.find((header) => header.name.toLowerCase() === name.toLowerCase())?.value ?? "",
     ),
     extractBodyParts: vi.fn(() => ({ html: "", plain: "Email body" })),
     hasAttachmentParts: vi.fn(() => false),
@@ -86,18 +87,17 @@ function gmailMessage(id: string) {
 function batchResponse(messages: unknown[]): Response {
   const boundary = "batch_response";
   const body = messages
-    .map(
-      (message, index) =>
-        [
-          `--${boundary}`,
-          "Content-Type: application/http",
-          `Content-ID: <response-item${index}>`,
-          "",
-          "HTTP/1.1 200 OK",
-          "Content-Type: application/json; charset=UTF-8",
-          "",
-          JSON.stringify(message),
-        ].join("\r\n"),
+    .map((message, index) =>
+      [
+        `--${boundary}`,
+        "Content-Type: application/http",
+        `Content-ID: <response-item${index}>`,
+        "",
+        "HTTP/1.1 200 OK",
+        "Content-Type: application/json; charset=UTF-8",
+        "",
+        JSON.stringify(message),
+      ].join("\r\n"),
     )
     .join("\r\n");
 

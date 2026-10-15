@@ -1,0 +1,82 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true,
+    "defaultBranch": "main"
+  },
+  "files": {
+    "includes": [
+      "**/*.{ts,tsx,mts,cts,js,jsx,mjs,cjs}",
+      "!**/node_modules",
+      "!**/dist",
+      "!**/.next",
+      "!**/.nitro",
+      "!**/.output",
+      "!**/.vercel",
+      "!**/.workflow-data",
+      "!apps/dashboard/src/routeTree.gen.ts",
+      "!apps/dashboard/src/lib/api-types.ts",
+      "!apps/api/public",
+      "!packages/db/drizzle"
+    ]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "double",
+      "jsxQuoteStyle": "double",
+      "semicolons": "always",
+      "trailingCommas": "all",
+      "arrowParentheses": "always"
+    }
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "recommended",
+      "suspicious": {
+        "noExplicitAny": "off",
+        "noImplicitAnyLet": "off"
+      },
+      "style": {
+        "noNonNullAssertion": "off"
+      }
+    }
+  },
+  "assist": {
+    "enabled": true,
+    "actions": {
+      "source": {
+        "organizeImports": "off"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["**/*.test.ts", "**/*.test.tsx", "**/__tests__/**"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noThenProperty": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "apps/dashboard/src/components/ui/**",
+        "apps/dashboard/src/components/ai-elements/**"
+      ],
+      "linter": {
+        "enabled": false
+      }
+    }
+  ]
+}

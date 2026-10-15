@@ -41,9 +41,7 @@ dashboardUsersApp.openapi(listUsersRoute, async (c) => {
     const limit = Math.min(100, Math.max(1, parseInt(c.req.query("limit") ?? "20", 10)));
     const offset = (page - 1) * limit;
 
-    const where = search
-      ? ilike(users.displayName, `%${search}%`)
-      : undefined;
+    const where = search ? ilike(users.displayName, `%${search}%`) : undefined;
 
     const [items, countResult] = await Promise.all([
       db
@@ -62,15 +60,14 @@ dashboardUsersApp.openapi(listUsersRoute, async (c) => {
         .orderBy(sql`${users.lastInteractionAt} desc nulls last`)
         .limit(limit)
         .offset(offset),
-      db
-        .select({ count: sql<number>`count(*)::int` })
-        .from(users)
-        .where(where),
+      db.select({ count: sql<number>`count(*)::int` }).from(users).where(where),
     ]);
 
     return c.json({ items, total: countResult[0]?.count ?? 0 } as any, 200);
   } catch (error) {
-    logger.error("Failed to list users", { error: error instanceof Error ? error.stack : String(error) });
+    logger.error("Failed to list users", {
+      error: error instanceof Error ? error.stack : String(error),
+    });
     return c.json({ error: "Internal server error" }, 500);
   }
 });
@@ -145,7 +142,9 @@ dashboardUsersApp.openapi(getUserRoute, async (c) => {
 
     return c.json({ profile, person, memories: userMemories } as any, 200);
   } catch (error) {
-    logger.error("Failed to get user detail", { error: error instanceof Error ? error.stack : String(error) });
+    logger.error("Failed to get user detail", {
+      error: error instanceof Error ? error.stack : String(error),
+    });
     return c.json({ error: "Internal server error" }, 500);
   }
 });
@@ -204,10 +203,7 @@ dashboardUsersApp.openapi(updateUserRoleRoute, async (c) => {
     }
 
     if (!body.role || !VALID_ROLES.includes(body.role as (typeof VALID_ROLES)[number])) {
-      return c.json(
-        { error: `Invalid role. Must be one of: ${VALID_ROLES.join(", ")}` },
-        400,
-      );
+      return c.json({ error: `Invalid role. Must be one of: ${VALID_ROLES.join(", ")}` }, 400);
     }
 
     const result = await db
@@ -285,11 +281,7 @@ dashboardUsersApp.openapi(updatePersonRoute, async (c) => {
     if (body.gender !== undefined) updates.gender = body.gender;
     if (body.notes !== undefined) updates.notes = body.notes;
 
-    const result = await db
-      .update(users)
-      .set(updates)
-      .where(eq(users.id, userId))
-      .returning();
+    const result = await db.update(users).set(updates).where(eq(users.id, userId)).returning();
 
     if (result.length === 0) {
       return c.json({ error: "User not found" }, 404);
@@ -297,7 +289,9 @@ dashboardUsersApp.openapi(updatePersonRoute, async (c) => {
 
     return c.json(result[0] as any, 200);
   } catch (error) {
-    logger.error("Failed to update user person fields", { error: error instanceof Error ? error.stack : String(error) });
+    logger.error("Failed to update user person fields", {
+      error: error instanceof Error ? error.stack : String(error),
+    });
     return c.json({ error: "Internal server error" }, 500);
   }
 });

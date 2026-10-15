@@ -122,7 +122,9 @@ export async function disambiguateFuzzyMatches(
   if (candidates.length === 0) return null;
 
   const candidateList = candidates
-    .map((c, i) => `  ${i}: "${c.canonicalName}" (${c.type}, similarity ${c.similarity.toFixed(2)})`)
+    .map(
+      (c, i) => `  ${i}: "${c.canonicalName}" (${c.type}, similarity ${c.similarity.toFixed(2)})`,
+    )
     .join("\n");
 
   const { output } = await generateText({
@@ -141,7 +143,11 @@ CRITICAL rules:
     prompt: `New entity: "${name}" (${type})\n\nCandidates:\n${candidateList}`,
   });
 
-  if (output?.match_index != null && output.match_index >= 0 && output.match_index < candidates.length) {
+  if (
+    output?.match_index != null &&
+    output.match_index >= 0 &&
+    output.match_index < candidates.length
+  ) {
     return candidates[output.match_index];
   }
   return null;
@@ -457,7 +463,9 @@ export async function resolveEntityReadOnly(
         AND lower(canonical_name) = ${lowerName}
       LIMIT 1
     `);
-    const exactRows = ((exactCanonical as any).rows ?? exactCanonical) as Array<Record<string, any>>;
+    const exactRows = ((exactCanonical as any).rows ?? exactCanonical) as Array<
+      Record<string, any>
+    >;
     if (exactRows.length > 0) {
       return {
         entityId: exactRows[0].id,
@@ -495,7 +503,9 @@ export async function resolveEntityReadOnly(
         AND lower(canonical_name) = ${lowerName}
       LIMIT 1
     `);
-    const crossCanonicalRows = ((crossTypeCanonical as any).rows ?? crossTypeCanonical) as Array<Record<string, any>>;
+    const crossCanonicalRows = ((crossTypeCanonical as any).rows ?? crossTypeCanonical) as Array<
+      Record<string, any>
+    >;
     if (crossCanonicalRows.length > 0) {
       return {
         entityId: crossCanonicalRows[0].id,
@@ -514,7 +524,9 @@ export async function resolveEntityReadOnly(
         AND e.workspace_id = ${workspaceId}
       LIMIT 1
     `);
-    const crossAliasRows = ((crossTypeAlias as any).rows ?? crossTypeAlias) as Array<Record<string, any>>;
+    const crossAliasRows = ((crossTypeAlias as any).rows ?? crossTypeAlias) as Array<
+      Record<string, any>
+    >;
     if (crossAliasRows.length > 0) {
       return {
         entityId: crossAliasRows[0].id,
@@ -606,7 +618,10 @@ export async function resolveEntities(
   }
 
   // Deduplicate by type:name, keeping the highest-priority role and merging aliases
-  const bestByKey = new Map<string, { name: string; type: EntityType; role?: MemoryEntityRole; aliases?: string[] }>();
+  const bestByKey = new Map<
+    string,
+    { name: string; type: EntityType; role?: MemoryEntityRole; aliases?: string[] }
+  >();
   for (const item of extracted) {
     const normalizedName = item.name.trim();
     if (!normalizedName) continue;
@@ -647,11 +662,11 @@ export async function resolveEntities(
     if (!existing) {
       bestByKey.set(key, { ...item, aliases: cleanedAliases });
     } else {
-      const mergedAliases = [
-        ...(existing.aliases ?? []),
-        ...cleanedAliases,
-      ];
-      if ((ROLE_PRIORITY[item.role ?? "mentioned"] ?? 2) < (ROLE_PRIORITY[existing.role ?? "mentioned"] ?? 2)) {
+      const mergedAliases = [...(existing.aliases ?? []), ...cleanedAliases];
+      if (
+        (ROLE_PRIORITY[item.role ?? "mentioned"] ?? 2) <
+        (ROLE_PRIORITY[existing.role ?? "mentioned"] ?? 2)
+      ) {
         bestByKey.set(key, { ...item, aliases: mergedAliases });
       } else {
         existing.aliases = mergedAliases;
@@ -706,10 +721,7 @@ export async function linkMemoryEntities(
   }));
 
   try {
-    await db
-      .insert(memoryEntities)
-      .values(values)
-      .onConflictDoNothing();
+    await db.insert(memoryEntities).values(values).onConflictDoNothing();
   } catch (error) {
     logger.error("Failed to link memory entities", {
       memoryId,
@@ -744,7 +756,9 @@ export async function resolveEntityByName(
         AND lower(canonical_name) = ${lowerName}
       LIMIT 1
     `);
-    const exactRows = ((exactCanonical as any).rows ?? exactCanonical) as Array<Record<string, any>>;
+    const exactRows = ((exactCanonical as any).rows ?? exactCanonical) as Array<
+      Record<string, any>
+    >;
     if (exactRows.length > 0) {
       return {
         entityId: exactRows[0].id,
@@ -813,7 +827,16 @@ export async function searchEntities(
   query: string,
   workspaceId: string,
   options: { type?: string; limit?: number } = {},
-): Promise<Array<{ entityId: string; canonicalName: string; type: string; similarity: number; memoryCount: number; summary: string | null }>> {
+): Promise<
+  Array<{
+    entityId: string;
+    canonicalName: string;
+    type: string;
+    similarity: number;
+    memoryCount: number;
+    summary: string | null;
+  }>
+> {
   const lowerQuery = query.toLowerCase().trim();
   if (!lowerQuery) return [];
 

@@ -30,16 +30,12 @@ const SPA_FALLBACK = {
   check: true,
 };
 
-const alreadyPatched = config.routes.some(
-  (route) => route && route.dest === "/index.html",
-);
+const alreadyPatched = config.routes.some((route) => route && route.dest === "/index.html");
 
 if (!alreadyPatched) {
   // Insert right before the final catch-all (which routes to the server
   // function), so static assets and API routes keep their behavior.
-  const catchAllIndex = config.routes.findIndex(
-    (route) => route && route.src === "/(.*)",
-  );
+  const catchAllIndex = config.routes.findIndex((route) => route && route.src === "/(.*)");
   if (catchAllIndex === -1) {
     config.routes.push(SPA_FALLBACK);
   } else {
@@ -49,3 +45,14 @@ if (!alreadyPatched) {
 
 writeFileSync(configPath, JSON.stringify(config, null, 2));
 console.log("Patched .vercel/output/config.json (SPA fallback)");
+
+const { ensureUndiciInVercelOutput } = await import("./ensure-vercel-undici.mjs");
+const results = ensureUndiciInVercelOutput({
+  functionsRoot: join(root, ".vercel/output/functions"),
+  apiRoot: root,
+});
+const copied = results.filter((r) => r.copied).length;
+console.log(
+  `Verified undici in ${results.length} Vercel function(s)` +
+    (copied > 0 ? ` (copied into ${copied} that Nitro missed)` : ""),
+);

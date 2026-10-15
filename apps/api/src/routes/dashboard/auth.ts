@@ -16,7 +16,11 @@ function getSessionSecret(): Uint8Array {
   return new TextEncoder().encode(secret);
 }
 
-export async function createSessionJwt(payload: { slackUserId: string; name: string; picture: string }): Promise<string> {
+export async function createSessionJwt(payload: {
+  slackUserId: string;
+  name: string;
+  picture: string;
+}): Promise<string> {
   const sessionTtl = process.env.DASHBOARD_SESSION_TTL || "365d";
   return new SignJWT(payload)
     .setProtectedHeader({ alg: "HS256" })
@@ -180,7 +184,9 @@ dashboardAuthApp.openapi(checkRoleRoute, async (c) => {
 
 const PRODUCTION_ORIGIN = process.env.DASHBOARD_URL || "https://app.aurahq.ai";
 
-function getRequestOrigin(c: { req: { url: string; header: (name: string) => string | undefined } }): string {
+function getRequestOrigin(c: {
+  req: { url: string; header: (name: string) => string | undefined };
+}): string {
   const proto = c.req.header("x-forwarded-proto") || "https";
   const host = c.req.header("x-forwarded-host") || c.req.header("host") || new URL(c.req.url).host;
   return `${proto}://${host}`;
@@ -191,18 +197,22 @@ const TRUSTED_DOMAIN_SUFFIXES = [".aurahq.ai", ".vercel.app"];
 function parseTrustedOrigins(): string[] {
   const raw = process.env.TRUSTED_ORIGINS;
   if (!raw) return [];
-  return raw.split(",").map((o) => o.trim()).filter(Boolean);
+  return raw
+    .split(",")
+    .map((o) => o.trim())
+    .filter(Boolean);
 }
 
 function isAllowedOrigin(origin: string): boolean {
   try {
     const url = new URL(origin);
-    if (url.hostname === "localhost")
-      return url.protocol === "http:" || url.protocol === "https:";
+    if (url.hostname === "localhost") return url.protocol === "http:" || url.protocol === "https:";
     if (url.protocol !== "https:") return false;
-    if (TRUSTED_DOMAIN_SUFFIXES.some(
-      (suffix) => url.hostname === suffix.slice(1) || url.hostname.endsWith(suffix),
-    )) {
+    if (
+      TRUSTED_DOMAIN_SUFFIXES.some(
+        (suffix) => url.hostname === suffix.slice(1) || url.hostname.endsWith(suffix),
+      )
+    ) {
       return true;
     }
     return parseTrustedOrigins().includes(url.origin);
@@ -212,13 +222,20 @@ function isAllowedOrigin(origin: string): boolean {
 }
 
 function getSafeReturnTo(returnTo: string | null | undefined): string {
-  if (!returnTo || !returnTo.startsWith("/") || returnTo.startsWith("//") || returnTo.startsWith("/api/auth")) {
+  if (
+    !returnTo ||
+    !returnTo.startsWith("/") ||
+    returnTo.startsWith("//") ||
+    returnTo.startsWith("/api/auth")
+  ) {
     return "/";
   }
   return returnTo;
 }
 
-function isProduction(c: { req: { url: string; header: (name: string) => string | undefined } }): boolean {
+function isProduction(c: {
+  req: { url: string; header: (name: string) => string | undefined };
+}): boolean {
   return getRequestOrigin(c) === PRODUCTION_ORIGIN;
 }
 
@@ -251,9 +268,7 @@ dashboardAuthApp.get("/login", async (c) => {
     path: "/",
   });
 
-  const state = Buffer.from(
-    JSON.stringify({ nonce, origin, returnTo }),
-  ).toString("base64url");
+  const state = Buffer.from(JSON.stringify({ nonce, origin, returnTo })).toString("base64url");
 
   const params = new URLSearchParams({
     response_type: "code",
@@ -281,9 +296,7 @@ dashboardAuthApp.get("/callback", async (c) => {
   let returnTo: string | undefined;
 
   try {
-    const decoded = JSON.parse(
-      Buffer.from(stateParam || "", "base64url").toString(),
-    );
+    const decoded = JSON.parse(Buffer.from(stateParam || "", "base64url").toString());
     nonce = decoded.nonce;
     origin = decoded.origin;
     returnTo = getSafeReturnTo(decoded.returnTo);
@@ -291,7 +304,7 @@ dashboardAuthApp.get("/callback", async (c) => {
     return c.redirect(`${PRODUCTION_ORIGIN}/unauthorized?reason=invalid_state`);
   }
 
-  const redirectBase = (origin && isAllowedOrigin(origin)) ? origin : PRODUCTION_ORIGIN;
+  const redirectBase = origin && isAllowedOrigin(origin) ? origin : PRODUCTION_ORIGIN;
 
   if (!code || !nonce || nonce !== savedNonce) {
     return c.redirect(`${redirectBase}/unauthorized?reason=invalid_state`);
@@ -315,7 +328,7 @@ dashboardAuthApp.get("/callback", async (c) => {
     }),
   });
 
-  const tokenData = await tokenRes.json() as { ok: boolean; access_token?: string };
+  const tokenData = (await tokenRes.json()) as { ok: boolean; access_token?: string };
   if (!tokenData.ok || !tokenData.access_token) {
     logger.warn("Slack token exchange failed", { tokenData });
     return c.redirect(`${redirectBase}/unauthorized?reason=token_error`);
@@ -324,7 +337,7 @@ dashboardAuthApp.get("/callback", async (c) => {
   const userInfoRes = await fetch("https://slack.com/api/openid.connect.userInfo", {
     headers: { Authorization: `Bearer ${tokenData.access_token}` },
   });
-  const userInfo = await userInfoRes.json() as Record<string, unknown>;
+  const userInfo = (await userInfoRes.json()) as Record<string, unknown>;
   if (!userInfo.ok) {
     logger.warn("Slack userInfo failed", { userInfo });
     return c.redirect(`${redirectBase}/unauthorized?reason=userinfo_error`);

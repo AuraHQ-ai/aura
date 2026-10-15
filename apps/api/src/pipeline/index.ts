@@ -22,14 +22,16 @@ import {
   resolveDisplayName,
   type ConversationContext,
 } from "./slack-context.js";
-import { storeMessage, claimEvent, storeToolCallMessages, storeChannelReadMessage } from "../memory/store.js";
+import {
+  storeMessage,
+  claimEvent,
+  storeToolCallMessages,
+  storeChannelReadMessage,
+} from "../memory/store.js";
 import { claimInvocation } from "../lib/invocation-lock.js";
 import type { ToolCallRecord } from "./respond.js";
 import { extractMemories } from "../memory/extract.js";
-import {
-  getKnowledgeAboutUser,
-  formatKnowledgeSummary,
-} from "../memory/transparency.js";
+import { getKnowledgeAboutUser, formatKnowledgeSummary } from "../memory/transparency.js";
 import {
   getOrCreateProfile,
   recordInteraction,
@@ -41,14 +43,8 @@ import { logger } from "../lib/logger.js";
 import { withTraceSpan } from "../lib/langfuse.js";
 import { logError } from "../lib/error-logger.js";
 import { recordPipelineMetrics, recordError } from "../lib/metrics.js";
-import {
-  setAssistantThreadTitle,
-  trySetAgentSessionStatus,
-} from "../lib/slack-status.js";
-import {
-  generateInitialDmThreadTitle,
-  generateUpdatedDmThreadTitle,
-} from "./dm-title.js";
+import { setAssistantThreadTitle, trySetAgentSessionStatus } from "../lib/slack-status.js";
+import { generateInitialDmThreadTitle, generateUpdatedDmThreadTitle } from "./dm-title.js";
 import {
   BARE_MENTION_WITH_CONTEXT_PROMPT,
   shouldGreetAndBailForEmptyMessage,
@@ -172,9 +168,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
   // only proceed if Aura is explicitly @mentioned. This is a HARD, code-level
   // rule that cannot be bypassed by an LLM gate or prompt (see issue #918).
   if (!context.isDm && !context.isMentioned) {
-    const gatedChannels = new Set(
-      (await getSettingJSON<string[]>("gated_channels", [])) ?? [],
-    );
+    const gatedChannels = new Set((await getSettingJSON<string[]>("gated_channels", [])) ?? []);
     if (isChannelGatedOut(context, gatedChannels)) {
       logger.info("gated_channel_skip", {
         channelId: context.channelId,
@@ -244,7 +238,11 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
   // Must run after shouldRespond so non-responding messages don't
   // supersede an in-progress invocation for this thread.
   const effectiveThreadTs = context.threadTs || context.messageTs;
-  const invocationId = await claimInvocation(context.channelId, effectiveThreadTs, context.messageTs);
+  const invocationId = await claimInvocation(
+    context.channelId,
+    effectiveThreadTs,
+    context.messageTs,
+  );
 
   if (!invocationId) {
     logger.info("Skipping message — a newer message already claimed this thread", {
@@ -276,7 +274,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
   // - In DMs (top-level): chatStream requires a thread_ts, so we thread
   //   under the user's message. For non-streaming paths (transparency
   //   commands, empty mentions), we still use undefined to reply inline.
-    const replyThreadTs = context.threadTs || context.messageTs;
+  const replyThreadTs = context.threadTs || context.messageTs;
 
   // Capture response & prompt state for persistence in the catch-block
   // interruption path (Path 2) where const-scoped variables aren't accessible.
@@ -413,9 +411,7 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     // turn. See issue #1295.
     if (context.isDm) {
       try {
-        const { resolveAppContextForMessage } = await import(
-          "../lib/app-context.js"
-        );
+        const { resolveAppContextForMessage } = await import("../lib/app-context.js");
         const appContextEntities = await resolveAppContextForMessage({
           event,
           userId: context.userId,
@@ -438,7 +434,10 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     }
 
     // Ensure user has a profile and resolve their timezone
-    const { name: displayName, timezone: slackTimezone } = await resolveDisplayName(client, context.userId);
+    const { name: displayName, timezone: slackTimezone } = await resolveDisplayName(
+      client,
+      context.userId,
+    );
     const userProfile = await getOrCreateProfile(context.userId, displayName, slackTimezone);
     const userTimezone = userProfile.timezone || "UTC";
 
@@ -489,14 +488,24 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       },
       async () => {
         const retrievalStart = Date.now();
-        const { stablePrefix, environmentContext, conversationContext, dynamicContext, memories, conversations } = await assemblePrompt(
-          { ...context, text: messageText },
-          resolvedConversation,
-          client,
-        );
+        const {
+          stablePrefix,
+          environmentContext,
+          conversationContext,
+          dynamicContext,
+          memories,
+          conversations,
+        } = await assemblePrompt({ ...context, text: messageText }, resolvedConversation, client);
         const retrievalMs = Date.now() - retrievalStart;
 
-        capturedSystemPrompt = [stablePrefix, environmentContext, conversationContext, dynamicContext].filter(Boolean).join("\n\n");
+        capturedSystemPrompt = [
+          stablePrefix,
+          environmentContext,
+          conversationContext,
+          dynamicContext,
+        ]
+          .filter(Boolean)
+          .join("\n\n");
         capturedUserPrompt = messageText;
 
         // 5a. Durable respond path (issue #1111, flag-gated): delegate the
@@ -529,10 +538,15 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
               displayName,
               threadMessageCount: resolvedConversation.thread?.length ?? 0,
               ...(() => {
-                const all = (resolvedConversation.thread ?? resolvedConversation.recentMessages)
-                  .map((m) => ({ displayName: m.displayName, text: m.text }));
-                if (all.length <= 6) return { recentThreadMessages: all, threadMessagesElided: false };
-                return { recentThreadMessages: [...all.slice(0, 3), ...all.slice(-3)], threadMessagesElided: true };
+                const all = (
+                  resolvedConversation.thread ?? resolvedConversation.recentMessages
+                ).map((m) => ({ displayName: m.displayName, text: m.text }));
+                if (all.length <= 6)
+                  return { recentThreadMessages: all, threadMessagesElided: false };
+                return {
+                  recentThreadMessages: [...all.slice(0, 3), ...all.slice(-3)],
+                  threadMessagesElided: true,
+                };
               })(),
               systemPrompt: capturedSystemPrompt,
             },
@@ -671,7 +685,9 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
     });
 
     // 7. Background tasks (via waitUntil so they don't block the response)
-    const fullSystemPrompt = [stablePrefix, environmentContext, conversationContext, dynamicContext].filter(Boolean).join("\n\n");
+    const fullSystemPrompt = [stablePrefix, environmentContext, conversationContext, dynamicContext]
+      .filter(Boolean)
+      .join("\n\n");
     const backgroundTasks = runBackgroundTasks({
       context: { ...context, text: messageText },
       event,
@@ -689,10 +705,15 @@ export async function runPipeline(options: PipelineOptions): Promise<void> {
       compactionTotals: response.compactionTotals,
       replyThreadTs,
       ...(() => {
-        const all = (conversation.thread ?? conversation.recentMessages)
-          .map(m => ({ displayName: m.displayName, text: m.text }));
+        const all = (conversation.thread ?? conversation.recentMessages).map((m) => ({
+          displayName: m.displayName,
+          text: m.text,
+        }));
         if (all.length <= 6) return { recentThreadMessages: all, threadMessagesElided: false };
-        return { recentThreadMessages: [...all.slice(0, 3), ...all.slice(-3)], threadMessagesElided: true };
+        return {
+          recentThreadMessages: [...all.slice(0, 3), ...all.slice(-3)],
+          threadMessagesElided: true,
+        };
       })(),
     });
 
@@ -835,7 +856,6 @@ async function handleTransparencyCommands(
 
 const STEPS_PROMISE_TIMEOUT_MS = 5_000;
 
-
 async function persistConversationTrace(params: {
   channelId: string;
   threadTs?: string;
@@ -890,11 +910,7 @@ async function persistConversationTrace(params: {
       } else {
         rawSteps = await stepsPromise;
       }
-      const conversationSteps = buildConversationSteps(
-        rawSteps,
-        stepModelIds ?? [],
-        modelId,
-      );
+      const conversationSteps = buildConversationSteps(rawSteps, stepModelIds ?? [], modelId);
       await persistConversationSteps(conversationId, conversationSteps, orderIndex);
       stepUsages = buildStepUsages(rawSteps, stepModelIds ?? [], modelId);
     } catch (stepsErr: any) {
@@ -1051,7 +1067,25 @@ export async function runBackgroundTasks(params: {
   compactionTotals?: { compactedToolResults: number; compactionTokensSaved: number };
   replyThreadTs?: string;
 }): Promise<void> {
-  const { context, event, response, toolCalls, displayName, client, threadMessageCount, recentThreadMessages, threadMessagesElided, tokenUsage, modelId, systemPrompt, userPrompt, stepsPromise, stepModelIds, compactionTotals, replyThreadTs } = params;
+  const {
+    context,
+    event,
+    response,
+    toolCalls,
+    displayName,
+    client,
+    threadMessageCount,
+    recentThreadMessages,
+    threadMessagesElided,
+    tokenUsage,
+    modelId,
+    systemPrompt,
+    userPrompt,
+    stepsPromise,
+    stepModelIds,
+    compactionTotals,
+    replyThreadTs,
+  } = params;
 
   try {
     // Store the user's message
@@ -1103,12 +1137,10 @@ export async function runBackgroundTasks(params: {
         const output = tc.rawOutput as any;
         if (output?.ok && Array.isArray(output.messages) && output.messages.length > 0) {
           const channelName = output.channel || output.user || "unknown";
-          await storeChannelReadMessage(
-            tc.name,
-            channelName,
-            output.messages,
-            { ...storageCtx, toolIndex: i },
-          );
+          await storeChannelReadMessage(tc.name, channelName, output.messages, {
+            ...storageCtx,
+            toolIndex: i,
+          });
         }
       }
     }
@@ -1135,11 +1167,7 @@ export async function runBackgroundTasks(params: {
 
     // Record interaction and potentially update profile
     await recordInteraction(context.userId);
-    await updateProfileFromConversation(
-      context.userId,
-      context.text,
-      response,
-    );
+    await updateProfileFromConversation(context.userId, context.text, response);
 
     // Persist conversation trace for interactive messages
     if (systemPrompt && userPrompt) {
@@ -1295,7 +1323,15 @@ async function maybeUpdateDmThreadTitle(params: {
   threadTs: string;
   client: WebClient;
 }): Promise<void> {
-  const { threadMessageCount, recentMessages, messagesElided, assistantResponse, channelId, threadTs, client } = params;
+  const {
+    threadMessageCount,
+    recentMessages,
+    messagesElided,
+    assistantResponse,
+    channelId,
+    threadTs,
+    client,
+  } = params;
 
   // +1 for the assistant response we just posted
   const totalMessages = threadMessageCount + 1;
@@ -1342,19 +1378,15 @@ function buildToolContextForExtraction(toolCalls: ToolCallRecord[]): string {
   if (toolCalls.length === 0) return "";
 
   const informativeTools = toolCalls.filter(
-    (tc) =>
-      !tc.is_error &&
-      !["set_my_status", "add_reaction", "remove_reaction"].includes(tc.name),
+    (tc) => !tc.is_error && !["set_my_status", "add_reaction", "remove_reaction"].includes(tc.name),
   );
 
   if (informativeTools.length === 0) return "";
 
   const summaries = informativeTools.slice(0, 10).map((tc) => {
-    const outputPreview =
-      tc.output.length > 300 ? tc.output.slice(0, 300) + "…" : tc.output;
+    const outputPreview = tc.output.length > 300 ? `${tc.output.slice(0, 300)}…` : tc.output;
     return `[Tool: ${tc.name}] ${outputPreview}`;
   });
 
-  return "\n\n---\nTool outputs from this conversation:\n" + summaries.join("\n");
+  return `\n\n---\nTool outputs from this conversation:\n${summaries.join("\n")}`;
 }
-

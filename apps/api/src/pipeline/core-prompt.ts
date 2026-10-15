@@ -20,6 +20,7 @@ import { db } from "../db/client.js";
 import { inArray, eq, and, sql, isNotNull } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import { logger } from "../lib/logger.js";
+import { listLiveMcpServersForCaller, toMcpServerHintEntry } from "../lib/mcp-servers.js";
 
 // Re-export for consumers that previously imported from prompt.ts
 export type { PersonProfile };
@@ -120,14 +121,10 @@ export async function getUsageStats(): Promise<string> {
     const sentPrev = Number(r.sent_last_week);
 
     const usersArrow = arrow(usersNow, usersPrev);
-    const usersDetail = usersPrev > 0
-      ? ` (${usersArrow} from ${usersPrev} prior week)`
-      : "";
+    const usersDetail = usersPrev > 0 ? ` (${usersArrow} from ${usersPrev} prior week)` : "";
 
     const msgArrow = arrow(recvNow + sentNow, recvPrev + sentPrev);
-    const msgDetail = recvPrev + sentPrev > 0
-      ? ` (${msgArrow} from ${sentPrev}/${recvPrev})`
-      : "";
+    const msgDetail = recvPrev + sentPrev > 0 ? ` (${msgArrow} from ${sentPrev}/${recvPrev})` : "";
 
     const stats = [
       "## Usage (last 7 days)",
@@ -156,9 +153,7 @@ interface InterlocutorEntity {
  * Fetch the interlocutor's entity summary by Slack user ID.
  * Has no dependency on retrieved memories — safe to run in parallel.
  */
-async function fetchInterlocutorEntity(
-  userId: string,
-): Promise<InterlocutorEntity | null> {
+async function fetchInterlocutorEntity(userId: string): Promise<InterlocutorEntity | null> {
   try {
     const rows = await db
       .select({
@@ -168,12 +163,7 @@ async function fetchInterlocutorEntity(
         summary: entities.summary,
       })
       .from(entities)
-      .where(
-        and(
-          eq(entities.slackUserId, userId),
-          isNotNull(entities.summary),
-        ),
-      )
+      .where(and(eq(entities.slackUserId, userId), isNotNull(entities.summary)))
       .limit(1);
 
     return rows[0] ?? null;
@@ -225,10 +215,7 @@ async function buildEntitySummaries(
         })
         .from(entities)
         .where(
-          and(
-            inArray(entities.slackUserId, [...relatedSlackIds]),
-            isNotNull(entities.summary),
-          ),
+          and(inArray(entities.slackUserId, [...relatedSlackIds]), isNotNull(entities.summary)),
         )
         .limit(10);
 
@@ -274,9 +261,7 @@ export interface CorePrompt {
  * Slack List item context) are handled by the Slack connector after calling
  * this function.
  */
-export async function buildCorePrompt(
-  session: ChannelSession,
-): Promise<CorePrompt> {
+export async function buildCorePrompt(session: ChannelSession): Promise<CorePrompt> {
   const start = Date.now();
 
   let queryEmbedding: number[] | undefined;
@@ -292,47 +277,73 @@ export async function buildCorePrompt(
     .filter((id) => id !== session.userId)
     .slice(0, 10);
 
-  const [memories, conversations, userProfile, mentionedPeople, interlocutor, usageStats, interlocutorEntity, sandboxEnvNames] =
-    await Promise.all([
-      queryEmbedding
-        ? retrieveMemories({
-            query: session.messageText,
-            queryEmbedding,
-            currentUserId: session.userId,
-            rewrite: true,
-            limit: 15,
-          }).catch(() => [] as Memory[])
-        : Promise.resolve([] as Memory[]),
-      queryEmbedding
-        ? retrieveConversations({
-            query: session.messageText,
-            queryEmbedding,
-            threadLimit: 3,
-            matchLimit: 15,
-            minSimilarity: 0.35,
-            excludeThreadTs: session.threadId,
-          })
-        : Promise.resolve([] as ConversationThread[]),
-      session.userProfile !== undefined
-        ? Promise.resolve(session.userProfile)
-        : getProfile(session.userId),
-      lookupMentionedPeople(participantIds),
-      lookupPerson(session.userId),
-      getUsageStats(),
-      fetchInterlocutorEntity(session.userId),
-      getSandboxEnvNames(session.userId),
-    ]);
+  const [
+    memories,
+    conversations,
+    userProfile,
+    mentionedPeople,
+    interlocutor,
+    usageStats,
+    interlocutorEntity,
+    sandboxEnvNames,
+    liveMcpServers,
+  ] = await Promise.all([
+    queryEmbedding
+      ? retrieveMemories({
+          query: session.messageText,
+          queryEmbedding,
+          currentUserId: session.userId,
+          rewrite: true,
+          limit: 15,
+        }).catch(() => [] as Memory[])
+      : Promise.resolve([] as Memory[]),
+    queryEmbedding
+      ? retrieveConversations({
+          query: session.messageText,
+          queryEmbedding,
+          threadLimit: 3,
+          matchLimit: 15,
+          minSimilarity: 0.35,
+          excludeThreadTs: session.threadId,
+        })
+      : Promise.resolve([] as ConversationThread[]),
+    session.userProfile !== undefined
+      ? Promise.resolve(session.userProfile)
+      : getProfile(session.userId),
+    lookupMentionedPeople(participantIds),
+    lookupPerson(session.userId),
+    getUsageStats(),
+    fetchInterlocutorEntity(session.userId),
+    getSandboxEnvNames(session.userId),
+    listLiveMcpServersForCaller({
+      userId: session.userId,
+      workspaceId: process.env.DEFAULT_WORKSPACE_ID || "default",
+    }).catch((error) => {
+      logger.warn("Failed to load live MCP servers for environment context", {
+        error: String(error),
+        userId: session.userId,
+      });
+      return [];
+    }),
+  ]);
 
   // Build entity summaries (related-entities lookup depends on retrieved memories)
   const entitySummaries = await buildEntitySummaries(session.userId, interlocutorEntity, memories);
 
-  const channelContext = session.channel === "dashboard"
-    ? "Dashboard chat"
-    : session.isDirectMessage
-      ? "DM"
-      : (session.channelDisplayName ?? session.conversationId);
+  const channelContext =
+    session.channel === "dashboard"
+      ? "Dashboard chat"
+      : session.isDirectMessage
+        ? "DM"
+        : (session.channelDisplayName ?? session.conversationId);
 
-  const channelType = session.channelType ?? (session.channel === "dashboard" ? "dashboard" : session.isDirectMessage ? "dm" : "public_channel");
+  const channelType =
+    session.channelType ??
+    (session.channel === "dashboard"
+      ? "dashboard"
+      : session.isDirectMessage
+        ? "dm"
+        : "public_channel");
 
   const { stablePrefix, conversationContext } = await buildSystemPrompt({
     memories,
@@ -347,10 +358,11 @@ export async function buildCorePrompt(
     entitySummaries,
   });
 
-  const modelId = session.modelIdOverride ?? await getMainModelId();
+  const modelId = session.modelIdOverride ?? (await getMainModelId());
 
   const environmentContext = buildEnvironmentContext({
     sandboxEnvNames,
+    mcpServers: liveMcpServers.map(toMcpServerHintEntry),
   });
 
   let dynamicContext = buildDynamicContext({
@@ -386,9 +398,7 @@ export async function buildCorePrompt(
 
 // ── People lookup (moved from prompt.ts, shared across channels) ─────────
 
-export async function lookupPerson(
-  slackUserId: string,
-): Promise<PersonProfile | null> {
+export async function lookupPerson(slackUserId: string): Promise<PersonProfile | null> {
   try {
     const manager = alias(users, "manager");
     const rows = await db
@@ -402,7 +412,10 @@ export async function lookupPerson(
         notes: users.notes,
       })
       .from(users)
-      .leftJoin(manager, and(eq(users.managerId, manager.slackUserId), eq(users.workspaceId, manager.workspaceId)))
+      .leftJoin(
+        manager,
+        and(eq(users.managerId, manager.slackUserId), eq(users.workspaceId, manager.workspaceId)),
+      )
       .where(eq(users.slackUserId, slackUserId))
       .limit(1);
 
@@ -426,9 +439,7 @@ export async function lookupPerson(
   }
 }
 
-export async function lookupMentionedPeople(
-  slackUserIds: string[],
-): Promise<PersonProfile[]> {
+export async function lookupMentionedPeople(slackUserIds: string[]): Promise<PersonProfile[]> {
   if (slackUserIds.length === 0) return [];
 
   try {
@@ -444,14 +455,14 @@ export async function lookupMentionedPeople(
         notes: users.notes,
       })
       .from(users)
-      .leftJoin(manager, and(eq(users.managerId, manager.slackUserId), eq(users.workspaceId, manager.workspaceId)))
+      .leftJoin(
+        manager,
+        and(eq(users.managerId, manager.slackUserId), eq(users.workspaceId, manager.workspaceId)),
+      )
       .where(inArray(users.slackUserId, slackUserIds));
 
     return rows
-      .filter(
-        (r): r is typeof r & { slackUserId: string } =>
-          r.slackUserId !== null,
-      )
+      .filter((r): r is typeof r & { slackUserId: string } => r.slackUserId !== null)
       .map((r) => ({
         slackUserId: r.slackUserId,
         displayName: r.displayName,

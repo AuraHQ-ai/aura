@@ -60,6 +60,7 @@ function Collapsible({
   return (
     <div className="border rounded-md">
       <button
+        type="button"
         className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium hover:bg-muted/50 cursor-pointer"
         onClick={() => setOpen(!open)}
       >
@@ -116,18 +117,13 @@ function ToolInvocationBlock({ part }: { part: ConversationPart }) {
       {inputStr && (
         <div className="border-t">
           <button
+            type="button"
             className="flex w-full items-center gap-1.5 px-3 py-1 text-xs text-muted-foreground hover:text-foreground cursor-pointer"
             onClick={() => setShowInput(!showInput)}
           >
-            {showInput ? (
-              <ChevronDown className="h-3 w-3" />
-            ) : (
-              <ChevronRight className="h-3 w-3" />
-            )}
+            {showInput ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
             Input
-            <span className="text-[10px]">
-              ({inputStr.length.toLocaleString()} chars)
-            </span>
+            <span className="text-[10px]">({inputStr.length.toLocaleString()} chars)</span>
           </button>
           {showInput && (
             <pre className="px-3 pb-2 text-xs font-mono whitespace-pre-wrap overflow-auto max-h-[400px]">
@@ -140,6 +136,7 @@ function ToolInvocationBlock({ part }: { part: ConversationPart }) {
       {outputStr && (
         <div className="border-t">
           <button
+            type="button"
             className="flex w-full items-center gap-1.5 px-3 py-1 text-xs text-muted-foreground hover:text-foreground cursor-pointer"
             onClick={() => setShowOutput(!showOutput)}
           >
@@ -149,9 +146,7 @@ function ToolInvocationBlock({ part }: { part: ConversationPart }) {
               <ChevronRight className="h-3 w-3" />
             )}
             Output
-            <span className="text-[10px]">
-              ({outputStr.length.toLocaleString()} chars)
-            </span>
+            <span className="text-[10px]">({outputStr.length.toLocaleString()} chars)</span>
           </button>
           {showOutput && (
             <pre className="px-3 pb-2 text-xs font-mono whitespace-pre-wrap overflow-auto max-h-[400px]">
@@ -174,7 +169,11 @@ function SystemMessageBlock({ text }: { text: string }) {
   const hasXml = text.includes("<");
   const [viewMode, setViewMode] = useState<SystemViewMode>(hasXml ? "xml" : "markdown");
   const isLong = text.length > SYSTEM_PREVIEW_LENGTH;
-  const displayText = expanded ? text : isLong ? text.slice(0, SYSTEM_PREVIEW_LENGTH) + "..." : text;
+  const displayText = expanded
+    ? text
+    : isLong
+      ? `${text.slice(0, SYSTEM_PREVIEW_LENGTH)}...`
+      : text;
 
   const modes: { key: SystemViewMode; label: string }[] = [
     { key: "xml", label: "XML" },
@@ -188,12 +187,11 @@ function SystemMessageBlock({ text }: { text: string }) {
         <Badge variant="secondary" className="text-[10px]">
           system
         </Badge>
-        <span className="text-xs text-muted-foreground">
-          {text.length.toLocaleString()} chars
-        </span>
+        <span className="text-xs text-muted-foreground">{text.length.toLocaleString()} chars</span>
         <div className="flex items-center gap-1 ml-auto">
           {modes.map((m) => (
             <button
+              type="button"
               key={m.key}
               className={`text-xs px-2 py-0.5 rounded cursor-pointer ${viewMode === m.key ? "bg-muted font-medium" : "text-muted-foreground hover:text-foreground"}`}
               onClick={() => setViewMode(m.key)}
@@ -220,6 +218,7 @@ function SystemMessageBlock({ text }: { text: string }) {
         )}
         {isLong && (
           <button
+            type="button"
             className={`text-xs text-blue-600 dark:text-blue-400 hover:underline cursor-pointer ${viewMode === "xml" ? "px-3 pb-2" : "mt-1"}`}
             onClick={() => setExpanded(!expanded)}
           >
@@ -241,9 +240,7 @@ function UserMessageBlock({ text }: { text: string }) {
         <Badge variant="default" className="text-[10px]">
           user
         </Badge>
-        <span className="text-xs text-muted-foreground">
-          {text.length.toLocaleString()} chars
-        </span>
+        <span className="text-xs text-muted-foreground">{text.length.toLocaleString()} chars</span>
       </div>
       <div className="border-t px-3 py-2">
         {expanded ? (
@@ -252,11 +249,12 @@ function UserMessageBlock({ text }: { text: string }) {
           </pre>
         ) : (
           <pre className="whitespace-pre-wrap text-xs font-mono overflow-auto">
-            {text.slice(0, SYSTEM_PREVIEW_LENGTH) + "..."}
+            {`${text.slice(0, SYSTEM_PREVIEW_LENGTH)}...`}
           </pre>
         )}
         {isLong && (
           <button
+            type="button"
             className="mt-1 text-xs text-blue-600 dark:text-blue-400 hover:underline cursor-pointer"
             onClick={() => setExpanded(!expanded)}
           >
@@ -287,9 +285,7 @@ function AssistantStepBlock({
           assistant
         </Badge>
         {msg.modelId && (
-          <span className="text-[10px] text-muted-foreground font-mono">
-            {msg.modelId}
-          </span>
+          <span className="text-[10px] text-muted-foreground font-mono">{msg.modelId}</span>
         )}
         {msg.evalScore && (
           <Link
@@ -363,10 +359,7 @@ function AssistantStepBlock({
 
             if (part.type === "text" && part.textValue) {
               return (
-                <div
-                  key={part.id}
-                  className="text-sm bg-muted/30 rounded-md px-3 py-2 border"
-                >
+                <div key={part.id} className="text-sm bg-muted/30 rounded-md px-3 py-2 border">
                   <pre className="whitespace-pre-wrap font-mono text-xs overflow-auto max-h-[400px]">
                     {part.textValue}
                   </pre>
@@ -386,9 +379,7 @@ export function UnifiedTimeline({
 }: {
   conversation: ConversationMessageWithParts[];
 }) {
-  const sorted = [...conversation].sort(
-    (a, b) => a.orderIndex - b.orderIndex,
-  );
+  const sorted = [...conversation].sort((a, b) => a.orderIndex - b.orderIndex);
 
   let assistantStep = 0;
 
@@ -409,13 +400,7 @@ export function UnifiedTimeline({
 
         if (msg.role === "assistant") {
           assistantStep++;
-          return (
-            <AssistantStepBlock
-              key={msg.id}
-              msg={msg}
-              stepIndex={assistantStep}
-            />
-          );
+          return <AssistantStepBlock key={msg.id} msg={msg} stepIndex={assistantStep} />;
         }
 
         return null;

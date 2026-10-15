@@ -17,7 +17,9 @@ async function run() {
       count(*) FILTER (WHERE search_vector IS NULL)::int AS without_vector
     FROM memories
   `;
-  console.log(`Total: ${stats.total}, populated: ${stats.with_vector}, null: ${stats.without_vector}`);
+  console.log(
+    `Total: ${stats.total}, populated: ${stats.with_vector}, null: ${stats.without_vector}`,
+  );
 
   console.log("\n── 2. Full-text search test ──");
   const ftsResults = await sql`

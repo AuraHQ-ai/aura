@@ -33,9 +33,9 @@ if (host !== "localhost" && host !== "127.0.0.1" && host !== "::1") {
   process.exit(1);
 }
 
-const journal = JSON.parse(
-  readFileSync(join(DRIZZLE_DIR, "meta", "_journal.json"), "utf-8"),
-) as { entries: Array<{ tag: string }> };
+const journal = JSON.parse(readFileSync(join(DRIZZLE_DIR, "meta", "_journal.json"), "utf-8")) as {
+  entries: Array<{ tag: string }>;
+};
 
 const client = new pg.Client({ connectionString: url });
 await client.connect();

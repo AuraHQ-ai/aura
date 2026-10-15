@@ -1,6 +1,13 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { eq, desc, count, sql, ilike, and, type SQL } from "drizzle-orm";
-import { entities, entityAliases, memoryEntities, memories, users, entityTypeEnum } from "@aura/db/schema";
+import {
+  entities,
+  entityAliases,
+  memoryEntities,
+  memories,
+  users,
+  entityTypeEnum,
+} from "@aura/db/schema";
 import type { EntityType } from "@aura/db/schema";
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
@@ -125,10 +132,7 @@ const getEntityRoute = createRoute({
 dashboardEntitiesApp.openapi(getEntityRoute, async (c) => {
   try {
     const id = c.req.param("id");
-    const [entity] = await db
-      .select()
-      .from(entities)
-      .where(eq(entities.id, id));
+    const [entity] = await db.select().from(entities).where(eq(entities.id, id));
 
     if (!entity) return c.json({ error: "Entity not found" }, 404);
 

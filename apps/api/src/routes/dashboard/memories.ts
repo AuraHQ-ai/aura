@@ -91,11 +91,12 @@ dashboardMemoriesApp.openapi(listMemoriesRoute, async (c) => {
     }
     if (type) conditions.push(eq(memories.type, type as any));
 
-    const where = conditions.length > 0
-      ? conditions.length === 1
-        ? conditions[0]
-        : sql`${conditions[0]} AND ${conditions[1]}`
-      : undefined;
+    const where =
+      conditions.length > 0
+        ? conditions.length === 1
+          ? conditions[0]
+          : sql`${conditions[0]} AND ${conditions[1]}`
+        : undefined;
 
     const [items, [totalRow]] = await Promise.all([
       db
@@ -142,10 +143,7 @@ const getMemoryRoute = createRoute({
 dashboardMemoriesApp.openapi(getMemoryRoute, async (c) => {
   try {
     const id = c.req.param("id");
-    const [memory] = await db
-      .select(memoryColumns)
-      .from(memories)
-      .where(eq(memories.id, id));
+    const [memory] = await db.select(memoryColumns).from(memories).where(eq(memories.id, id));
 
     if (!memory) return c.json({ error: "Memory not found" }, 404);
 
@@ -176,11 +174,19 @@ dashboardMemoriesApp.openapi(getMemoryRoute, async (c) => {
     let sourceThread: { channelId: string; threadTs: string; messageAt: string } | null = null;
     if (memory.sourceMessageId) {
       const [msg] = await db
-        .select({ channelId: messages.channelId, threadTs: messages.slackThreadTs, createdAt: messages.createdAt })
+        .select({
+          channelId: messages.channelId,
+          threadTs: messages.slackThreadTs,
+          createdAt: messages.createdAt,
+        })
         .from(messages)
         .where(eq(messages.id, memory.sourceMessageId));
       if (msg?.threadTs) {
-        sourceThread = { channelId: msg.channelId, threadTs: msg.threadTs, messageAt: msg.createdAt.toISOString() };
+        sourceThread = {
+          channelId: msg.channelId,
+          threadTs: msg.threadTs,
+          messageAt: msg.createdAt.toISOString(),
+        };
       }
     }
 

@@ -238,16 +238,11 @@ describe("agent-view thread bootstrap wiring", () => {
     });
 
     expect(response.status).toBe(200);
-    expect(
-      mocks.bootstrapAssistantThreadMock,
-    ).toHaveBeenCalledExactlyOnceWith({
+    expect(mocks.bootstrapAssistantThreadMock).toHaveBeenCalledExactlyOnceWith({
       client: expect.anything(),
       channelId: "D123",
     });
-    expect(mocks.publishHomeTabMock).toHaveBeenCalledExactlyOnceWith(
-      expect.anything(),
-      "U123",
-    );
+    expect(mocks.publishHomeTabMock).toHaveBeenCalledExactlyOnceWith(expect.anything(), "U123");
   });
 
   it("app_home_opened for other tabs does NOT bootstrap", async () => {
@@ -264,9 +259,7 @@ describe("agent-view thread bootstrap wiring", () => {
   });
 
   it("bootstrap failures are recorded, never thrown", async () => {
-    mocks.bootstrapAssistantThreadMock.mockRejectedValueOnce(
-      new Error("slack down"),
-    );
+    mocks.bootstrapAssistantThreadMock.mockRejectedValueOnce(new Error("slack down"));
 
     const response = await postSlackEvent({
       type: "app_home_opened",
@@ -400,9 +393,7 @@ describe("agent_session_stopped (Stop button)", () => {
   });
 
   it("a receipt-insert failure still returns 200 and still stops the turn", async () => {
-    mocks.dbInsertValuesMock.mockRejectedValueOnce(
-      new Error("stop_events table missing"),
-    );
+    mocks.dbInsertValuesMock.mockRejectedValueOnce(new Error("stop_events table missing"));
 
     const response = await postSlackEvent({
       type: "agent_session_stopped",
@@ -507,8 +498,7 @@ describe("Slack retry middleware (issue #1355)", () => {
     // …but the dropped stop retry is durably visible.
     expect(mocks.logErrorMock).toHaveBeenCalledExactlyOnceWith({
       errorName: "AgentSessionStopped",
-      errorMessage:
-        "agent_session_stopped retry acked without processing (retry 1: http_timeout)",
+      errorMessage: "agent_session_stopped retry acked without processing (retry 1: http_timeout)",
       errorCode: "agent_session_stopped_retry_ack",
       channelId: "D0AFEC7BEMP",
       userId: "U0678NQJ2",

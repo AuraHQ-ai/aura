@@ -32,9 +32,20 @@ import {
   type SpanProcessor,
 } from "@opentelemetry/sdk-trace-node";
 import { LangfuseSpanProcessor } from "@langfuse/otel";
-import { propagateAttributes, startActiveObservation } from "@langfuse/tracing";
+import {
+  propagateAttributes,
+  startActiveObservation,
+  startObservation,
+  type LangfuseGenerationAttributes,
+} from "@langfuse/tracing";
 import type { Context } from "@opentelemetry/api";
 import { logger } from "./logger.js";
+
+/** Minimal handle so callers can finish a generation without importing Langfuse types. */
+export interface GenerationObservationHandle {
+  update: (attributes: LangfuseGenerationAttributes) => unknown;
+  end: () => void;
+}
 
 let provider: NodeTracerProvider | null = null;
 let spanProcessor: LangfuseSpanProcessor | null = null;
@@ -57,9 +68,7 @@ const GEN_AI_MODEL_ATTRIBUTES = [
  * - claude-sonnet-4-6 -> claude-sonnet-4-6
  * - openai/gpt-5.1 -> gpt-5-1
  */
-export function normalizeLangfuseModelSlug(
-  modelId: string | undefined,
-): string | undefined {
+export function normalizeLangfuseModelSlug(modelId: string | undefined): string | undefined {
   const trimmed = modelId?.trim();
   if (!trimmed) return undefined;
 
@@ -90,8 +99,7 @@ function normalizeGenAIModelAttributes(span: ReadableSpan): void {
  * and drop the whole operation — never just the root — so we never leave an
  * orphaned `doEmbed` child behind.
  */
-const DROP_SINGLE_EMBEDDING_SPANS =
-  process.env.LANGFUSE_DROP_ORPHAN_EMBEDDINGS === "true";
+const DROP_SINGLE_EMBEDDING_SPANS = process.env.LANGFUSE_DROP_ORPHAN_EMBEDDINGS === "true";
 
 function isSingleEmbeddingSpan(span: ReadableSpan): boolean {
   const operationId = span.attributes["ai.operationId"];
@@ -153,10 +161,7 @@ function maskSensitiveData({ data }: { data: unknown }): unknown {
       .replace(/\bxox[baprs]-[A-Za-z0-9-]{10,}/g, "***REDACTED_SLACK_TOKEN***")
       .replace(/\bSG\.[A-Za-z0-9._-]{12,}/g, "***REDACTED_API_KEY***")
       // Credit card numbers (PCI safety net)
-      .replace(
-        /\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b/g,
-        "***REDACTED_CARD***",
-      )
+      .replace(/\b\d{4}[- ]?\d{4}[- ]?\d{4}[- ]?\d{4}\b/g, "***REDACTED_CARD***")
   );
 }
 
@@ -186,9 +191,7 @@ export function initLangfuseTracing(): boolean {
   const baseUrl = process.env.LANGFUSE_BASE_URL;
 
   if (!publicKey || !secretKey) {
-    logger.warn(
-      "Langfuse tracing disabled: LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY not set",
-    );
+    logger.warn("Langfuse tracing disabled: LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY not set");
     return false;
   }
 
@@ -200,8 +203,7 @@ export function initLangfuseTracing(): boolean {
     baseUrl,
     environment,
     // Tie traces to the deployed commit for regression hunting across releases.
-    release:
-      process.env.LANGFUSE_RELEASE || process.env.VERCEL_GIT_COMMIT_SHA,
+    release: process.env.LANGFUSE_RELEASE || process.env.VERCEL_GIT_COMMIT_SHA,
     mask: maskSensitiveData,
     // Serverless: ship spans as they end rather than buffering a batch that a
     // frozen/terminated instance could never drain.
@@ -224,6 +226,43 @@ export function initLangfuseTracing(): boolean {
 /** Whether Langfuse tracing is active. */
 export function isLangfuseEnabled(): boolean {
   return spanProcessor !== null;
+}
+
+/**
+ * Start a Langfuse generation observation under the current OpenTelemetry
+ * context so it nests in the active turn's trace when one exists. No-op (null)
+ * when tracing is off. Never throws — observability must not break callers.
+ */
+export function startGenerationObservation(
+  name: string,
+  attributes: Pick<LangfuseGenerationAttributes, "model" | "input" | "metadata">,
+): GenerationObservationHandle | null {
+  if (!spanProcessor) return null;
+  try {
+    return startObservation(name, attributes, {
+      asType: "generation",
+    });
+  } catch (error) {
+    logger.debug("Langfuse generation observation start failed", { error, name });
+    return null;
+  }
+}
+
+/**
+ * Finish a generation started by {@link startGenerationObservation}. Safe no-op
+ * when the handle is null or Langfuse throws on update/end.
+ */
+export function finishGenerationObservation(
+  observation: GenerationObservationHandle | null,
+  attributes: LangfuseGenerationAttributes,
+): void {
+  if (!observation) return;
+  try {
+    observation.update(attributes);
+    observation.end();
+  } catch (error) {
+    logger.debug("Langfuse generation observation end failed", { error });
+  }
 }
 
 /**
@@ -254,10 +293,7 @@ export function aiTelemetry(
  * person is a single user across channels. Falls back to the bare id when no
  * name is available, and returns undefined when there's no id at all.
  */
-export function formatTraceUser(
-  id: string | undefined,
-  name?: string | null,
-): string | undefined {
+export function formatTraceUser(id: string | undefined, name?: string | null): string | undefined {
   if (!id) return undefined;
   const trimmed = name?.trim();
   return trimmed ? `${trimmed} (${id})` : id;
@@ -310,11 +346,7 @@ export function withTrace<T>(attrs: TraceAttributes, fn: () => T): T {
  * auto-ends when `fn`'s returned promise settles. No-op passthrough when tracing
  * is off.
  */
-export function withTraceSpan<T>(
-  name: string,
-  attrs: TraceAttributes,
-  fn: () => T,
-): T {
+export function withTraceSpan<T>(name: string, attrs: TraceAttributes, fn: () => T): T {
   if (!spanProcessor) return fn();
   return startActiveObservation(name, () => withTrace(attrs, fn)) as T;
 }

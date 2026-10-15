@@ -19,7 +19,7 @@
  * reads zero rows and cannot write; the documented maintenance GUC restores
  * access for operator sessions.
  *
- * ROLE SHAPE: the suite runs as `aura_app` (migration 0092) — NOSUPERUSER,
+ * ROLE SHAPE: the suite runs as `aura_app` (migration 0095) — NOSUPERUSER,
  * NOBYPASSRLS, owns nothing — the shape production must have after the
  * DATABASE_URL cutover. It FAILS (in beforeAll) if run under a bypassing,
  * superuser, or table-owning role, because RLS is exempt for those and every
@@ -64,7 +64,10 @@ describe.runIf(ENABLED)("workspace isolation (RLS, issue #1393)", () => {
   let rawClient: pg.Client;
 
   beforeAll(async () => {
-    if (!process.env.DATABASE_URL?.includes("localhost") && !process.env.DATABASE_URL?.includes("127.0.0.1")) {
+    if (
+      !process.env.DATABASE_URL?.includes("localhost") &&
+      !process.env.DATABASE_URL?.includes("127.0.0.1")
+    ) {
       throw new Error("workspace-isolation test must run against a local disposable database");
     }
 
@@ -72,7 +75,7 @@ describe.runIf(ENABLED)("workspace isolation (RLS, issue #1393)", () => {
     schema = await import("@aura/db/schema");
     const pgMod = await import("pg");
     // The raw/maintenance client uses the DIRECT connection: operator
-    // sessions are direct per the 0091 runbook (session GUCs like
+    // sessions are direct per the 0094 runbook (session GUCs like
     // app.rls_bypass are unsafe through a transaction pooler — see
     // workspace-pooler-concurrency.test.ts). App traffic (withWorkspace)
     // stays on DATABASE_URL, which the runner points at the pooler.
@@ -86,7 +89,7 @@ describe.runIf(ENABLED)("workspace isolation (RLS, issue #1393)", () => {
     // BYPASSRLS/SUPERUSER beat FORCE ROW LEVEL SECURITY, so a green run under
     // such a role certifies nothing. Production's neondb_owner HAS BYPASSRLS;
     // the app must connect as the non-bypassing aura_app role (migration
-    // 0092), and so must this test.
+    // 0095), and so must this test.
     const shape = await rawClient.query(
       "SELECT current_user::text AS role, rolbypassrls, rolsuper FROM pg_roles WHERE rolname = current_user",
     );
@@ -246,7 +249,7 @@ describe.runIf(ENABLED)("workspace isolation (RLS, issue #1393)", () => {
 
   it("every public table outside the global allowlist has workspace_id + FORCE RLS + both policies", async () => {
     // This is the check that stops the next table from being forgotten
-    // (approval_items was absent from the first cut of 0090/0091). Global
+    // (approval_items was absent from the first cut of 0093/0094). Global
     // allowlist: the tenant registry and the public content index. The
     // drizzle ledger lives in the `drizzle` schema, so `public` is exhaustive.
     const GLOBAL_ALLOWLIST = new Set(["workspaces", "content"]);
@@ -293,9 +296,9 @@ describe.runIf(ENABLED)("workspace isolation (RLS, issue #1393)", () => {
   it("rejects empty / missing workspace ids", async () => {
     await expect(withWorkspace("", async () => {})).rejects.toThrow(/non-empty/);
     await expect(withWorkspace("   ", async () => {})).rejects.toThrow(/non-empty/);
-    await expect(
-      withWorkspace(undefined as unknown as string, async () => {}),
-    ).rejects.toThrow(/non-empty/);
+    await expect(withWorkspace(undefined as unknown as string, async () => {})).rejects.toThrow(
+      /non-empty/,
+    );
   });
 
   // ── Deny by default ──────────────────────────────────────────────────────
@@ -414,21 +417,15 @@ describe.runIf(ENABLED)("workspace isolation (RLS, issue #1393)", () => {
 
   it("entity resolution resolves ws-a's entity and cannot see ws-b's twin", async () => {
     const { resolveEntityByName } = await import("../memory/entity-resolution.js");
-    const [entityA] = await withWorkspace(WS_A, (db) =>
-      db.select().from(schema.entities),
-    );
+    const [entityA] = await withWorkspace(WS_A, (db) => db.select().from(schema.entities));
     expect(entityA.summary).toContain(MARK[WS_A]);
 
-    const resolved = await withWorkspace(WS_A, () =>
-      resolveEntityByName("Acme Corp", WS_A),
-    );
+    const resolved = await withWorkspace(WS_A, () => resolveEntityByName("Acme Corp", WS_A));
     expect(resolved?.entityId).toBe(entityA.id);
 
     // Even asking for ws-b's entity by id-space (buggy/hostile caller) yields
     // nothing under the ws-a scope: RLS, not the query, is the fence.
-    const crossTenant = await withWorkspace(WS_A, () =>
-      resolveEntityByName("Acme Corp", WS_B),
-    );
+    const crossTenant = await withWorkspace(WS_A, () => resolveEntityByName("Acme Corp", WS_B));
     expect(crossTenant).toBeNull();
   });
 

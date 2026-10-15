@@ -666,9 +666,9 @@
       "note": "migrate generateObject to generateText+Output.object (AI SDK v7)"
     },
     {
-      "runId": "2026-09-02T09-28-26-573Z-dvne5w5t",
-      "timestamp": "2026-09-02T09:37:48.261Z",
-      "commit": "983fd9e",
+      "runId": "2026-10-15T18-55-38-549Z-y7smyyif",
+      "timestamp": "2026-10-15T19:06:17.394Z",
+      "commit": "546b0ef",
       "dirty": false,
       "datasets": [
         "longmemeval"
@@ -678,8 +678,8 @@
       "category": null,
       "corpusHash": "b178d604c01afa4a",
       "caseSetHash": "0785d34e2111c176",
-      "runtimeMs": 557700,
-      "costUsd": 0.9577750000000002,
+      "runtimeMs": 636088,
+      "costUsd": 0.9373739999999999,
       "models": {
         "extraction": "anthropic/claude-haiku-4.5",
         "answerer": "anthropic/claude-opus-4.8",
@@ -734,7 +734,7 @@
         "recall": 0.875,
         "n": 12
       },
-      "prNumber": 1396
+      "prNumber": 1556
     }
   ]
 }

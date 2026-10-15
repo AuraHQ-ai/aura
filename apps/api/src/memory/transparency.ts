@@ -1,6 +1,6 @@
-import { eq, sql, and, like, or, arrayContains } from "drizzle-orm";
+import { eq, sql, and } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { memories, users, entities, type Memory } from "@aura/db/schema";
+import { memories, users, entities } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
 import { embedText } from "../lib/embeddings.js";
 
@@ -16,9 +16,7 @@ import { embedText } from "../lib/embeddings.js";
  * Get everything Aura knows about a user — their profile and all memories
  * where they appear in relatedUserIds.
  */
-export async function getKnowledgeAboutUser(
-  slackUserId: string,
-): Promise<{
+export async function getKnowledgeAboutUser(slackUserId: string): Promise<{
   profile: {
     displayName: string;
     communicationStyle: unknown;
@@ -57,9 +55,7 @@ export async function getKnowledgeAboutUser(
       relevanceScore: memories.relevanceScore,
     })
     .from(memories)
-    .where(
-      sql`${slackUserId} = ANY(${memories.relatedUserIds})`,
-    )
+    .where(sql`${slackUserId} = ANY(${memories.relatedUserIds})`)
     .orderBy(sql`${memories.relevanceScore} DESC`)
     .limit(50);
 
@@ -143,9 +139,7 @@ export function formatKnowledgeSummary(
       }
     }
   } else {
-    parts.push(
-      "\nI don't have any specific memories about you yet — we're just getting started.",
-    );
+    parts.push("\nI don't have any specific memories about you yet — we're just getting started.");
   }
 
   parts.push(
@@ -187,9 +181,7 @@ export async function forgetMemories(
           sql`${memories.embedding} IS NOT NULL`,
         ),
       )
-      .orderBy(
-        sql`${memories.embedding} <=> ${JSON.stringify(queryEmbedding)}::vector`,
-      )
+      .orderBy(sql`${memories.embedding} <=> ${JSON.stringify(queryEmbedding)}::vector`)
       .limit(10);
 
     // Only delete memories with high similarity (> 0.7)
@@ -201,14 +193,12 @@ export async function forgetMemories(
 
     // Delete the matching memories
     const deleteIds = toDelete.map((m) => m.id);
-    await db
-      .delete(memories)
-      .where(
-        sql`${memories.id} IN (${sql.join(
-          deleteIds.map((id) => sql`${id}::uuid`),
-          sql`, `,
-        )})`,
-      );
+    await db.delete(memories).where(
+      sql`${memories.id} IN (${sql.join(
+        deleteIds.map((id) => sql`${id}::uuid`),
+        sql`, `,
+      )})`,
+    );
 
     logger.info("Forgot memories", {
       userId: slackUserId,

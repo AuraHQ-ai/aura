@@ -9,38 +9,39 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from "./routes/__root"
-import { Route as UnauthorizedRouteImport } from "./routes/unauthorized"
-import { Route as LoginRouteImport } from "./routes/login"
 import { Route as IndexRouteImport } from "./routes/index"
-import { Route as UsersIndexRouteImport } from "./routes/users/index"
-import { Route as SettingsIndexRouteImport } from "./routes/settings/index"
-import { Route as ResourcesIndexRouteImport } from "./routes/resources/index"
-import { Route as NotesIndexRouteImport } from "./routes/notes/index"
-import { Route as MemoriesIndexRouteImport } from "./routes/memories/index"
-import { Route as JobsIndexRouteImport } from "./routes/jobs/index"
-import { Route as EvalsIndexRouteImport } from "./routes/evals/index"
-import { Route as ErrorsIndexRouteImport } from "./routes/errors/index"
-import { Route as CredentialsIndexRouteImport } from "./routes/credentials/index"
-import { Route as ConversationsIndexRouteImport } from "./routes/conversations/index"
-import { Route as ConsumptionIndexRouteImport } from "./routes/consumption/index"
+import { Route as LoginRouteImport } from "./routes/login"
+import { Route as UnauthorizedRouteImport } from "./routes/unauthorized"
 import { Route as AdoptionIndexRouteImport } from "./routes/adoption/index"
-import { Route as UsersSlackUserIdRouteImport } from "./routes/users/$slackUserId"
-import { Route as ResourcesIdRouteImport } from "./routes/resources/$id"
-import { Route as NotesIdRouteImport } from "./routes/notes/$id"
-import { Route as MemoriesEntitiesRouteImport } from "./routes/memories/entities"
-import { Route as MemoriesIdRouteImport } from "./routes/memories/$id"
-import { Route as JobsIdRouteImport } from "./routes/jobs/$id"
-import { Route as EvalsIdRouteImport } from "./routes/evals/$id"
-import { Route as ErrorsIdRouteImport } from "./routes/errors/$id"
-import { Route as CredentialsIdRouteImport } from "./routes/credentials/$id"
-import { Route as ConversationsInvocationsRouteImport } from "./routes/conversations/invocations"
+import { Route as ConsumptionIndexRouteImport } from "./routes/consumption/index"
+import { Route as ConversationsIndexRouteImport } from "./routes/conversations/index"
 import { Route as ConversationsIdRouteImport } from "./routes/conversations/$id"
+import { Route as ConversationsInvocationsRouteImport } from "./routes/conversations/invocations"
+import { Route as CredentialsIndexRouteImport } from "./routes/credentials/index"
+import { Route as CredentialsIdRouteImport } from "./routes/credentials/$id"
+import { Route as ErrorsIndexRouteImport } from "./routes/errors/index"
+import { Route as ErrorsIdRouteImport } from "./routes/errors/$id"
+import { Route as EvalsIndexRouteImport } from "./routes/evals/index"
+import { Route as EvalsIdRouteImport } from "./routes/evals/$id"
+import { Route as JobsIndexRouteImport } from "./routes/jobs/index"
+import { Route as JobsIdRouteImport } from "./routes/jobs/$id"
+import { Route as McpIndexRouteImport } from "./routes/mcp/index"
+import { Route as MemoriesIndexRouteImport } from "./routes/memories/index"
+import { Route as MemoriesIdRouteImport } from "./routes/memories/$id"
+import { Route as MemoriesEntitiesRouteImport } from "./routes/memories/entities"
+import { Route as NotesIndexRouteImport } from "./routes/notes/index"
+import { Route as NotesIdRouteImport } from "./routes/notes/$id"
+import { Route as ResourcesIndexRouteImport } from "./routes/resources/index"
+import { Route as ResourcesIdRouteImport } from "./routes/resources/$id"
+import { Route as SettingsIndexRouteImport } from "./routes/settings/index"
+import { Route as UsersIndexRouteImport } from "./routes/users/index"
+import { Route as UsersSlackUserIdRouteImport } from "./routes/users/$slackUserId"
 import { Route as MemoriesEntitiesIdRouteImport } from "./routes/memories/entities_.$id"
 import { Route as ConversationsThreadsChannelIdThreadTsRouteImport } from "./routes/conversations/threads.$channelId.$threadTs"
 
-const UnauthorizedRoute = UnauthorizedRouteImport.update({
-  id: "/unauthorized",
-  path: "/unauthorized",
+const IndexRoute = IndexRouteImport.update({
+  id: "/",
+  path: "/",
   getParentRoute: () => rootRouteImport,
 } as any)
 const LoginRoute = LoginRouteImport.update({
@@ -48,64 +49,9 @@ const LoginRoute = LoginRouteImport.update({
   path: "/login",
   getParentRoute: () => rootRouteImport,
 } as any)
-const IndexRoute = IndexRouteImport.update({
-  id: "/",
-  path: "/",
-  getParentRoute: () => rootRouteImport,
-} as any)
-const UsersIndexRoute = UsersIndexRouteImport.update({
-  id: "/users/",
-  path: "/users/",
-  getParentRoute: () => rootRouteImport,
-} as any)
-const SettingsIndexRoute = SettingsIndexRouteImport.update({
-  id: "/settings/",
-  path: "/settings/",
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ResourcesIndexRoute = ResourcesIndexRouteImport.update({
-  id: "/resources/",
-  path: "/resources/",
-  getParentRoute: () => rootRouteImport,
-} as any)
-const NotesIndexRoute = NotesIndexRouteImport.update({
-  id: "/notes/",
-  path: "/notes/",
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MemoriesIndexRoute = MemoriesIndexRouteImport.update({
-  id: "/memories/",
-  path: "/memories/",
-  getParentRoute: () => rootRouteImport,
-} as any)
-const JobsIndexRoute = JobsIndexRouteImport.update({
-  id: "/jobs/",
-  path: "/jobs/",
-  getParentRoute: () => rootRouteImport,
-} as any)
-const EvalsIndexRoute = EvalsIndexRouteImport.update({
-  id: "/evals/",
-  path: "/evals/",
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ErrorsIndexRoute = ErrorsIndexRouteImport.update({
-  id: "/errors/",
-  path: "/errors/",
-  getParentRoute: () => rootRouteImport,
-} as any)
-const CredentialsIndexRoute = CredentialsIndexRouteImport.update({
-  id: "/credentials/",
-  path: "/credentials/",
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ConversationsIndexRoute = ConversationsIndexRouteImport.update({
-  id: "/conversations/",
-  path: "/conversations/",
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ConsumptionIndexRoute = ConsumptionIndexRouteImport.update({
-  id: "/consumption/",
-  path: "/consumption/",
+const UnauthorizedRoute = UnauthorizedRouteImport.update({
+  id: "/unauthorized",
+  path: "/unauthorized",
   getParentRoute: () => rootRouteImport,
 } as any)
 const AdoptionIndexRoute = AdoptionIndexRouteImport.update({
@@ -113,49 +59,19 @@ const AdoptionIndexRoute = AdoptionIndexRouteImport.update({
   path: "/adoption/",
   getParentRoute: () => rootRouteImport,
 } as any)
-const UsersSlackUserIdRoute = UsersSlackUserIdRouteImport.update({
-  id: "/users/$slackUserId",
-  path: "/users/$slackUserId",
+const ConsumptionIndexRoute = ConsumptionIndexRouteImport.update({
+  id: "/consumption/",
+  path: "/consumption/",
   getParentRoute: () => rootRouteImport,
 } as any)
-const ResourcesIdRoute = ResourcesIdRouteImport.update({
-  id: "/resources/$id",
-  path: "/resources/$id",
+const ConversationsIndexRoute = ConversationsIndexRouteImport.update({
+  id: "/conversations/",
+  path: "/conversations/",
   getParentRoute: () => rootRouteImport,
 } as any)
-const NotesIdRoute = NotesIdRouteImport.update({
-  id: "/notes/$id",
-  path: "/notes/$id",
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MemoriesEntitiesRoute = MemoriesEntitiesRouteImport.update({
-  id: "/memories/entities",
-  path: "/memories/entities",
-  getParentRoute: () => rootRouteImport,
-} as any)
-const MemoriesIdRoute = MemoriesIdRouteImport.update({
-  id: "/memories/$id",
-  path: "/memories/$id",
-  getParentRoute: () => rootRouteImport,
-} as any)
-const JobsIdRoute = JobsIdRouteImport.update({
-  id: "/jobs/$id",
-  path: "/jobs/$id",
-  getParentRoute: () => rootRouteImport,
-} as any)
-const EvalsIdRoute = EvalsIdRouteImport.update({
-  id: "/evals/$id",
-  path: "/evals/$id",
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ErrorsIdRoute = ErrorsIdRouteImport.update({
-  id: "/errors/$id",
-  path: "/errors/$id",
-  getParentRoute: () => rootRouteImport,
-} as any)
-const CredentialsIdRoute = CredentialsIdRouteImport.update({
-  id: "/credentials/$id",
-  path: "/credentials/$id",
+const ConversationsIdRoute = ConversationsIdRouteImport.update({
+  id: "/conversations/$id",
+  path: "/conversations/$id",
   getParentRoute: () => rootRouteImport,
 } as any)
 const ConversationsInvocationsRoute =
@@ -164,9 +80,99 @@ const ConversationsInvocationsRoute =
     path: "/conversations/invocations",
     getParentRoute: () => rootRouteImport,
   } as any)
-const ConversationsIdRoute = ConversationsIdRouteImport.update({
-  id: "/conversations/$id",
-  path: "/conversations/$id",
+const CredentialsIndexRoute = CredentialsIndexRouteImport.update({
+  id: "/credentials/",
+  path: "/credentials/",
+  getParentRoute: () => rootRouteImport,
+} as any)
+const CredentialsIdRoute = CredentialsIdRouteImport.update({
+  id: "/credentials/$id",
+  path: "/credentials/$id",
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ErrorsIndexRoute = ErrorsIndexRouteImport.update({
+  id: "/errors/",
+  path: "/errors/",
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ErrorsIdRoute = ErrorsIdRouteImport.update({
+  id: "/errors/$id",
+  path: "/errors/$id",
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EvalsIndexRoute = EvalsIndexRouteImport.update({
+  id: "/evals/",
+  path: "/evals/",
+  getParentRoute: () => rootRouteImport,
+} as any)
+const EvalsIdRoute = EvalsIdRouteImport.update({
+  id: "/evals/$id",
+  path: "/evals/$id",
+  getParentRoute: () => rootRouteImport,
+} as any)
+const JobsIndexRoute = JobsIndexRouteImport.update({
+  id: "/jobs/",
+  path: "/jobs/",
+  getParentRoute: () => rootRouteImport,
+} as any)
+const JobsIdRoute = JobsIdRouteImport.update({
+  id: "/jobs/$id",
+  path: "/jobs/$id",
+  getParentRoute: () => rootRouteImport,
+} as any)
+const McpIndexRoute = McpIndexRouteImport.update({
+  id: "/mcp/",
+  path: "/mcp/",
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MemoriesIndexRoute = MemoriesIndexRouteImport.update({
+  id: "/memories/",
+  path: "/memories/",
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MemoriesIdRoute = MemoriesIdRouteImport.update({
+  id: "/memories/$id",
+  path: "/memories/$id",
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MemoriesEntitiesRoute = MemoriesEntitiesRouteImport.update({
+  id: "/memories/entities",
+  path: "/memories/entities",
+  getParentRoute: () => rootRouteImport,
+} as any)
+const NotesIndexRoute = NotesIndexRouteImport.update({
+  id: "/notes/",
+  path: "/notes/",
+  getParentRoute: () => rootRouteImport,
+} as any)
+const NotesIdRoute = NotesIdRouteImport.update({
+  id: "/notes/$id",
+  path: "/notes/$id",
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ResourcesIndexRoute = ResourcesIndexRouteImport.update({
+  id: "/resources/",
+  path: "/resources/",
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ResourcesIdRoute = ResourcesIdRouteImport.update({
+  id: "/resources/$id",
+  path: "/resources/$id",
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsIndexRoute = SettingsIndexRouteImport.update({
+  id: "/settings/",
+  path: "/settings/",
+  getParentRoute: () => rootRouteImport,
+} as any)
+const UsersIndexRoute = UsersIndexRouteImport.update({
+  id: "/users/",
+  path: "/users/",
+  getParentRoute: () => rootRouteImport,
+} as any)
+const UsersSlackUserIdRoute = UsersSlackUserIdRouteImport.update({
+  id: "/users/$slackUserId",
+  path: "/users/$slackUserId",
   getParentRoute: () => rootRouteImport,
 } as any)
 const MemoriesEntitiesIdRoute = MemoriesEntitiesIdRouteImport.update({
@@ -203,6 +209,7 @@ export interface FileRoutesByFullPath {
   "/errors/": typeof ErrorsIndexRoute
   "/evals/": typeof EvalsIndexRoute
   "/jobs/": typeof JobsIndexRoute
+  "/mcp/": typeof McpIndexRoute
   "/memories/": typeof MemoriesIndexRoute
   "/notes/": typeof NotesIndexRoute
   "/resources/": typeof ResourcesIndexRoute
@@ -233,6 +240,7 @@ export interface FileRoutesByTo {
   "/errors": typeof ErrorsIndexRoute
   "/evals": typeof EvalsIndexRoute
   "/jobs": typeof JobsIndexRoute
+  "/mcp": typeof McpIndexRoute
   "/memories": typeof MemoriesIndexRoute
   "/notes": typeof NotesIndexRoute
   "/resources": typeof ResourcesIndexRoute
@@ -264,6 +272,7 @@ export interface FileRoutesById {
   "/errors/": typeof ErrorsIndexRoute
   "/evals/": typeof EvalsIndexRoute
   "/jobs/": typeof JobsIndexRoute
+  "/mcp/": typeof McpIndexRoute
   "/memories/": typeof MemoriesIndexRoute
   "/notes/": typeof NotesIndexRoute
   "/resources/": typeof ResourcesIndexRoute
@@ -296,6 +305,7 @@ export interface FileRouteTypes {
     | "/errors/"
     | "/evals/"
     | "/jobs/"
+    | "/mcp/"
     | "/memories/"
     | "/notes/"
     | "/resources/"
@@ -326,6 +336,7 @@ export interface FileRouteTypes {
     | "/errors"
     | "/evals"
     | "/jobs"
+    | "/mcp"
     | "/memories"
     | "/notes"
     | "/resources"
@@ -356,6 +367,7 @@ export interface FileRouteTypes {
     | "/errors/"
     | "/evals/"
     | "/jobs/"
+    | "/mcp/"
     | "/memories/"
     | "/notes/"
     | "/resources/"
@@ -387,6 +399,7 @@ export interface RootRouteChildren {
   ErrorsIndexRoute: typeof ErrorsIndexRoute
   EvalsIndexRoute: typeof EvalsIndexRoute
   JobsIndexRoute: typeof JobsIndexRoute
+  McpIndexRoute: typeof McpIndexRoute
   MemoriesIndexRoute: typeof MemoriesIndexRoute
   NotesIndexRoute: typeof NotesIndexRoute
   ResourcesIndexRoute: typeof ResourcesIndexRoute
@@ -398,11 +411,11 @@ export interface RootRouteChildren {
 
 declare module "@tanstack/react-router" {
   interface FileRoutesByPath {
-    "/unauthorized": {
-      id: "/unauthorized"
-      path: "/unauthorized"
-      fullPath: "/unauthorized"
-      preLoaderRoute: typeof UnauthorizedRouteImport
+    "/": {
+      id: "/"
+      path: "/"
+      fullPath: "/"
+      preLoaderRoute: typeof IndexRouteImport
       parentRoute: typeof rootRouteImport
     }
     "/login": {
@@ -412,88 +425,11 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof LoginRouteImport
       parentRoute: typeof rootRouteImport
     }
-    "/": {
-      id: "/"
-      path: "/"
-      fullPath: "/"
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    "/users/": {
-      id: "/users/"
-      path: "/users"
-      fullPath: "/users/"
-      preLoaderRoute: typeof UsersIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    "/settings/": {
-      id: "/settings/"
-      path: "/settings"
-      fullPath: "/settings/"
-      preLoaderRoute: typeof SettingsIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    "/resources/": {
-      id: "/resources/"
-      path: "/resources"
-      fullPath: "/resources/"
-      preLoaderRoute: typeof ResourcesIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    "/notes/": {
-      id: "/notes/"
-      path: "/notes"
-      fullPath: "/notes/"
-      preLoaderRoute: typeof NotesIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    "/memories/": {
-      id: "/memories/"
-      path: "/memories"
-      fullPath: "/memories/"
-      preLoaderRoute: typeof MemoriesIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    "/jobs/": {
-      id: "/jobs/"
-      path: "/jobs"
-      fullPath: "/jobs/"
-      preLoaderRoute: typeof JobsIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    "/evals/": {
-      id: "/evals/"
-      path: "/evals"
-      fullPath: "/evals/"
-      preLoaderRoute: typeof EvalsIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    "/errors/": {
-      id: "/errors/"
-      path: "/errors"
-      fullPath: "/errors/"
-      preLoaderRoute: typeof ErrorsIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    "/credentials/": {
-      id: "/credentials/"
-      path: "/credentials"
-      fullPath: "/credentials/"
-      preLoaderRoute: typeof CredentialsIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    "/conversations/": {
-      id: "/conversations/"
-      path: "/conversations"
-      fullPath: "/conversations/"
-      preLoaderRoute: typeof ConversationsIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    "/consumption/": {
-      id: "/consumption/"
-      path: "/consumption"
-      fullPath: "/consumption/"
-      preLoaderRoute: typeof ConsumptionIndexRouteImport
+    "/unauthorized": {
+      id: "/unauthorized"
+      path: "/unauthorized"
+      fullPath: "/unauthorized"
+      preLoaderRoute: typeof UnauthorizedRouteImport
       parentRoute: typeof rootRouteImport
     }
     "/adoption/": {
@@ -503,67 +439,25 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof AdoptionIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    "/users/$slackUserId": {
-      id: "/users/$slackUserId"
-      path: "/users/$slackUserId"
-      fullPath: "/users/$slackUserId"
-      preLoaderRoute: typeof UsersSlackUserIdRouteImport
+    "/consumption/": {
+      id: "/consumption/"
+      path: "/consumption"
+      fullPath: "/consumption/"
+      preLoaderRoute: typeof ConsumptionIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    "/resources/$id": {
-      id: "/resources/$id"
-      path: "/resources/$id"
-      fullPath: "/resources/$id"
-      preLoaderRoute: typeof ResourcesIdRouteImport
+    "/conversations/": {
+      id: "/conversations/"
+      path: "/conversations"
+      fullPath: "/conversations/"
+      preLoaderRoute: typeof ConversationsIndexRouteImport
       parentRoute: typeof rootRouteImport
     }
-    "/notes/$id": {
-      id: "/notes/$id"
-      path: "/notes/$id"
-      fullPath: "/notes/$id"
-      preLoaderRoute: typeof NotesIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    "/memories/entities": {
-      id: "/memories/entities"
-      path: "/memories/entities"
-      fullPath: "/memories/entities"
-      preLoaderRoute: typeof MemoriesEntitiesRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    "/memories/$id": {
-      id: "/memories/$id"
-      path: "/memories/$id"
-      fullPath: "/memories/$id"
-      preLoaderRoute: typeof MemoriesIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    "/jobs/$id": {
-      id: "/jobs/$id"
-      path: "/jobs/$id"
-      fullPath: "/jobs/$id"
-      preLoaderRoute: typeof JobsIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    "/evals/$id": {
-      id: "/evals/$id"
-      path: "/evals/$id"
-      fullPath: "/evals/$id"
-      preLoaderRoute: typeof EvalsIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    "/errors/$id": {
-      id: "/errors/$id"
-      path: "/errors/$id"
-      fullPath: "/errors/$id"
-      preLoaderRoute: typeof ErrorsIdRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    "/credentials/$id": {
-      id: "/credentials/$id"
-      path: "/credentials/$id"
-      fullPath: "/credentials/$id"
-      preLoaderRoute: typeof CredentialsIdRouteImport
+    "/conversations/$id": {
+      id: "/conversations/$id"
+      path: "/conversations/$id"
+      fullPath: "/conversations/$id"
+      preLoaderRoute: typeof ConversationsIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     "/conversations/invocations": {
@@ -573,11 +467,137 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof ConversationsInvocationsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    "/conversations/$id": {
-      id: "/conversations/$id"
-      path: "/conversations/$id"
-      fullPath: "/conversations/$id"
-      preLoaderRoute: typeof ConversationsIdRouteImport
+    "/credentials/": {
+      id: "/credentials/"
+      path: "/credentials"
+      fullPath: "/credentials/"
+      preLoaderRoute: typeof CredentialsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    "/credentials/$id": {
+      id: "/credentials/$id"
+      path: "/credentials/$id"
+      fullPath: "/credentials/$id"
+      preLoaderRoute: typeof CredentialsIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    "/errors/": {
+      id: "/errors/"
+      path: "/errors"
+      fullPath: "/errors/"
+      preLoaderRoute: typeof ErrorsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    "/errors/$id": {
+      id: "/errors/$id"
+      path: "/errors/$id"
+      fullPath: "/errors/$id"
+      preLoaderRoute: typeof ErrorsIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    "/evals/": {
+      id: "/evals/"
+      path: "/evals"
+      fullPath: "/evals/"
+      preLoaderRoute: typeof EvalsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    "/evals/$id": {
+      id: "/evals/$id"
+      path: "/evals/$id"
+      fullPath: "/evals/$id"
+      preLoaderRoute: typeof EvalsIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    "/jobs/": {
+      id: "/jobs/"
+      path: "/jobs"
+      fullPath: "/jobs/"
+      preLoaderRoute: typeof JobsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    "/jobs/$id": {
+      id: "/jobs/$id"
+      path: "/jobs/$id"
+      fullPath: "/jobs/$id"
+      preLoaderRoute: typeof JobsIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    "/mcp/": {
+      id: "/mcp/"
+      path: "/mcp"
+      fullPath: "/mcp/"
+      preLoaderRoute: typeof McpIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    "/memories/": {
+      id: "/memories/"
+      path: "/memories"
+      fullPath: "/memories/"
+      preLoaderRoute: typeof MemoriesIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    "/memories/$id": {
+      id: "/memories/$id"
+      path: "/memories/$id"
+      fullPath: "/memories/$id"
+      preLoaderRoute: typeof MemoriesIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    "/memories/entities": {
+      id: "/memories/entities"
+      path: "/memories/entities"
+      fullPath: "/memories/entities"
+      preLoaderRoute: typeof MemoriesEntitiesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    "/notes/": {
+      id: "/notes/"
+      path: "/notes"
+      fullPath: "/notes/"
+      preLoaderRoute: typeof NotesIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    "/notes/$id": {
+      id: "/notes/$id"
+      path: "/notes/$id"
+      fullPath: "/notes/$id"
+      preLoaderRoute: typeof NotesIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    "/resources/": {
+      id: "/resources/"
+      path: "/resources"
+      fullPath: "/resources/"
+      preLoaderRoute: typeof ResourcesIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    "/resources/$id": {
+      id: "/resources/$id"
+      path: "/resources/$id"
+      fullPath: "/resources/$id"
+      preLoaderRoute: typeof ResourcesIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    "/settings/": {
+      id: "/settings/"
+      path: "/settings"
+      fullPath: "/settings/"
+      preLoaderRoute: typeof SettingsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    "/users/": {
+      id: "/users/"
+      path: "/users"
+      fullPath: "/users/"
+      preLoaderRoute: typeof UsersIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    "/users/$slackUserId": {
+      id: "/users/$slackUserId"
+      path: "/users/$slackUserId"
+      fullPath: "/users/$slackUserId"
+      preLoaderRoute: typeof UsersSlackUserIdRouteImport
       parentRoute: typeof rootRouteImport
     }
     "/memories/entities_/$id": {
@@ -619,6 +639,7 @@ const rootRouteChildren: RootRouteChildren = {
   ErrorsIndexRoute: ErrorsIndexRoute,
   EvalsIndexRoute: EvalsIndexRoute,
   JobsIndexRoute: JobsIndexRoute,
+  McpIndexRoute: McpIndexRoute,
   MemoriesIndexRoute: MemoriesIndexRoute,
   NotesIndexRoute: NotesIndexRoute,
   ResourcesIndexRoute: ResourcesIndexRoute,

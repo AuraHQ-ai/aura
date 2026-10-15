@@ -16,7 +16,7 @@ const MAX_LIMIT = 50;
 
 function truncate(text: string, max: number): string {
   if (text.length <= max) return text;
-  return text.slice(0, max) + "…";
+  return `${text.slice(0, max)}…`;
 }
 
 interface MessageRow {
@@ -66,14 +66,8 @@ export function createConversationSearchTools(context?: ScheduleContext) {
           .describe(
             "Search mode. 'text' (default): keyword-based full-text search. 'semantic': vector similarity search using embeddings — finds messages with similar meaning even if they don't share exact words.",
           ),
-        user_id: z
-          .string()
-          .optional()
-          .describe("Filter by Slack user ID (e.g. 'U066V1AN6')"),
-        channel_id: z
-          .string()
-          .optional()
-          .describe("Filter by Slack channel ID (e.g. 'C0BNVKS77')"),
+        user_id: z.string().optional().describe("Filter by Slack user ID (e.g. 'U066V1AN6')"),
+        channel_id: z.string().optional().describe("Filter by Slack channel ID (e.g. 'C0BNVKS77')"),
         since: z
           .string()
           .optional()
@@ -134,8 +128,7 @@ export function createConversationSearchTools(context?: ScheduleContext) {
           if (!query && !user_id && !channel_id && !since && !until && !role) {
             return {
               ok: false,
-              error:
-                "Provide at least one of: query, user_id, channel_id, since, until, or role.",
+              error: "Provide at least one of: query, user_id, channel_id, since, until, or role.",
             };
           }
 
@@ -174,9 +167,7 @@ export function createConversationSearchTools(context?: ScheduleContext) {
 
             const embeddingNotNull = sql`${messages.embedding} IS NOT NULL`;
             const allConditions =
-              conditions.length > 0
-                ? and(embeddingNotNull, ...conditions)
-                : embeddingNotNull;
+              conditions.length > 0 ? and(embeddingNotNull, ...conditions) : embeddingNotNull;
 
             const results = await db.execute(sql`
               SELECT id, slack_ts, slack_thread_ts, channel_id, channel_type,
@@ -199,9 +190,7 @@ export function createConversationSearchTools(context?: ScheduleContext) {
               // PostgreSQL full-text search
               const tsCondition = sql`to_tsvector('english', ${messages.content}) @@ websearch_to_tsquery('english', ${trimmed})`;
               const allConditions =
-                conditions.length > 0
-                  ? and(tsCondition, ...conditions)
-                  : tsCondition;
+                conditions.length > 0 ? and(tsCondition, ...conditions) : tsCondition;
 
               const results = await db.execute(sql`
                 SELECT id, slack_ts, slack_thread_ts, channel_id, channel_type,
@@ -221,9 +210,7 @@ export function createConversationSearchTools(context?: ScheduleContext) {
               const pattern = `%${escaped}%`;
               const ilikeCondition = sql`${messages.content} ILIKE ${pattern}`;
               const allConditions =
-                conditions.length > 0
-                  ? and(ilikeCondition, ...conditions)
-                  : ilikeCondition;
+                conditions.length > 0 ? and(ilikeCondition, ...conditions) : ilikeCondition;
 
               const results = await db.execute(sql`
                 SELECT id, slack_ts, slack_thread_ts, channel_id, channel_type,
@@ -238,8 +225,7 @@ export function createConversationSearchTools(context?: ScheduleContext) {
             }
           } else {
             // No text query — filter-only browse
-            const allConditions =
-              conditions.length > 0 ? and(...conditions) : sql`true`;
+            const allConditions = conditions.length > 0 ? and(...conditions) : sql`true`;
 
             const results = await db.execute(sql`
               SELECT id, slack_ts, slack_thread_ts, channel_id, channel_type,
@@ -262,7 +248,10 @@ export function createConversationSearchTools(context?: ScheduleContext) {
             if (!group) {
               group = {
                 thread_ts: row.slack_thread_ts || row.slack_ts,
-                thread_started_at: formatTimestamp(row.slack_thread_ts || row.slack_ts, context?.timezone),
+                thread_started_at: formatTimestamp(
+                  row.slack_thread_ts || row.slack_ts,
+                  context?.timezone,
+                ),
                 channel_id: row.channel_id,
                 messages: [],
               };
@@ -310,9 +299,8 @@ export function createConversationSearchTools(context?: ScheduleContext) {
                   ORDER BY created_at ASC
                   LIMIT 20
                 `);
-                const contextRows = (
-                  (contextResults as any).rows ?? contextResults
-                ) as MessageRow[];
+                const contextRows = ((contextResults as any).rows ??
+                  contextResults) as MessageRow[];
 
                 const matchIds = new Set(thread.messages.map((m) => m.id));
                 const matchScoreMap = new Map(
@@ -405,7 +393,10 @@ export function createConversationSearchTools(context?: ScheduleContext) {
       slack: {
         status: "Searching conversations...",
         detail: (i) => i.query,
-        output: (r) => r.ok === false ? r.error : `${r.message_count ?? 0} messages in ${r.thread_count ?? 0} threads`,
+        output: (r) =>
+          r.ok === false
+            ? r.error
+            : `${r.message_count ?? 0} messages in ${r.thread_count ?? 0} threads`,
       },
     }),
   };

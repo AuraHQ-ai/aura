@@ -9,10 +9,7 @@ import { logger } from "./logger.js";
 export function isChannelTypeNotSupported(error: any): boolean {
   const msg = error?.message || "";
   const code = error?.data?.error || "";
-  return (
-    msg.includes("channel_type_not_supported") ||
-    code === "channel_type_not_supported"
-  );
+  return msg.includes("channel_type_not_supported") || code === "channel_type_not_supported";
 }
 
 export function isInvalidBlocks(error: any): boolean {
@@ -137,7 +134,10 @@ export async function safePostMessage(
   } catch (err: any) {
     const hasBlocks = blocks && blocks.length > 0;
 
-    if ((isInvalidBlocks(err) || isInvalidArguments(err) || isChannelTypeNotSupported(err)) && hasBlocks) {
+    if (
+      (isInvalidBlocks(err) || isInvalidArguments(err) || isChannelTypeNotSupported(err)) &&
+      hasBlocks
+    ) {
       const stripMetadata = isInvalidArguments(err);
       const fallbackReason = isInvalidArguments(err)
         ? "invalid_arguments"
@@ -145,11 +145,14 @@ export async function safePostMessage(
           ? "invalid_blocks"
           : "channel_type_not_supported";
 
-      logger.warn("safePostMessage: retrying without blocks" + (stripMetadata ? " and metadata" : ""), {
-        channel,
-        originalError: err?.data?.error || err?.message,
-        fallbackReason,
-      });
+      logger.warn(
+        `safePostMessage: retrying without blocks${stripMetadata ? " and metadata" : ""}`,
+        {
+          channel,
+          originalError: err?.data?.error || err?.message,
+          fallbackReason,
+        },
+      );
 
       return await postWithTruncationFallback(client, {
         channel,
@@ -214,7 +217,9 @@ export async function safePostMessage(
             return { ok: true, ts: result.ts, channel: result.channel };
           } catch (finalErr: any) {
             if (isChannelTypeNotSupported(finalErr)) {
-              logger.warn("safePostMessage: channel type not supported after truncation", { channel });
+              logger.warn("safePostMessage: channel type not supported after truncation", {
+                channel,
+              });
               return { ok: false };
             }
             throw finalErr;

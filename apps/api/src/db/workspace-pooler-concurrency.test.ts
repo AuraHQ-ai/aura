@@ -32,8 +32,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import type pg from "pg";
 
 const ENABLED =
-  process.env.WORKSPACE_ISOLATION_TEST === "1" &&
-  process.env.WORKSPACE_POOLER_TEST === "1";
+  process.env.WORKSPACE_ISOLATION_TEST === "1" && process.env.WORKSPACE_POOLER_TEST === "1";
 
 const HTTP_URL = process.env.NEON_HTTP_TEST_URL;
 
@@ -58,7 +57,7 @@ describe.runIf(ENABLED)("workspace scoping — POOLED handle via PgBouncer (RLS,
     schema = await import("@aura/db/schema");
 
     // Maintenance/seeding sanity client on the DIRECT connection (operator
-    // sessions are direct per the 0091 runbook; session GUCs are unsafe on
+    // sessions are direct per the 0094 runbook; session GUCs are unsafe on
     // the pooler by definition of this very test).
     const direct = process.env.DIRECT_DATABASE_URL;
     if (!direct) throw new Error("DIRECT_DATABASE_URL is required for the pooler test");

@@ -6,7 +6,11 @@
  * Safe to run multiple times (idempotent — skips already-embedded rows).
  */
 
-import { backfillMessageEmbeddings, backfillMemoryEmbeddings, backfillNoteEmbeddings } from "../memory/store.js";
+import {
+  backfillMessageEmbeddings,
+  backfillMemoryEmbeddings,
+  backfillNoteEmbeddings,
+} from "../memory/store.js";
 import { createProgress, type ProgressTracker } from "../lib/progress.js";
 
 const BATCH_SIZE = parseInt(process.env.BACKFILL_BATCH_SIZE || "50", 10);
@@ -15,9 +19,14 @@ const doMessages = args.includes("--messages") || args.includes("--all") || args
 const doMemories = args.includes("--memories") || args.includes("--all") || args.length === 0;
 const doNotes = args.includes("--notes") || args.includes("--all") || args.length === 0;
 
-console.log(`Backfill config: batch=${BATCH_SIZE}, messages=${doMessages}, memories=${doMemories}, notes=${doNotes}`);
+console.log(
+  `Backfill config: batch=${BATCH_SIZE}, messages=${doMessages}, memories=${doMemories}, notes=${doNotes}`,
+);
 
-function makeProgressCb(label: string): { cb: (completed: number, total: number) => void; getTracker: () => ProgressTracker | null } {
+function makeProgressCb(label: string): {
+  cb: (completed: number, total: number) => void;
+  getTracker: () => ProgressTracker | null;
+} {
   let tracker: ProgressTracker | null = null;
   let lastCompleted = 0;
   return {

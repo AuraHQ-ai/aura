@@ -37,7 +37,7 @@ function resolveCallingUserId(passedUserId: string | undefined): string | undefi
  */
 export async function hasRole(
   userId: string | undefined,
-  minimumRole: Role = "admin"
+  minimumRole: Role = "admin",
 ): Promise<boolean> {
   const effectiveUserId = resolveCallingUserId(userId);
 
@@ -122,9 +122,7 @@ async function getUserRole(userId: string): Promise<Role> {
  *
  * Plus explicit grants and synthetic env-var-based credentials.
  */
-export async function resolveUserCredentials(
-  userId?: string,
-): Promise<Set<string>> {
+export async function resolveUserCredentials(userId?: string): Promise<Set<string>> {
   const effectiveUserId = resolveCallingUserId(userId);
   const result = new Set<string>();
 
@@ -143,10 +141,7 @@ export async function resolveUserCredentials(
       .from(credentialGrants)
       .innerJoin(credentials, eq(credentialGrants.credentialId, credentials.id))
       .where(
-        and(
-          eq(credentialGrants.granteeId, effectiveUserId),
-          isNull(credentialGrants.revokedAt),
-        ),
+        and(eq(credentialGrants.granteeId, effectiveUserId), isNull(credentialGrants.revokedAt)),
       );
 
     const grantedCredentialIds = new Set(grants.map((grant) => grant.credentialId));
@@ -225,11 +220,7 @@ export async function resolveUserCredentials(
   // narrowed exactly like sandbox env vars. Narrows only — never widens.
   const envAllowlist = executionContext.getStore()?.envAllowlist;
   if (envAllowlist != null) {
-    const filtered = filterCredentialNamesByEnvAllowlist(
-      result,
-      envAllowlist,
-      envNameByCredential,
-    );
+    const filtered = filterCredentialNamesByEnvAllowlist(result, envAllowlist, envNameByCredential);
     logger.info("resolveUserCredentials: env allowlist applied", {
       userId: effectiveUserId,
       allowlistSize: envAllowlist.length,

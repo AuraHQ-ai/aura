@@ -27,9 +27,9 @@
  *   pnpm tsx src/scripts/replay-compare-full.ts [--prod] [--limit=12] [--max-steps=12]
  */
 import { config } from "dotenv";
-import { resolve } from "path";
-import { fileURLToPath } from "url";
-import { writeFileSync } from "fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { writeFileSync } from "node:fs";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = resolve(__dirname, "../../../..");
@@ -53,8 +53,9 @@ const { generateText, Output } = await import("ai");
 const { z } = await import("zod");
 const { WebClient } = await import("@slack/web-api");
 const { db } = await import("../db/client.js");
-const { conversationMessages, conversationParts, conversationTraces } =
-  await import("@aura/db/schema");
+const { conversationMessages, conversationParts, conversationTraces } = await import(
+  "@aura/db/schema"
+);
 const { getMainModel, getFastModel, getFastModelId } = await import("../lib/ai.js");
 const { executionContext } = await import("../lib/tool.js");
 const { buildCorePrompt } = await import("../pipeline/core-prompt.js");
@@ -162,10 +163,7 @@ function interceptTools(
         // 1. Exact input match against the original run's recorded calls.
         const inputJson = JSON.stringify(input ?? {});
         let match = recorded.find(
-          (r) =>
-            !r.used &&
-            r.toolName === name &&
-            JSON.stringify(r.input ?? {}) === inputJson,
+          (r) => !r.used && r.toolName === name && JSON.stringify(r.input ?? {}) === inputJson,
         );
         // 2. First unused recorded call of the same tool.
         match ??= recorded.find((r) => !r.used && r.toolName === name);
@@ -208,10 +206,7 @@ async function loadCase(c: CaseRow) {
           ),
         )
         .orderBy(asc(conversationTraces.createdAt))
-    : await db
-        .select()
-        .from(conversationTraces)
-        .where(eq(conversationTraces.id, c.trace_id));
+    : await db.select().from(conversationTraces).where(eq(conversationTraces.id, c.trace_id));
   if (traces.length === 0) return null;
 
   const traceIds = traces.map((t) => t.id);
@@ -457,9 +452,7 @@ for (const bucket of ["failed", "partial", "fulfilled"]) {
     `originally ${bucket.padEnd(9)} (n=${rows.length}): replay wins ${t.replay}, original wins ${t.original}, ties ${t.tie}`,
   );
 }
-console.log(
-  `ALL: replay wins ${tally.replay}, original wins ${tally.original}, ties ${tally.tie}`,
-);
+console.log(`ALL: replay wins ${tally.replay}, original wins ${tally.original}, ties ${tally.tie}`);
 console.log(
   `Tool calls in replays: ${totalToolCalls} total (${recordedCalls} replayed from recordings, ${synthCalls} synthesized) across ${results.filter((r) => r.toolCalls.length > 0).length}/${results.length} cases`,
 );

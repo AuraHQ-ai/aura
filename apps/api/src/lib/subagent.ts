@@ -1,4 +1,4 @@
-import { type ToolSet, type LanguageModel } from "ai";
+import type { ToolSet, LanguageModel } from "ai";
 import { logger } from "./logger.js";
 import { createSubAgent } from "./agents.js";
 
@@ -44,13 +44,7 @@ export interface SubagentResult {
  * Uses a `ToolLoopAgent` with `.generate()` (non-streaming) for its own tool loop.
  */
 export async function runSubagent(config: SubagentConfig): Promise<SubagentResult> {
-  const {
-    model,
-    tools,
-    systemPrompt,
-    userPrompt,
-    maxSteps = 50,
-  } = config;
+  const { model, tools, systemPrompt, userPrompt, maxSteps = 50 } = config;
 
   const startMs = Date.now();
 
@@ -68,9 +62,7 @@ export async function runSubagent(config: SubagentConfig): Promise<SubagentResul
   const toolCalls = steps.flatMap(
     (step) =>
       step.toolCalls?.map((tc) => {
-        const tr = step.toolResults?.find(
-          (r) => r.toolCallId === tc.toolCallId,
-        );
+        const tr = step.toolResults?.find((r) => r.toolCallId === tc.toolCallId);
         const output = tr?.output;
         const isError =
           (tr as any)?.isError === true ||
@@ -86,7 +78,7 @@ export async function runSubagent(config: SubagentConfig): Promise<SubagentResul
 
   const inputTokens = usage.inputTokens ?? 0;
   const outputTokens = usage.outputTokens ?? 0;
-  const totalTokens = usage.totalTokens ?? (inputTokens + outputTokens);
+  const totalTokens = usage.totalTokens ?? inputTokens + outputTokens;
 
   logger.info("subagent: completed", {
     elapsedMs,

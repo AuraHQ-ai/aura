@@ -15,15 +15,11 @@ import { embedText } from "../lib/embeddings.js";
 function withLineNumbers(content: string): string {
   const lines = content.split("\n");
   const pad = String(lines.length).length;
-  return lines
-    .map((line, i) => `${String(i + 1).padStart(pad)}| ${line}`)
-    .join("\n");
+  return lines.map((line, i) => `${String(i + 1).padStart(pad)}| ${line}`).join("\n");
 }
 
 /** Fetch a note by topic. */
-async function getNoteByTopic(
-  topic: string,
-): Promise<{
+async function getNoteByTopic(topic: string): Promise<{
   id: string;
   topic: string;
   content: string;
@@ -33,11 +29,7 @@ async function getNoteByTopic(
   expiresAt: Date | null;
   updatedAt: Date;
 } | null> {
-  const rows = await db
-    .select()
-    .from(notes)
-    .where(eq(notes.topic, topic))
-    .limit(1);
+  const rows = await db.select().from(notes).where(eq(notes.topic, topic)).limit(1);
   return rows[0] ?? null;
 }
 
@@ -49,9 +41,14 @@ function parseContinuationDepth(content: string): number {
 
 /** Fire-and-forget: embed note content and update the embedding column. Uses updatedAt guard to avoid stale writes. */
 function updateNoteEmbedding(text: string, topic: string, savedAt: Date): void {
-  embedText(text).then(embedding => {
-    db.update(notes).set({ embedding }).where(and(eq(notes.topic, topic), eq(notes.updatedAt, savedAt))).catch(e => logger.error("Note embedding failed", { topic, error: String(e) }));
-  }).catch(e => logger.error("Note embedText failed", { topic, error: String(e) }));
+  embedText(text)
+    .then((embedding) => {
+      db.update(notes)
+        .set({ embedding })
+        .where(and(eq(notes.topic, topic), eq(notes.updatedAt, savedAt)))
+        .catch((e) => logger.error("Note embedding failed", { topic, error: String(e) }));
+    })
+    .catch((e) => logger.error("Note embedText failed", { topic, error: String(e) }));
 }
 
 const SYSTEM_TOPICS = ["self-directive", "business-map", "gaps-log"];
@@ -72,12 +69,8 @@ export function createNoteTools(context?: ScheduleContext) {
       inputSchema: z.object({
         topic: z
           .string()
-          .describe(
-            "A short, descriptive topic key, e.g. 'bugs-weekly' or 'project-alpha-todos'",
-          ),
-        content: z
-          .string()
-          .describe("The full content of the note (markdown supported)"),
+          .describe("A short, descriptive topic key, e.g. 'bugs-weekly' or 'project-alpha-todos'"),
+        content: z.string().describe("The full content of the note (markdown supported)"),
         category: z
           .enum(["skill", "plan", "knowledge"])
           .optional()
@@ -112,11 +105,18 @@ export function createNoteTools(context?: ScheduleContext) {
             "When this note should expire, e.g. '2 hours', '3 days', '1 week'. Mainly useful for plan notes. Omit for no expiry.",
           ),
       }),
-      execute: async ({ topic, content, category, summary, inject_in_context, importance, expires_in }) => {
+      execute: async ({
+        topic,
+        content,
+        category,
+        summary,
+        inject_in_context,
+        importance,
+        expires_in,
+      }) => {
         try {
           const effectiveCategory = category ?? "knowledge";
-          const isSystemNote =
-            SYSTEM_TOPICS.includes(topic) || effectiveCategory === "skill";
+          const isSystemNote = SYSTEM_TOPICS.includes(topic) || effectiveCategory === "skill";
 
           if (isSystemNote && !(await hasRole(context?.userId, "admin"))) {
             return { ok: false, error: "Only admins can create or overwrite system notes." };
@@ -205,7 +205,11 @@ export function createNoteTools(context?: ScheduleContext) {
           return { ok: false, error: `Failed to save note: ${error.message}` };
         }
       },
-      slack: { status: "Saving note...", detail: (i) => i.topic, output: (r) => r.ok === false ? r.error : 'Note saved' },
+      slack: {
+        status: "Saving note...",
+        detail: (i) => i.topic,
+        output: (r) => (r.ok === false ? r.error : "Note saved"),
+      },
     }),
 
     read_note: defineTool({
@@ -246,7 +250,11 @@ export function createNoteTools(context?: ScheduleContext) {
           return { ok: false, error: `Failed to read note: ${error.message}` };
         }
       },
-      slack: { status: "Reading note...", detail: (i) => i.topic, output: (r) => r.ok === false ? r.error : `${r.line_count} lines` },
+      slack: {
+        status: "Reading note...",
+        detail: (i) => i.topic,
+        output: (r) => (r.ok === false ? r.error : `${r.line_count} lines`),
+      },
     }),
 
     list_notes: defineTool({
@@ -268,9 +276,7 @@ export function createNoteTools(context?: ScheduleContext) {
           }
 
           // Filter out expired notes
-          conditions.push(
-            or(isNull(notes.expiresAt), gt(notes.expiresAt, now))!,
-          );
+          conditions.push(or(isNull(notes.expiresAt), gt(notes.expiresAt, now))!);
 
           // Visibility scoping: users see shared + system + their own private notes
           const userId = context?.userId;
@@ -299,9 +305,7 @@ export function createNoteTools(context?: ScheduleContext) {
           const result = allNotes.map((n) => ({
             topic: n.topic,
             category: n.category,
-            preview:
-              n.content.substring(0, 80) +
-              (n.content.length > 80 ? "..." : ""),
+            preview: n.content.substring(0, 80) + (n.content.length > 80 ? "..." : ""),
             lines: n.content.split("\n").length,
             updated_at: formatTimestamp(n.updatedAt, context?.timezone),
             expires_at: n.expiresAt ? formatTimestamp(n.expiresAt, context?.timezone) : null,
@@ -322,7 +326,10 @@ export function createNoteTools(context?: ScheduleContext) {
           return { ok: false, error: `Failed to list notes: ${error.message}` };
         }
       },
-      slack: { status: "Listing notes...", output: (r) => r.ok === false ? r.error : `${r.count} notes` },
+      slack: {
+        status: "Listing notes...",
+        output: (r) => (r.ok === false ? r.error : `${r.count} notes`),
+      },
     }),
 
     edit_note: defineTool({
@@ -333,9 +340,7 @@ export function createNoteTools(context?: ScheduleContext) {
         operation: z
           .enum(["append", "prepend", "replace_lines", "insert_after_line"])
           .describe("The type of edit to perform"),
-        content: z
-          .string()
-          .describe("The new content to append, prepend, or insert"),
+        content: z.string().describe("The new content to append, prepend, or insert"),
         summary: z
           .string()
           .max(250)
@@ -360,21 +365,15 @@ export function createNoteTools(context?: ScheduleContext) {
         start_line: z
           .number()
           .optional()
-          .describe(
-            "First line to replace (1-indexed, inclusive). Required for replace_lines.",
-          ),
+          .describe("First line to replace (1-indexed, inclusive). Required for replace_lines."),
         end_line: z
           .number()
           .optional()
-          .describe(
-            "Last line to replace (1-indexed, inclusive). Required for replace_lines.",
-          ),
+          .describe("Last line to replace (1-indexed, inclusive). Required for replace_lines."),
         line: z
           .number()
           .optional()
-          .describe(
-            "Line number to insert after (1-indexed). Required for insert_after_line.",
-          ),
+          .describe("Line number to insert after (1-indexed). Required for insert_after_line."),
       }),
       execute: async ({
         topic,
@@ -408,26 +407,21 @@ export function createNoteTools(context?: ScheduleContext) {
 
           switch (operation) {
             case "append":
-              newContent = note.content + "\n" + content;
+              newContent = `${note.content}\n${content}`;
               break;
 
             case "prepend":
-              newContent = content + "\n" + note.content;
+              newContent = `${content}\n${note.content}`;
               break;
 
             case "replace_lines": {
               if (start_line == null || end_line == null) {
                 return {
                   ok: false,
-                  error:
-                    "replace_lines requires start_line and end_line parameters.",
+                  error: "replace_lines requires start_line and end_line parameters.",
                 };
               }
-              if (
-                start_line < 1 ||
-                end_line < start_line ||
-                start_line > lines.length
-              ) {
+              if (start_line < 1 || end_line < start_line || start_line > lines.length) {
                 return {
                   ok: false,
                   error: `Invalid line range: ${start_line}-${end_line}. Note has ${lines.length} lines.`,
@@ -435,11 +429,7 @@ export function createNoteTools(context?: ScheduleContext) {
               }
               const clampedEnd = Math.min(end_line, lines.length);
               const newLines = content.split("\n");
-              lines.splice(
-                start_line - 1,
-                clampedEnd - start_line + 1,
-                ...newLines,
-              );
+              lines.splice(start_line - 1, clampedEnd - start_line + 1, ...newLines);
               newContent = lines.join("\n");
               break;
             }
@@ -482,10 +472,7 @@ export function createNoteTools(context?: ScheduleContext) {
           if (importance !== undefined) {
             editUpdate.importance = importance;
           }
-          await db
-            .update(notes)
-            .set(editUpdate)
-            .where(eq(notes.topic, topic));
+          await db.update(notes).set(editUpdate).where(eq(notes.topic, topic));
 
           updateNoteEmbedding(newContent, topic, savedAt);
 
@@ -510,7 +497,11 @@ export function createNoteTools(context?: ScheduleContext) {
           return { ok: false, error: `Failed to edit note: ${error.message}` };
         }
       },
-      slack: { status: "Editing note...", detail: (i) => i.topic, output: (r) => r.ok === false ? r.error : 'Note edited' },
+      slack: {
+        status: "Editing note...",
+        detail: (i) => i.topic,
+        output: (r) => (r.ok === false ? r.error : "Note edited"),
+      },
     }),
 
     delete_note: defineTool({
@@ -554,7 +545,11 @@ export function createNoteTools(context?: ScheduleContext) {
           };
         }
       },
-      slack: { status: "Deleting note...", detail: (i) => i.topic, output: (r) => r.ok === false ? r.error : 'Note deleted' },
+      slack: {
+        status: "Deleting note...",
+        detail: (i) => i.topic,
+        output: (r) => (r.ok === false ? r.error : "Note deleted"),
+      },
     }),
 
     // ── Full-text Search ────────────────────────────────────────────────────
@@ -563,18 +558,14 @@ export function createNoteTools(context?: ScheduleContext) {
       description:
         "Full-text search across all notes content. Use this before reading individual notes when looking for a keyword or term — saves tool calls vs. list_notes + sequential read_note. Supports two modes: 'text' (default, keyword search) and 'semantic' (vector similarity for conceptual matches). The navigation pattern is: notes index (orient) → search_notes (find) → read_note (load).",
       inputSchema: z.object({
-        query: z
-          .string()
-          .describe("Search term or phrase to find across all notes"),
+        query: z.string().describe("Search term or phrase to find across all notes"),
         mode: z
           .enum(["text", "semantic"])
           .default("text")
-          .describe("Search mode: 'text' for keyword/full-text search, 'semantic' for vector similarity search"),
-        limit: z
-          .number()
-          .optional()
-          .default(10)
-          .describe("Max results to return (default 10)"),
+          .describe(
+            "Search mode: 'text' for keyword/full-text search, 'semantic' for vector similarity search",
+          ),
+        limit: z.number().optional().default(10).describe("Max results to return (default 10)"),
       }),
       execute: async ({ query, mode, limit }) => {
         try {
@@ -636,9 +627,10 @@ export function createNoteTools(context?: ScheduleContext) {
 
           // mode === "text": existing tsvector + ILIKE fallback
           const textUserId = context?.userId;
-          const visibilityClause = textUserId && textUserId !== "aura"
-            ? sql`AND (visibility IN ('shared', 'system') OR owner_id = ${textUserId})`
-            : sql``;
+          const visibilityClause =
+            textUserId && textUserId !== "aura"
+              ? sql`AND (visibility IN ('shared', 'system') OR owner_id = ${textUserId})`
+              : sql``;
           let rows: any[];
           try {
             const results = await db.execute(sql`
@@ -704,7 +696,11 @@ export function createNoteTools(context?: ScheduleContext) {
           };
         }
       },
-      slack: { status: "Searching notes...", detail: (i) => i.query, output: (r) => r.ok === false ? r.error : `${r.count} results` },
+      slack: {
+        status: "Searching notes...",
+        detail: (i) => i.query,
+        output: (r) => (r.ok === false ? r.error : `${r.count} results`),
+      },
     }),
 
     // ── Plan Continuation ──────────────────────────────────────────────────
@@ -713,12 +709,8 @@ export function createNoteTools(context?: ScheduleContext) {
       description:
         "Save progress on a multi-step task and schedule a continuation. Use this when approaching your step limit and you won't finish in time. Atomically saves a plan note AND schedules a follow-up action.",
       inputSchema: z.object({
-        topic: z
-          .string()
-          .describe("Plan note topic (will create or update)"),
-        progress: z
-          .string()
-          .describe("What has been accomplished so far"),
+        topic: z.string().describe("Plan note topic (will create or update)"),
+        progress: z.string().describe("What has been accomplished so far"),
         next_steps: z
           .string()
           .describe(
@@ -726,26 +718,15 @@ export function createNoteTools(context?: ScheduleContext) {
           ),
         context: z
           .string()
-          .describe(
-            "Accumulated findings, data, intermediate results. Keep concise.",
-          ),
+          .describe("Accumulated findings, data, intermediate results. Keep concise."),
         continue_in_minutes: z
           .number()
           .default(5)
           .describe("Minutes until continuation fires (default 5)"),
       }),
-      execute: async ({
-        topic,
-        progress,
-        next_steps,
-        context: ctx,
-        continue_in_minutes,
-      }) => {
+      execute: async ({ topic, progress, next_steps, context: ctx, continue_in_minutes }) => {
         try {
-          if (
-            SYSTEM_TOPICS.includes(topic) &&
-            !(await hasRole(context?.userId, "admin"))
-          ) {
+          if (SYSTEM_TOPICS.includes(topic) && !(await hasRole(context?.userId, "admin"))) {
             return { ok: false, error: "Only admins can edit system notes." };
           }
 
@@ -773,9 +754,7 @@ export function createNoteTools(context?: ScheduleContext) {
           if (depth >= MAX_CONTINUATIONS) {
             // Depth limit reached — don't schedule continuation
             const noteContent = `## Continuations: ${depth}\n## Status: waiting\n\n## Progress\n${progress}\n\n## Next Steps\n${next_steps}\n\n## Context\n${ctx}`;
-            const sevenDays = new Date(
-              Date.now() + 7 * 24 * 60 * 60 * 1000,
-            );
+            const sevenDays = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
             const savedAt = new Date();
 
             await db
@@ -819,9 +798,7 @@ export function createNoteTools(context?: ScheduleContext) {
           const sevenDays = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
           // Upsert the plan note and schedule continuation
-          const executeAt = new Date(
-            Date.now() + continue_in_minutes * 60 * 1000,
-          );
+          const executeAt = new Date(Date.now() + continue_in_minutes * 60 * 1000);
           const description = `[CONTINUE:${topic}] ${next_steps}`;
           const savedAt = new Date();
 
@@ -882,7 +859,11 @@ export function createNoteTools(context?: ScheduleContext) {
           };
         }
       },
-      slack: { status: "Saving checkpoint...", detail: (i) => i.topic, output: (r) => r.ok === false ? r.error : 'Checkpoint saved' },
+      slack: {
+        status: "Saving checkpoint...",
+        detail: (i) => i.topic,
+        output: (r) => (r.ok === false ? r.error : "Checkpoint saved"),
+      },
     }),
   };
 }

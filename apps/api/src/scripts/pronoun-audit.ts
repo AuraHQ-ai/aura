@@ -1,7 +1,7 @@
 import { config } from "dotenv";
-import { writeFile } from "fs/promises";
-import { resolve } from "path";
-import { fileURLToPath } from "url";
+import { writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { and, eq, isNotNull, sql } from "drizzle-orm";
 import { entities, users } from "@aura/db/schema";
 import type { Database } from "../db/client.js";
@@ -14,8 +14,7 @@ import {
 } from "../lib/pronoun-audit.js";
 
 const DEFAULT_CANARY_ENTITY_ID = "f212a72d-a781-4af6-990b-2a908bf3c1e6";
-const CANARY_ENTITY_ID =
-  process.env.PRONOUN_AUDIT_CANARY_ENTITY_ID ?? DEFAULT_CANARY_ENTITY_ID;
+const CANARY_ENTITY_ID = process.env.PRONOUN_AUDIT_CANARY_ENTITY_ID ?? DEFAULT_CANARY_ENTITY_ID;
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const repoRoot = resolve(__dirname, "../../../..");
@@ -82,12 +81,7 @@ function parseCliOptions(args: string[]): CliOptions {
   // write bad patches. --allow-ambiguous-her opts into the older permissive mode.
   const allowAmbiguous = argSet.has("--allow-ambiguous-her");
 
-  const knownFlags = new Set([
-    "--apply",
-    "--dry-run",
-    "--prod",
-    "--allow-ambiguous-her",
-  ]);
+  const knownFlags = new Set(["--apply", "--dry-run", "--prod", "--allow-ambiguous-her"]);
   const unknownArgs = args.filter((arg) => !knownFlags.has(arg));
   if (unknownArgs.length > 0) {
     throw new Error(
@@ -169,10 +163,7 @@ async function loadAuditRows(db: Database): Promise<AuditEntityRow[]> {
     .from(entities)
     .innerJoin(
       users,
-      and(
-        eq(entities.workspaceId, users.workspaceId),
-        eq(entities.slackUserId, users.slackUserId),
-      ),
+      and(eq(entities.workspaceId, users.workspaceId), eq(entities.slackUserId, users.slackUserId)),
     )
     .where(
       and(
@@ -183,9 +174,10 @@ async function loadAuditRows(db: Database): Promise<AuditEntityRow[]> {
     );
 }
 
-function expectedFamilyOrSkip(
-  gender: string | null,
-): { expectedFamily: PronounFamily | null; skipKind: ClassificationKind | null } {
+function expectedFamilyOrSkip(gender: string | null): {
+  expectedFamily: PronounFamily | null;
+  skipKind: ClassificationKind | null;
+} {
   if (gender == null || gender.trim() === "") {
     return { expectedFamily: null, skipKind: "SKIP_NO_GENDER" };
   }
@@ -225,10 +217,8 @@ async function verifyCanarySummary(db: Database): Promise<void> {
     scan.counts.neutral > 0
   ) {
     // NOTE: canary gender is expected to be masculine; override via PRONOUN_AUDIT_CANARY_ENTITY_ID
-      // if you pick a different canary.
-      throw new Error(
-        "Verification failed: canary summary does not end in he/him pronouns only.",
-      );
+    // if you pick a different canary.
+    throw new Error("Verification failed: canary summary does not end in he/him pronouns only.");
   }
 }
 
@@ -303,7 +293,8 @@ export async function main(args: string[]): Promise<void> {
           expectedFamily: classification.targetFamily,
           classification: "MISMATCH_SIMPLE",
           reason:
-            "" + classification.reason +
+            "" +
+            classification.reason +
             " (skipped: ambiguous her disambiguation; re-run with --allow-ambiguous-her to patch, or regenerate via entity summary pipeline)",
           counts: formatCounts(row.summary),
           beforeSummary: row.summary,
@@ -421,11 +412,12 @@ export async function main(args: string[]): Promise<void> {
   await verifyCanarySummary(db);
   await writeFile(csvPath, toCsv(csvRows), "utf8");
   if (options.apply && rollbackStatements.length > 0) {
-    const header = `-- Pronoun audit rollback generated at ${new Date(runTimestamp).toISOString()}\n` +
+    const header =
+      `-- Pronoun audit rollback generated at ${new Date(runTimestamp).toISOString()}\n` +
       `-- ${rollbackStatements.length} UPDATE statement(s). Run inside a transaction.\n`;
     await writeFile(
       rollbackSqlPath,
-      header + "BEGIN;\n" + rollbackStatements.join("\n") + "\nCOMMIT;\n",
+      `${header}BEGIN;\n${rollbackStatements.join("\n")}\nCOMMIT;\n`,
       "utf8",
     );
   }

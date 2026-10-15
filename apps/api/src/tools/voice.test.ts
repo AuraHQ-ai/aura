@@ -112,24 +112,24 @@ describe("send_voice_note quota", () => {
         window: "1h",
       },
     });
-    expect(dbMocks.insertValues).toHaveBeenCalledWith(expect.objectContaining({
-      conversationId: "voice_note_F123",
-      direction: "voice_note",
-      slackUserId: "U123",
-      metadata: expect.objectContaining({
-        voiceId: "voice-default",
-        channelId: "C123",
-        threadTs: "171234.000100",
+    expect(dbMocks.insertValues).toHaveBeenCalledWith(
+      expect.objectContaining({
+        conversationId: "voice_note_F123",
+        direction: "voice_note",
+        slackUserId: "U123",
+        metadata: expect.objectContaining({
+          voiceId: "voice-default",
+          channelId: "C123",
+          threadTs: "171234.000100",
+        }),
       }),
-    }));
+    );
   });
 
   it("rejects over-limit voice notes with retry-after metadata", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-06-09T21:30:00Z"));
-    dbMocks.selectRows = [
-      [{ count: "2", oldestCreatedAt: new Date("2026-06-09T21:00:00Z") }],
-    ];
+    dbMocks.selectRows = [[{ count: "2", oldestCreatedAt: new Date("2026-06-09T21:00:00Z") }]];
     const fetchMock = vi.mocked(fetch);
     const slackClient = {
       files: {
@@ -182,10 +182,11 @@ describe("place_call callback routing", () => {
     resolveCredentialValueMock.mockResolvedValue("elevenlabs-key");
     vi.stubGlobal(
       "fetch",
-      vi.fn(async () =>
-        new Response(JSON.stringify({ conversation_id: "conv-1" }), {
-          status: 200,
-        }),
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ conversation_id: "conv-1" }), {
+            status: 200,
+          }),
       ),
     );
   });

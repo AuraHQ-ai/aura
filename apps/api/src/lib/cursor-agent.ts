@@ -76,11 +76,7 @@ export interface GitHubPullRequestRef {
   number: number;
 }
 
-export type MarkPullRequestReadyResult =
-  | "marked"
-  | "already_ready"
-  | "skipped"
-  | "failed";
+export type MarkPullRequestReadyResult = "marked" | "already_ready" | "skipped" | "failed";
 
 interface GitHubGraphqlResponse<T> {
   data?: T;
@@ -88,16 +84,12 @@ interface GitHubGraphqlResponse<T> {
   message?: string;
 }
 
-export function parseGitHubPullRequestUrl(
-  prUrl: string,
-): GitHubPullRequestRef | null {
+export function parseGitHubPullRequestUrl(prUrl: string): GitHubPullRequestRef | null {
   try {
     const url = new URL(prUrl);
     if (url.hostname !== "github.com") return null;
 
-    const [owner, repo, pullSegment, numberSegment] = url.pathname
-      .split("/")
-      .filter(Boolean);
+    const [owner, repo, pullSegment, numberSegment] = url.pathname.split("/").filter(Boolean);
     if (!owner || !repo || pullSegment !== "pull" || !numberSegment) {
       return null;
     }
@@ -142,9 +134,7 @@ async function githubGraphql<T>({
 
   if (!response.ok) {
     throw new Error(
-      `GitHub GraphQL request failed (${response.status}): ${
-        body?.message || "unknown error"
-      }`,
+      `GitHub GraphQL request failed (${response.status}): ${body?.message || "unknown error"}`,
     );
   }
 
@@ -234,14 +224,11 @@ export async function markPullRequestReadyForReview({
       variables: { pullRequestId: pullRequest.id },
     });
 
-    logger.info(
-      `Cursor agent webhook: marked PR #${pr.number} ready for review`,
-      {
-        owner: pr.owner,
-        repo: pr.repo,
-        number: pr.number,
-      },
-    );
+    logger.info(`Cursor agent webhook: marked PR #${pr.number} ready for review`, {
+      owner: pr.owner,
+      repo: pr.repo,
+      number: pr.number,
+    });
     return "marked";
   } catch (error) {
     logger.warn("Cursor agent webhook: failed to mark PR ready for review", {
@@ -331,8 +318,7 @@ export async function launchCursorAgent(
 
   const target: Record<string, unknown> = {};
   if (params.branchName) target.branchName = params.branchName;
-  if (params.autoCreatePr !== undefined)
-    target.autoCreatePr = params.autoCreatePr;
+  if (params.autoCreatePr !== undefined) target.autoCreatePr = params.autoCreatePr;
   if (Object.keys(target).length > 0) body.target = target;
 
   if (params.webhookUrl) {
@@ -368,9 +354,7 @@ export async function launchCursorAgent(
  * getCursorApiKey above -- 1.0.30's dist is unbundlable under the WDK
  * esbuild pass.
  */
-export async function getCursorAgentStatus(
-  agentId: string,
-): Promise<CursorAgentStatus> {
+export async function getCursorAgentStatus(agentId: string): Promise<CursorAgentStatus> {
   const res = await fetch(`${CURSOR_API_BASE}/agents/${agentId}`, {
     method: "GET",
     headers: await headers(),
@@ -378,9 +362,7 @@ export async function getCursorAgentStatus(
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(
-      `Cursor API GET /agents/${agentId} failed (${res.status}): ${text}`,
-    );
+    throw new Error(`Cursor API GET /agents/${agentId} failed (${res.status}): ${text}`);
   }
 
   return (await res.json()) as CursorAgentStatus;
@@ -401,9 +383,7 @@ export async function followupCursorAgent(
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(
-      `Cursor API POST /agents/${agentId}/followup failed (${res.status}): ${text}`,
-    );
+    throw new Error(`Cursor API POST /agents/${agentId}/followup failed (${res.status}): ${text}`);
   }
   return (await res.json()) as CursorAgentResponse;
 }
@@ -418,13 +398,10 @@ export async function followupCursorAgent(
  * see getCursorApiKey above.
  */
 export async function getCursorConversation(agentId: string): Promise<any> {
-  const res = await fetch(
-    `${CURSOR_API_BASE}/agents/${agentId}/conversation`,
-    {
-      method: "GET",
-      headers: await headers(),
-    },
-  );
+  const res = await fetch(`${CURSOR_API_BASE}/agents/${agentId}/conversation`, {
+    method: "GET",
+    headers: await headers(),
+  });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(
@@ -445,9 +422,7 @@ export async function stopCursorAgent(agentId: string): Promise<any> {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(
-      `Cursor API POST /agents/${agentId}/stop failed (${res.status}): ${text}`,
-    );
+    throw new Error(`Cursor API POST /agents/${agentId}/stop failed (${res.status}): ${text}`);
   }
   return await res.json();
 }
@@ -474,4 +449,3 @@ export async function listCursorAgents(prUrl?: string): Promise<any> {
   }
   return await res.json();
 }
-

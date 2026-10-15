@@ -36,9 +36,11 @@ async function getCalendarClient(userId?: string) {
   return new calendar_v3.Calendar({ auth });
 }
 
-export async function getCalendarClientOrError(userId?: string): Promise<
-  { client: NonNullable<Awaited<ReturnType<typeof getCalendarClient>>>; error?: never } |
-  { client?: never; error: string }
+export async function getCalendarClientOrError(
+  userId?: string,
+): Promise<
+  | { client: NonNullable<Awaited<ReturnType<typeof getCalendarClient>>>; error?: never }
+  | { client?: never; error: string }
 > {
   const { getOAuth2ClientOrError } = await import("./gmail.js");
   const result = await getOAuth2ClientOrError(userId);
@@ -50,13 +52,16 @@ export async function getCalendarClientOrError(userId?: string): Promise<
 
 // ── List Events ─────────────────────────────────────────────────────────────
 
-export async function listEvents(opts: {
-  calendarId?: string;
-  timeMin?: string;
-  timeMax?: string;
-  maxResults?: number;
-  query?: string;
-}, userId?: string): Promise<CalendarEvent[] | null> {
+export async function listEvents(
+  opts: {
+    calendarId?: string;
+    timeMin?: string;
+    timeMax?: string;
+    maxResults?: number;
+    query?: string;
+  },
+  userId?: string,
+): Promise<CalendarEvent[] | null> {
   const client = await getCalendarClient(userId);
   if (!client) return null;
 
@@ -97,15 +102,18 @@ export async function listEvents(opts: {
 
 // ── Create Event ────────────────────────────────────────────────────────────
 
-export async function createEvent(opts: {
-  summary: string;
-  description?: string;
-  start: string; // ISO datetime
-  end: string;
-  attendees?: string[]; // email addresses
-  location?: string;
-  calendarId?: string;
-}, userId?: string): Promise<CalendarEvent | null> {
+export async function createEvent(
+  opts: {
+    summary: string;
+    description?: string;
+    start: string; // ISO datetime
+    end: string;
+    attendees?: string[]; // email addresses
+    location?: string;
+    calendarId?: string;
+  },
+  userId?: string,
+): Promise<CalendarEvent | null> {
   const client = await getCalendarClient(userId);
   if (!client) return null;
 
@@ -177,11 +185,9 @@ export async function updateEvent(
 
   const requestBody: Record<string, unknown> = {};
   if (updates.summary !== undefined) requestBody.summary = updates.summary;
-  if (updates.description !== undefined)
-    requestBody.description = updates.description;
+  if (updates.description !== undefined) requestBody.description = updates.description;
   if (updates.location !== undefined) requestBody.location = updates.location;
-  if (updates.start !== undefined)
-    requestBody.start = { dateTime: updates.start };
+  if (updates.start !== undefined) requestBody.start = { dateTime: updates.start };
   if (updates.end !== undefined) requestBody.end = { dateTime: updates.end };
   if (updates.attendees !== undefined)
     requestBody.attendees = updates.attendees.map((email) => ({ email }));
@@ -214,11 +220,14 @@ export async function updateEvent(
 
 // ── Free/Busy ───────────────────────────────────────────────────────────────
 
-export async function checkFreeBusy(opts: {
-  emails: string[];
-  timeMin: string;
-  timeMax: string;
-}, userId?: string): Promise<Record<string, FreeBusySlot[]> | null> {
+export async function checkFreeBusy(
+  opts: {
+    emails: string[];
+    timeMin: string;
+    timeMax: string;
+  },
+  userId?: string,
+): Promise<Record<string, FreeBusySlot[]> | null> {
   const client = await getCalendarClient(userId);
   if (!client) return null;
 
@@ -246,17 +255,23 @@ export async function checkFreeBusy(opts: {
 
 // ── Find Available Slots ────────────────────────────────────────────────────
 
-export async function findAvailableSlots(opts: {
-  emails: string[];
-  timeMin: string;
-  timeMax: string;
-  durationMinutes: number;
-}, userId?: string): Promise<AvailableSlot[] | null> {
-  const busyData = await checkFreeBusy({
-    emails: opts.emails,
-    timeMin: opts.timeMin,
-    timeMax: opts.timeMax,
-  }, userId);
+export async function findAvailableSlots(
+  opts: {
+    emails: string[];
+    timeMin: string;
+    timeMax: string;
+    durationMinutes: number;
+  },
+  userId?: string,
+): Promise<AvailableSlot[] | null> {
+  const busyData = await checkFreeBusy(
+    {
+      emails: opts.emails,
+      timeMin: opts.timeMin,
+      timeMax: opts.timeMax,
+    },
+    userId,
+  );
   if (!busyData) return null;
 
   // Merge all busy slots across all people
@@ -275,10 +290,7 @@ export async function findAvailableSlots(opts: {
   const merged: { start: number; end: number }[] = [];
   for (const slot of allBusy) {
     if (merged.length > 0 && slot.start <= merged[merged.length - 1].end) {
-      merged[merged.length - 1].end = Math.max(
-        merged[merged.length - 1].end,
-        slot.end
-      );
+      merged[merged.length - 1].end = Math.max(merged[merged.length - 1].end, slot.end);
     } else {
       merged.push({ ...slot });
     }

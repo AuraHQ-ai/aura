@@ -77,32 +77,30 @@ describe("history and latest materialization", () => {
 
 describe("authoritative-run gating (which runs may define the README snapshot)", () => {
   it("only a clean medium/full LongMemEval run is authoritative", () => {
-    expect(
-      isAuthoritativeRun({ subset: "medium", dirty: false, datasets: ["longmemeval"] }),
-    ).toBe(true);
-    expect(
-      isAuthoritativeRun({ subset: "full", dirty: false, datasets: ["longmemeval"] }),
-    ).toBe(true);
+    expect(isAuthoritativeRun({ subset: "medium", dirty: false, datasets: ["longmemeval"] })).toBe(
+      true,
+    );
+    expect(isAuthoritativeRun({ subset: "full", dirty: false, datasets: ["longmemeval"] })).toBe(
+      true,
+    );
   });
 
   it("rejects toy runs even when they carry the default medium subset", () => {
     // `--dataset=toy` defaults to subset=medium; the dataset gate is what stops
     // a smoke test from clobbering a real baseline.
-    expect(
-      isAuthoritativeRun({ subset: "medium", dirty: false, datasets: ["toy"] }),
-    ).toBe(false);
+    expect(isAuthoritativeRun({ subset: "medium", dirty: false, datasets: ["toy"] })).toBe(false);
   });
 
   it("rejects fast subsets, LoCoMo-only runs, and dirty trees", () => {
-    expect(
-      isAuthoritativeRun({ subset: "fast", dirty: false, datasets: ["longmemeval"] }),
-    ).toBe(false);
-    expect(
-      isAuthoritativeRun({ subset: "medium", dirty: false, datasets: ["locomo"] }),
-    ).toBe(false);
-    expect(
-      isAuthoritativeRun({ subset: "medium", dirty: true, datasets: ["longmemeval"] }),
-    ).toBe(false);
+    expect(isAuthoritativeRun({ subset: "fast", dirty: false, datasets: ["longmemeval"] })).toBe(
+      false,
+    );
+    expect(isAuthoritativeRun({ subset: "medium", dirty: false, datasets: ["locomo"] })).toBe(
+      false,
+    );
+    expect(isAuthoritativeRun({ subset: "medium", dirty: true, datasets: ["longmemeval"] })).toBe(
+      false,
+    );
   });
 
   it("authoritativeLatest ignores toy/fast runs and returns undefined when none qualify", () => {

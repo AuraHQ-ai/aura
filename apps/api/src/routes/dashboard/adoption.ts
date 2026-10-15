@@ -29,7 +29,7 @@ const adoptionQuerySchema = z
 type QueryResult<T> = { rows?: T[] } | T[];
 
 function getRows<T>(result: QueryResult<T>): T[] {
-  return Array.isArray(result) ? result : result.rows ?? [];
+  return Array.isArray(result) ? result : (result.rows ?? []);
 }
 
 function formatAmsterdamDate(date: Date): string {
@@ -52,7 +52,10 @@ function addDays(ymd: string, days: number): string {
   return date.toISOString().slice(0, 10);
 }
 
-function getDateRange(start: string | undefined, end: string | undefined): { start: string; end: string } {
+function getDateRange(
+  start: string | undefined,
+  end: string | undefined,
+): { start: string; end: string } {
   if (start && end) return { start, end };
 
   const defaultEnd = formatAmsterdamDate(new Date());
@@ -109,7 +112,8 @@ dashboardAdoptionApp.openapi(getAdoptionRoute, async (c) => {
       mau: number | string;
       dau_mau_ratio: number | string;
       wau_mau_ratio: number | string;
-    }>(await db.execute(sql`
+    }>(
+      await db.execute(sql`
       WITH params AS (
         SELECT
           ${start}::date AS start_day,
@@ -157,7 +161,8 @@ dashboardAdoptionApp.openapi(getAdoptionRoute, async (c) => {
         ROUND(CASE WHEN mau = 0 THEN 0 ELSE (wau::numeric / mau) * 100 END, 1) AS wau_mau_ratio
       FROM counts
       ORDER BY day;
-    `));
+    `),
+    );
 
     const [summaryRow] = getRows<{
       workspace_members: number | string;
@@ -177,7 +182,8 @@ dashboardAdoptionApp.openapi(getAdoptionRoute, async (c) => {
       total_messages_7d: number | string;
       week1_eligible_users: number | string;
       week1_returned_users: number | string;
-    }>(await db.execute(sql`
+    }>(
+      await db.execute(sql`
       WITH params AS (
         SELECT
           ${end}::date AS end_day,
@@ -265,7 +271,8 @@ dashboardAdoptionApp.openapi(getAdoptionRoute, async (c) => {
         (SELECT COUNT(*)::int FROM week1_eligible) AS week1_eligible_users,
         (SELECT COUNT(*)::int FROM week1_returned) AS week1_returned_users
       FROM params p;
-    `));
+    `),
+    );
 
     const cohortRows = getRows<{
       cohort_week: string;
@@ -273,7 +280,8 @@ dashboardAdoptionApp.openapi(getAdoptionRoute, async (c) => {
       week_offset: number | string;
       active_users: number | string;
       retention_pct: number | string;
-    }>(await db.execute(sql`
+    }>(
+      await db.execute(sql`
       WITH params AS (
         SELECT
           ${start}::date AS start_day,
@@ -350,7 +358,8 @@ dashboardAdoptionApp.openapi(getAdoptionRoute, async (c) => {
       FROM grid g
       LEFT JOIN retention r ON r.first_week = g.first_week AND r.week_offset = g.week_offset
       ORDER BY g.first_week DESC, g.week_offset;
-    `));
+    `),
+    );
 
     const teamRows = getRows<{
       team: string;
@@ -362,7 +371,8 @@ dashboardAdoptionApp.openapi(getAdoptionRoute, async (c) => {
       top_user_id: string | null;
       top_user_name: string | null;
       top_user_messages: number | string | null;
-    }>(await db.execute(sql`
+    }>(
+      await db.execute(sql`
       WITH params AS (
         SELECT
           ${end}::date AS end_day,
@@ -437,7 +447,8 @@ dashboardAdoptionApp.openapi(getAdoptionRoute, async (c) => {
       LEFT JOIN ranked_users ru ON ru.team = ub.team AND ru.rn = 1
       GROUP BY ub.team, ru.slack_user_id, ru.display_name, ru.messages_28d
       ORDER BY mau DESC, wau DESC, member_count DESC, ub.team;
-    `));
+    `),
+    );
 
     const topUserRows = getRows<{
       user_id: string;
@@ -446,7 +457,8 @@ dashboardAdoptionApp.openapi(getAdoptionRoute, async (c) => {
       messages_7d: number | string;
       active_days_7d: number | string;
       last_seen: string;
-    }>(await db.execute(sql`
+    }>(
+      await db.execute(sql`
       WITH params AS (
         SELECT
           ${end}::date AS end_day,
@@ -481,7 +493,8 @@ dashboardAdoptionApp.openapi(getAdoptionRoute, async (c) => {
       GROUP BY a.user_id, u.display_name, COALESCE(NULLIF(e.metadata->>'team', ''), 'Unassigned')
       ORDER BY messages_7d DESC, active_days_7d DESC, display_name
       LIMIT 10;
-    `));
+    `),
+    );
 
     const dormantUserRows = getRows<{
       user_id: string;
@@ -489,7 +502,8 @@ dashboardAdoptionApp.openapi(getAdoptionRoute, async (c) => {
       team: string;
       last_seen: string;
       previous_messages: number | string;
-    }>(await db.execute(sql`
+    }>(
+      await db.execute(sql`
       WITH params AS (
         SELECT
           ${end}::date AS end_day,
@@ -534,7 +548,8 @@ dashboardAdoptionApp.openapi(getAdoptionRoute, async (c) => {
       WHERE abu.was_previous_mau AND NOT COALESCE(abu.is_mau, false)
       ORDER BY abu.previous_messages DESC, abu.last_seen DESC
       LIMIT 25;
-    `));
+    `),
+    );
 
     const depthRows = getRows<{
       active_users_7d: number | string;
@@ -542,7 +557,8 @@ dashboardAdoptionApp.openapi(getAdoptionRoute, async (c) => {
       p50_messages: number | string | null;
       p90_messages: number | string | null;
       p99_messages: number | string | null;
-    }>(await db.execute(sql`
+    }>(
+      await db.execute(sql`
       WITH params AS (
         SELECT
           ${end}::date AS end_day,
@@ -574,13 +590,15 @@ dashboardAdoptionApp.openapi(getAdoptionRoute, async (c) => {
         percentile_cont(0.9) WITHIN GROUP (ORDER BY message_count) AS p90_messages,
         percentile_cont(0.99) WITHIN GROUP (ORDER BY message_count) AS p99_messages
       FROM per_user;
-    `));
+    `),
+    );
 
     const histogramRows = getRows<{
       bucket: string;
       sort_order: number | string;
       users: number | string;
-    }>(await db.execute(sql`
+    }>(
+      await db.execute(sql`
       WITH params AS (
         SELECT
           ${end}::date AS end_day,
@@ -633,7 +651,8 @@ dashboardAdoptionApp.openapi(getAdoptionRoute, async (c) => {
       FROM buckets b
       LEFT JOIN bucketed ON bucketed.bucket = b.bucket
       ORDER BY b.sort_order;
-    `));
+    `),
+    );
 
     const summary = {
       workspaceMembers: numberValue(summaryRow?.workspace_members),
@@ -679,15 +698,19 @@ dashboardAdoptionApp.openapi(getAdoptionRoute, async (c) => {
         ...step,
         shareOfWorkspace: percentage(step.count, summary.workspaceMembers),
         conversionFromPrevious: index === 0 ? 100 : percentage(step.count, previous),
-        dropOffFromPrevious: index === 0 ? 0 : Number((100 - percentage(step.count, previous)).toFixed(1)),
+        dropOffFromPrevious:
+          index === 0 ? 0 : Number((100 - percentage(step.count, previous)).toFixed(1)),
       };
     });
 
-    const cohortMap = new Map<string, {
-      cohortWeek: string;
-      cohortSize: number;
-      retention: Array<{ weekOffset: number; activeUsers: number; retentionPct: number }>;
-    }>();
+    const cohortMap = new Map<
+      string,
+      {
+        cohortWeek: string;
+        cohortSize: number;
+        retention: Array<{ weekOffset: number; activeUsers: number; retentionPct: number }>;
+      }
+    >();
     for (const row of cohortRows) {
       const cohortWeek = row.cohort_week;
       const cohort = cohortMap.get(cohortWeek) ?? {
@@ -740,13 +763,14 @@ dashboardAdoptionApp.openapi(getAdoptionRoute, async (c) => {
           mau: numberValue(row.mau),
           mauPct: percentage(numberValue(row.mau), numberValue(row.member_count)),
           dormantUsers: numberValue(row.dormant_users),
-          topUser: row.top_user_id && numberValue(row.top_user_messages) > 0
-            ? {
-              userId: row.top_user_id,
-              displayName: row.top_user_name,
-              messages28d: numberValue(row.top_user_messages),
-            }
-            : null,
+          topUser:
+            row.top_user_id && numberValue(row.top_user_messages) > 0
+              ? {
+                  userId: row.top_user_id,
+                  displayName: row.top_user_name,
+                  messages28d: numberValue(row.top_user_messages),
+                }
+              : null,
         })),
         topUsers: topUserRows.map((row) => ({
           userId: row.user_id,
@@ -778,7 +802,9 @@ dashboardAdoptionApp.openapi(getAdoptionRoute, async (c) => {
       200,
     );
   } catch (error) {
-    logger.error("Failed to fetch adoption data", { error: error instanceof Error ? error.stack : String(error) });
+    logger.error("Failed to fetch adoption data", {
+      error: error instanceof Error ? error.stack : String(error),
+    });
     return c.json({ error: "Internal server error" }, 500);
   }
 });

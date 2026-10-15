@@ -159,10 +159,7 @@ function normalizeToolsRepo(value: string): string | null {
 }
 
 function redactGitAuth(stderr?: string): string | undefined {
-  return stderr?.replace(
-    /x-access-token:[^@\s]+@/g,
-    "x-access-token:[REDACTED]@",
-  );
+  return stderr?.replace(/x-access-token:[^@\s]+@/g, "x-access-token:[REDACTED]@");
 }
 
 /**
@@ -382,12 +379,7 @@ async function resolveSandboxCredentialRows(
       const grants = await db
         .select({ credentialId: credentialGrants.credentialId })
         .from(credentialGrants)
-        .where(
-          and(
-            eq(credentialGrants.granteeId, userId),
-            isNull(credentialGrants.revokedAt),
-          ),
-        );
+        .where(and(eq(credentialGrants.granteeId, userId), isNull(credentialGrants.revokedAt)));
       for (const g of grants) grantedCredentialIds.add(g.credentialId);
     }
 
@@ -425,11 +417,7 @@ async function resolveSandboxCredentialRows(
       } else if (scope === "per_user") {
         if (!userId) continue;
         if (row.ownerId !== userId && !grantedCredentialIds.has(row.id)) continue;
-      } else if (
-        scope !== "member" &&
-        scope !== "power_user" &&
-        scope !== "admin"
-      ) {
+      } else if (scope !== "member" && scope !== "power_user" && scope !== "admin") {
         logger.warn("getSandboxEnvs: unknown credential scope", {
           userId,
           credentialName: row.name,
@@ -536,9 +524,7 @@ const CALLER_SCOPED_SCOPES = new Set(["owner", "per_user"]);
  * capabilities -- and, for caller-scoped credentials, WHOSE credential the env
  * var resolves from -- without exposing secrets.
  */
-export async function getSandboxEnvNames(
-  userId?: string,
-): Promise<SandboxEnvVarInfo[]> {
+export async function getSandboxEnvNames(userId?: string): Promise<SandboxEnvVarInfo[]> {
   const rows = await resolveSandboxCredentialRows(userId, false);
 
   // Mirror getSandboxEnvs(): caller-owned credentials always win env name
@@ -592,7 +578,7 @@ export async function getSandboxEnvNames(
         envName,
         scope,
         ownerDisplayName: CALLER_SCOPED_SCOPES.has(scope)
-          ? displayNames.get(row.ownerId) ?? null
+          ? (displayNames.get(row.ownerId) ?? null)
           : null,
       };
     })
@@ -604,10 +590,7 @@ export async function getSandboxEnvNames(
  * Installs gcsfuse if needed and uses the base64-encoded SA key from envs.
  * Non-fatal -- sandbox works fine without the mount.
  */
-async function setupSandboxFilesystem(
-  sandbox: any,
-  envs: Record<string, string>,
-): Promise<void> {
+async function setupSandboxFilesystem(sandbox: any, envs: Record<string, string>): Promise<void> {
   try {
     const mountCheck = await runTolerant(
       sandbox,
@@ -732,11 +715,10 @@ export async function ensureAuraTools(
 
     let checkoutChanged: boolean;
     if (probe.stdout.includes("AURA_TOOLS_PRESENT")) {
-      const pullResult = await runTolerant(
-        sandbox,
-        `git -C ${checkoutPathArg} pull --ff-only`,
-        { timeoutMs: 60_000, envs: commandEnvs },
-      );
+      const pullResult = await runTolerant(sandbox, `git -C ${checkoutPathArg} pull --ff-only`, {
+        timeoutMs: 60_000,
+        envs: commandEnvs,
+      });
       if (pullResult.exitCode !== 0) {
         // Keep the existing (stale but usable) checkout; do NOT touch the
         // marker so the next acquisition retries the refresh.
@@ -756,16 +738,12 @@ export async function ensureAuraTools(
         { timeoutMs: 120_000, envs: commandEnvs },
       );
       if (cloneResult.exitCode !== 0) {
-        recordError(
-          "sandbox.ensureAuraTools",
-          new Error("Failed to clone tools repository"),
-          {
-            toolsRepo,
-            checkoutPath,
-            exitCode: cloneResult.exitCode,
-            stderr: redactGitAuth(cloneResult.stderr),
-          },
-        );
+        recordError("sandbox.ensureAuraTools", new Error("Failed to clone tools repository"), {
+          toolsRepo,
+          checkoutPath,
+          exitCode: cloneResult.exitCode,
+          stderr: redactGitAuth(cloneResult.stderr),
+        });
         return;
       }
       checkoutChanged = true;
@@ -858,11 +836,55 @@ export async function ensureUserHome(
   }
 }
 
+/** Sentinel identity for heartbeat/self jobs that share Aura's sandbox. */
+export const AURA_SANDBOX_USER_ID = "aura";
+
+/**
+ * Identity used for per-user sandbox lookup. Matches `run_command`:
+ * the calling user's Slack ID, or `"aura"` for heartbeat/self jobs that
+ * have no human caller.
+ *
+ * File-writing tools MUST use this (not a mailbox owner, Drive owner, or
+ * other delegated identity) so the file lands in the same sandbox the
+ * caller's shell uses.
+ */
+export function resolveSandboxUserId(userId?: string | null): string {
+  return userId || AURA_SANDBOX_USER_ID;
+}
+
+/**
+ * Warn when a sandbox is acquired without a userId. `undefined` keys the
+ * legacy shared sandbox (`e2b_sandbox_id`), which is a different VM from
+ * `run_command`'s `e2b_sandbox_id:aura` / `e2b_sandbox_id:<user>`.
+ * Heartbeat/self jobs should pass `"aura"`, not omit the argument.
+ */
+export function warnIfUnscopedSandboxUserId(
+  userId: string | undefined,
+  source: string,
+  allowUnscoped = false,
+): void {
+  if (allowUnscoped) return;
+  if (userId != null && userId !== "") return;
+  logger.warn(
+    `${source} called without userId; falling back to the legacy shared sandbox (e2b_sandbox_id). Pass resolveSandboxUserId(...) so files/commands land in the caller's sandbox, or pass "${AURA_SANDBOX_USER_ID}" for heartbeat/self jobs.`,
+  );
+}
+
 /**
  * Get or create a sandbox. Tries to resume a previously paused sandbox,
  * creates a new one if none exists or resume fails.
+ *
+ * Always pass a userId. Use `resolveSandboxUserId(context?.userId)` so
+ * interactive callers and `"aura"` jobs share the same convention as
+ * `run_command`. Omitting userId selects the legacy unscoped sandbox —
+ * a different VM than the caller's shell.
  */
-export async function getOrCreateSandbox(userId?: string): Promise<any> {
+export async function getOrCreateSandbox(
+  userId?: string,
+  options?: { allowUnscoped?: boolean },
+): Promise<any> {
+  warnIfUnscopedSandboxUserId(userId, "getOrCreateSandbox", options?.allowUnscoped);
+
   // Return cached instance within the same invocation IF it's for the same user.
   // Per-invocation caches must not be shared across users -- a warm Vercel instance
   // serving two different users back-to-back must hit fresh per-user sandboxes.
@@ -891,9 +913,7 @@ export async function getOrCreateSandbox(userId?: string): Promise<any> {
 
   const apiKey = envs.E2B_API_KEY;
   if (!apiKey) {
-    throw new Error(
-      "E2B_API_KEY is not configured. Add it as a credential in the dashboard.",
-    );
+    throw new Error("E2B_API_KEY is not configured. Add it as a credential in the dashboard.");
   }
 
   // Try to resume a previously paused sandbox (per-user key).
@@ -1009,11 +1029,10 @@ export async function getOrCreateSandbox(userId?: string): Promise<any> {
     });
     if (check.exitCode !== 0) {
       logger.info("Installing Claude Code in sandbox");
-      const installResult = await runTolerant(
-        sandbox,
-        "npm install -g @anthropic-ai/claude-code",
-        { timeoutMs: 120_000, envs },
-      );
+      const installResult = await runTolerant(sandbox, "npm install -g @anthropic-ai/claude-code", {
+        timeoutMs: 120_000,
+        envs,
+      });
       if (installResult.exitCode !== 0) {
         logger.warn("Claude Code install failed", {
           exitCode: installResult.exitCode,
@@ -1035,25 +1054,27 @@ export async function getOrCreateSandbox(userId?: string): Promise<any> {
   return sandbox;
 }
 
-
 /**
  * Write binary data (as a Buffer) to the sandbox filesystem.
  * Creates parent directories if needed.
  * Returns the absolute path where the file was saved.
+ *
+ * `userId` is required and MUST be the caller identity (`resolveSandboxUserId`),
+ * not a delegated mailbox/Drive owner. Omitting it used to write into the
+ * legacy shared sandbox, which `run_command` cannot see.
  */
 export async function writeToSandbox(
   filename: string,
   data: Buffer,
+  userId: string,
   subdir: string = "downloads",
-  userId?: string,
 ): Promise<string> {
-  const sandbox = await getOrCreateSandbox(userId);
+  warnIfUnscopedSandboxUserId(userId, "writeToSandbox");
+  const sandboxUserId = resolveSandboxUserId(userId);
+  const sandbox = await getOrCreateSandbox(sandboxUserId);
 
-  let base = "/home/user";
-  if (userId) {
-    const envs = await getSandboxEnvs(userId);
-    base = await ensureUserHome(sandbox, userId, envs);
-  }
+  const envs = await getSandboxEnvs(sandboxUserId);
+  const base = await ensureUserHome(sandbox, sandboxUserId, envs);
 
   const dir = `${base}/${subdir}`;
   await sandbox.commands.run(`mkdir -p "${dir}"`, { timeoutMs: 5_000 });
@@ -1067,10 +1088,7 @@ export async function writeToSandbox(
  * Truncate shell output to avoid token bloat.
  * Preserves the beginning (headers, command echo) and end (results, errors).
  */
-export function truncateOutput(
-  output: string,
-  maxChars = 4000,
-): string {
+export function truncateOutput(output: string, maxChars = 4000): string {
   if (output.length <= maxChars) return output;
   const half = Math.floor(maxChars / 2);
   return (

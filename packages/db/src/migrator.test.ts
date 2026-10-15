@@ -9,7 +9,7 @@ function e(tag: string, when: number, hash: string): JournalEntryWithHash {
 }
 
 function actions(plan: MigrationPlan[]) {
-  return plan.map(p => `${p.tag}:${p.action}`);
+  return plan.map((p) => `${p.tag}:${p.action}`);
 }
 
 /** Real prod ledger watermark on 2026-08-17 (0081's `when`). */
@@ -38,7 +38,7 @@ describe("planMigrations", () => {
   it("applies all entries on a fresh DB", () => {
     const plan = planMigrations(
       [e("0001_a", 1000, "h1"), e("0002_b", 2000, "h2"), e("0003_c", 3000, "h3")],
-      new Set()
+      new Set(),
     );
     expect(actions(plan)).toEqual(["0001_a:apply", "0002_b:apply", "0003_c:apply"]);
   });
@@ -52,7 +52,7 @@ describe("planMigrations", () => {
   it("preserves journal order in the output plan", () => {
     const entries = [e("0003_c", 3000, "h3"), e("0001_a", 1000, "h1"), e("0002_b", 2000, "h2")];
     const plan = planMigrations(entries, new Set());
-    expect(plan.map(p => p.tag)).toEqual(["0003_c", "0001_a", "0002_b"]);
+    expect(plan.map((p) => p.tag)).toEqual(["0003_c", "0001_a", "0002_b"]);
   });
 
   // ── The regression this whole PR exists to prevent ─────────────────────────
@@ -63,7 +63,7 @@ describe("planMigrations", () => {
     // claims it did. It must EXECUTE.
     const plan = planMigrations(
       [e("0079_stale_branch", PROD_WATERMARK - 5_000_000, "hash_stale")],
-      new Set()
+      new Set(),
     );
     expect(plan[0].action).toBe("apply");
   });
@@ -77,7 +77,7 @@ describe("planMigrations", () => {
   it("applies a new migration even when the ledger contains far newer rows", () => {
     const plan = planMigrations(
       [e("0092_late_merge", PROD_WATERMARK - 1, "hash_late")],
-      new Set(["some_much_newer_hash"])
+      new Set(["some_much_newer_hash"]),
     );
     expect(plan[0].action).toBe("apply");
   });
@@ -92,7 +92,7 @@ describe("planMigrations", () => {
         e("0074_dashboard_chat_runs_user_message", 1781080113835, HASH_0074),
         e("0093_genuinely_new", 1771000000000, "hash_not_in_legacy_set"),
       ],
-      new Set()
+      new Set(),
     );
     expect(actions(plan)).toEqual([
       "0017_amused_kree:backfill",
@@ -112,7 +112,7 @@ describe("planMigrations", () => {
   it("prefers skip over backfill once the legacy row exists (idempotent second deploy)", () => {
     const plan = planMigrations(
       [e("0025_feedback_table", 1772600000000, HASH_0025)],
-      new Set([HASH_0025])
+      new Set([HASH_0025]),
     );
     expect(plan[0].action).toBe("skip");
   });
@@ -132,7 +132,7 @@ describe("planMigrations", () => {
         e("0025_feedback_table", 1772600000000, HASH_0025),
         e("0094_new", PROD_WATERMARK + 1000, "h_new"),
       ],
-      new Set(["h_done"])
+      new Set(["h_done"]),
     );
     expect(actions(plan)).toEqual([
       "0001_done:skip",
@@ -142,11 +142,7 @@ describe("planMigrations", () => {
   });
 
   it("accepts an injected legacy set for testing without touching the prod list", () => {
-    const plan = planMigrations(
-      [e("0095_x", 500, "h_x")],
-      new Set(),
-      new Set(["h_x"])
-    );
+    const plan = planMigrations([e("0095_x", 500, "h_x")], new Set(), new Set(["h_x"]));
     expect(plan[0].action).toBe("backfill");
   });
 });

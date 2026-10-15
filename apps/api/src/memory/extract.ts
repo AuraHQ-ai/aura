@@ -5,10 +5,17 @@ import { getFastModel, withAnthropicFallback, type WrappableModel } from "../lib
 import { aiTelemetry, withTraceSpan } from "../lib/langfuse.js";
 import { embedText, embedTexts } from "../lib/embeddings.js";
 import {
-  storeMemories, supersedeMemory, toDbChannelType, checkDuplicates,
-  fetchThreadMessages, updateMemoryContent, archiveMemory,
-  findContradictionCandidates, canSupersede,
-  disputeMemory, findAssistantClaimMatches,
+  storeMemories,
+  supersedeMemory,
+  toDbChannelType,
+  checkDuplicates,
+  fetchThreadMessages,
+  updateMemoryContent,
+  archiveMemory,
+  findContradictionCandidates,
+  canSupersede,
+  disputeMemory,
+  findAssistantClaimMatches,
 } from "./store.js";
 import {
   CORRECTION_CONFIDENCE,
@@ -19,10 +26,7 @@ import { retrieveMemories } from "./retrieve.js";
 import { resolveEntities, linkMemoryEntities } from "./entity-resolution.js";
 import { logger } from "../lib/logger.js";
 import { getUserList } from "../tools/slack.js";
-import {
-  extractedEntitySchema,
-  ENTITY_EXTRACTION_RULES,
-} from "./entity-extraction-schema.js";
+import { extractedEntitySchema, ENTITY_EXTRACTION_RULES } from "./entity-extraction-schema.js";
 import { importanceToRelevance, IMPORTANCE_DISCARD_THRESHOLD } from "./importance.js";
 import { db } from "../db/client.js";
 import { users, memoryEntities } from "@aura/db/schema";
@@ -52,7 +56,10 @@ const INJECTED_BLOCK_RE = new RegExp(
  * from assistant messages before extraction to prevent echo loops.
  */
 function stripInjectedContext(text: string): string {
-  return text.replace(INJECTED_BLOCK_RE, "").replace(/\n{3,}/g, "\n\n").trim();
+  return text
+    .replace(INJECTED_BLOCK_RE, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 const MIN_STRIPPED_LENGTH = 50;
@@ -83,7 +90,7 @@ const MAX_TURN_CHARS = 6000;
 const TOOL_STATUS_RE = /^\[([^\]]+)\]\s*\((OK|ERROR)\)/;
 
 function capTurn(text: string): string {
-  return text.length > MAX_TURN_CHARS ? text.slice(0, MAX_TURN_CHARS) + "..." : text;
+  return text.length > MAX_TURN_CHARS ? `${text.slice(0, MAX_TURN_CHARS)}...` : text;
 }
 
 /**
@@ -135,9 +142,10 @@ function buildThreadContext(
  * Format existing memories as a numbered reference list for the LLM.
  * Returns the formatted string and a map of ref IDs (M1, M2...) to real DB IDs.
  */
-function formatExistingMemories(
-  existingMemories: Memory[],
-): { formatted: string; refToId: Map<string, string> } {
+function formatExistingMemories(existingMemories: Memory[]): {
+  formatted: string;
+  refToId: Map<string, string>;
+} {
   const refToId = new Map<string, string>();
   if (existingMemories.length === 0) {
     return { formatted: "No existing memories found for this context.", refToId };
@@ -209,7 +217,10 @@ async function buildUserLookupInner(): Promise<Map<string, string>> {
         const first = raw.split(/\s+/)[0]?.toLowerCase().trim();
         if (!first) continue;
         let ids = firstNameUsers.get(first);
-        if (!ids) { ids = new Set(); firstNameUsers.set(first, ids); }
+        if (!ids) {
+          ids = new Set();
+          firstNameUsers.set(first, ids);
+        }
         ids.add(u.id);
       }
     }
@@ -252,9 +263,12 @@ async function normalizeUserReferences(
       const mention = ref.match(/^<@([UW][A-Z0-9]+)>$/);
       if (mention) return mention[1];
       const lower = ref.toLowerCase().trim().replace(/^@/, "");
-      return (directory[lower] ??
-      directory[lower.replace(/_/g, " ")] ??
-      directory[lower.replace(/\s+/g, "_")] ?? ref);
+      return (
+        directory[lower] ??
+        directory[lower.replace(/_/g, " ")] ??
+        directory[lower.replace(/\s+/g, "_")] ??
+        ref
+      );
     });
   }
 
@@ -303,21 +317,25 @@ const extractedMemoriesSchema = z.object({
         .describe("A concise statement of the memory, e.g. 'Joan prefers bullet points'"),
       type: z
         .enum(["fact", "decision", "preference", "event", "open_thread"])
-        .describe("fact: durable info about people/org/world (subsumes personal, relationships). decision: explicit choices with participants. preference: how someone wants things done. event: durable incident/outcome that happened at a specific time. open_thread: durable unresolved work/pending question, not current-thread activity."),
+        .describe(
+          "fact: durable info about people/org/world (subsumes personal, relationships). decision: explicit choices with participants. preference: how someone wants things done. event: durable incident/outcome that happened at a specific time. open_thread: durable unresolved work/pending question, not current-thread activity.",
+        ),
       category: z
         .enum(["semantic", "episodic", "procedural"])
-        .describe("semantic: durable facts/preferences/relationships. episodic: time-bound events/conversations/incidents. procedural: how-to knowledge/workflows.")
+        .describe(
+          "semantic: durable facts/preferences/relationships. episodic: time-bound events/conversations/incidents. procedural: how-to knowledge/workflows.",
+        )
         .default("semantic"),
       importance: z
         .number()
         .int()
         .min(1)
         .max(100)
-        .describe("How important is this memory to recall months from now? 1-100. 90-100: business decisions, org changes, key relationships. 70-89: product discussions, bugs with impact, personal facts. 40-69: status updates with substance, meeting notes. 20-39: routine coordination, minor updates. 1-19: operational noise, 'ok thanks', Aura's self-narration (the act of running a query). A grounded RESULT Aura surfaced is a real fact, scored on its own merits.")
+        .describe(
+          "How important is this memory to recall months from now? 1-100. 90-100: business decisions, org changes, key relationships. 70-89: product discussions, bugs with impact, personal facts. 40-69: status updates with substance, meeting notes. 20-39: routine coordination, minor updates. 1-19: operational noise, 'ok thanks', Aura's self-narration (the act of running a query). A grounded RESULT Aura surfaced is a real fact, scored on its own merits.",
+        )
         .default(50),
-      relatedUserIds: z
-        .array(z.string())
-        .describe("Slack user IDs this memory is about"),
+      relatedUserIds: z.array(z.string()).describe("Slack user IDs this memory is about"),
       shareable: z
         .boolean()
         .describe(
@@ -483,11 +501,13 @@ const deleteOperationSchema = z.object({
 });
 
 const reconciliationSchema = z.object({
-  operations: z.array(z.discriminatedUnion("action", [
-    createOperationSchema,
-    updateOperationSchema,
-    deleteOperationSchema,
-  ])),
+  operations: z.array(
+    z.discriminatedUnion("action", [
+      createOperationSchema,
+      updateOperationSchema,
+      deleteOperationSchema,
+    ]),
+  ),
 });
 
 const RECONCILIATION_PROMPT = `You are a memory reconciliation system. You analyze conversation threads and existing memories to produce precise operations: create new, update existing, or delete outdated memories.
@@ -635,14 +655,9 @@ export interface ExtractionContext {
  * a caller wants to pin a specific model; otherwise uses the catalog-resolved
  * fast model. Anthropic fallback middleware is applied either way.
  */
-async function resolveExtractionModel(
-  context: ExtractionContext,
-): Promise<WrappableModel> {
+async function resolveExtractionModel(context: ExtractionContext): Promise<WrappableModel> {
   if (context.extractionModelId) {
-    return withAnthropicFallback(
-      gateway(context.extractionModelId),
-      context.extractionModelId,
-    );
+    return withAnthropicFallback(gateway(context.extractionModelId), context.extractionModelId);
   }
   return getFastModel();
 }
@@ -660,9 +675,7 @@ type ExtractionSourceRole = "user" | "assistant" | "tool";
 
 export async function extractMemories(context: ExtractionContext): Promise<void> {
   const start = Date.now();
-  const workspaceId = context.workspaceId
-    || process.env.DEFAULT_WORKSPACE_ID
-    || "default";
+  const workspaceId = context.workspaceId || process.env.DEFAULT_WORKSPACE_ID || "default";
   const extractionSourceRole: ExtractionSourceRole = context.triggerRole ?? "user";
 
   try {
@@ -712,9 +725,7 @@ export async function extractMemoriesFromTranscript(
   context: ExtractionContext,
 ): Promise<void> {
   const start = Date.now();
-  const workspaceId = context.workspaceId
-    || process.env.DEFAULT_WORKSPACE_ID
-    || "default";
+  const workspaceId = context.workspaceId || process.env.DEFAULT_WORKSPACE_ID || "default";
   const extractionSourceRole: ExtractionSourceRole = context.triggerRole ?? "user";
 
   if (!context.channelId || !context.threadTs) {
@@ -776,11 +787,18 @@ async function extractWithReconciliation(
       limit: 20,
       workspaceId,
       adminMode: true,
-    }).then((mems) => { existingMemories = mems; }).catch((err) => {
-      logger.warn("Memory retrieval failed during reconciliation — proceeding with empty existing memories", {
-        error: String(err?.message ?? err).slice(0, 200),
-      });
-    }),
+    })
+      .then((mems) => {
+        existingMemories = mems;
+      })
+      .catch((err) => {
+        logger.warn(
+          "Memory retrieval failed during reconciliation — proceeding with empty existing memories",
+          {
+            error: String(err?.message ?? err).slice(0, 200),
+          },
+        );
+      }),
   ]);
 
   if (threadMessages.length === 0) {
@@ -820,9 +838,12 @@ async function extractWithReconciliationFromTranscript(
       adminMode: true,
     });
   } catch (err) {
-    logger.warn("Memory retrieval failed during transcript reconciliation — proceeding with empty existing memories", {
-      error: String((err as any)?.message ?? err).slice(0, 200),
-    });
+    logger.warn(
+      "Memory retrieval failed during transcript reconciliation — proceeding with empty existing memories",
+      {
+        error: String((err as any)?.message ?? err).slice(0, 200),
+      },
+    );
   }
 
   return runReconciliationCore(
@@ -870,7 +891,10 @@ async function runReconciliationCore(
   const threadContext = buildThreadContext(threadMessages, displayNames);
   const { formatted: existingMemoriesText, refToId } = formatExistingMemories(existingMemories);
 
-  const systemPrompt = RECONCILIATION_PROMPT.replace("{existingMemories}", () => existingMemoriesText);
+  const systemPrompt = RECONCILIATION_PROMPT.replace(
+    "{existingMemories}",
+    () => existingMemoriesText,
+  );
 
   const model = await resolveExtractionModel(context);
 
@@ -881,19 +905,22 @@ async function runReconciliationCore(
     prompt: threadContext,
     telemetry: aiTelemetry("memory-reconcile"),
   });
-  context.onUsage?.(
-    context.extractionModelId ?? (model as any)?.modelId ?? "extraction",
-    usage,
-  );
+  context.onUsage?.(context.extractionModelId ?? (model as any)?.modelId ?? "extraction", usage);
 
   if (!result || result.operations.length === 0) {
     logger.debug("No memory operations from reconciliation");
     return;
   }
 
-  const creates = result.operations.filter((op): op is z.infer<typeof createOperationSchema> => op.action === "create");
-  const updates = result.operations.filter((op): op is z.infer<typeof updateOperationSchema> => op.action === "update");
-  const deletes = result.operations.filter((op): op is z.infer<typeof deleteOperationSchema> => op.action === "delete");
+  const creates = result.operations.filter(
+    (op): op is z.infer<typeof createOperationSchema> => op.action === "create",
+  );
+  const updates = result.operations.filter(
+    (op): op is z.infer<typeof updateOperationSchema> => op.action === "update",
+  );
+  const deletes = result.operations.filter(
+    (op): op is z.infer<typeof deleteOperationSchema> => op.action === "delete",
+  );
 
   logger.info("Memory reconciliation operations", {
     creates: creates.length,
@@ -934,7 +961,13 @@ async function runReconciliationCore(
       logger.warn("Failed to embed updated memory content", { ref: upd.memoryRef });
     }
     try {
-      await updateMemoryContent(memoryId, upd.content, embedding, upd.importance ?? undefined, context.createdAt);
+      await updateMemoryContent(
+        memoryId,
+        upd.content,
+        embedding,
+        upd.importance ?? undefined,
+        context.createdAt,
+      );
     } catch {
       logger.warn("Skipping entity link refresh because content update failed", {
         memoryId,
@@ -962,18 +995,32 @@ async function runReconciliationCore(
 
   // Process CREATE operations (same pipeline as single-exchange: importance filter, embed, dedup, store)
   if (creates.length > 0) {
-    await processCreateOperations(creates, context, workspaceId, extractionSourceRole, model, start, "reconciliation");
+    await processCreateOperations(
+      creates,
+      context,
+      workspaceId,
+      extractionSourceRole,
+      model,
+      start,
+      "reconciliation",
+    );
   }
 }
 
 // ── Contradiction Detection ──────────────────────────────────────────────────
 
 const contradictionResultSchema = z.object({
-  results: z.array(z.object({
-    candidateIndex: z.number().int().describe("0-based index of the candidate memory"),
-    contradicts: z.boolean().describe("True only if the candidate makes a claim that directly conflicts with the new memory about the same entity/topic"),
-    reason: z.string().describe("Brief explanation of why this is or is not a contradiction"),
-  })),
+  results: z.array(
+    z.object({
+      candidateIndex: z.number().int().describe("0-based index of the candidate memory"),
+      contradicts: z
+        .boolean()
+        .describe(
+          "True only if the candidate makes a claim that directly conflicts with the new memory about the same entity/topic",
+        ),
+      reason: z.string().describe("Brief explanation of why this is or is not a contradiction"),
+    }),
+  ),
 });
 
 const CONTRADICTION_PROMPT = `You are a memory contradiction detector. Given a NEW memory and a list of EXISTING candidate memories, determine if any existing memory **directly contradicts** the new one.
@@ -1028,9 +1075,7 @@ async function detectContradictions(
     if (candidates.length === 0) continue;
 
     try {
-      const candidateList = candidates
-        .map((c, i) => `[${i}] ${c.content}`)
-        .join("\n");
+      const candidateList = candidates.map((c, i) => `[${i}] ${c.content}`).join("\n");
 
       const { output: object, usage } = await generateText({
         model,
@@ -1054,13 +1099,16 @@ async function detectContradictions(
         // Both memories coexist; retrieval ranking (confidence-weighted)
         // arbitrates which one surfaces.
         if (!canSupersede(newMem.sourceRole, candidate.sourceRole)) {
-          logger.info("Contradiction detected but new memory is lower authority — keeping both (no supersede)", {
-            oldId: candidate.id,
-            newId: newMem.id,
-            newRole: newMem.sourceRole,
-            oldRole: candidate.sourceRole,
-            reason: result.reason,
-          });
+          logger.info(
+            "Contradiction detected but new memory is lower authority — keeping both (no supersede)",
+            {
+              oldId: candidate.id,
+              newId: newMem.id,
+              newRole: newMem.sourceRole,
+              oldRole: candidate.sourceRole,
+              reason: result.reason,
+            },
+          );
           continue;
         }
 
@@ -1153,9 +1201,7 @@ async function processCreateOperations(
     workspaceId,
   );
 
-  const survivingIndices = dedupResults
-    .map((r, i) => (r.dominated ? -1 : i))
-    .filter((i) => i >= 0);
+  const survivingIndices = dedupResults.map((r, i) => (r.dominated ? -1 : i)).filter((i) => i >= 0);
 
   if (survivingIndices.length === 0) {
     logger.debug(`All new memories from ${source} were duplicates`);
@@ -1178,38 +1224,36 @@ async function processCreateOperations(
     // never overwrites a user fact — preventing self-reinforcing delusion
     // loops. undefined keeps the column default (0.8).
     const memorySourceRole = sourceRoles[i];
-    const confidence = memorySourceRole === "assistant"
-      ? 0.6
-      : correctionSignal
-        ? CORRECTION_CONFIDENCE
-        : undefined;
+    const confidence =
+      memorySourceRole === "assistant" ? 0.6 : correctionSignal ? CORRECTION_CONFIDENCE : undefined;
     return {
-    content: normalizedMemories[i].content,
-    type: normalizedMemories[i].type,
-    category: normalizedMemories[i].category,
-    workspaceId,
-    sourceMessageId: context.sourceMessageId || undefined,
-    sourceChannelType: toDbChannelType(context.channelType),
-    sourceThreadTs: context.threadTs || undefined,
-    sourceChannelId: context.channelId || undefined,
-    relatedUserIds: normalizedMemories[i].relatedUserIds.length > 0
-      ? normalizedMemories[i].relatedUserIds
-      : [context.userId],
-    embedding: embeddings[i] ?? null,
-    shareable: normalizedMemories[i].shareable ? 1 : 0,
-    importance: normalizedMemories[i].importance,
-    relevanceScore: importanceToRelevance(normalizedMemories[i].importance),
-    extractionSourceRole: memorySourceRole,
-    ...(confidence !== undefined && { confidence }),
-    // Bench replay stamps corpus time on the full temporal triplet so as-of
-    // retrieval can place the memory on the replayed timeline. validFrom is what
-    // the `valid_from <= asOf` filter keys on; without it storeMemories would
-    // default valid_from to wall-clock now and every memory would look "future".
-    ...(context.createdAt && {
-      createdAt: context.createdAt,
-      updatedAt: context.createdAt,
-      validFrom: context.createdAt,
-    }),
+      content: normalizedMemories[i].content,
+      type: normalizedMemories[i].type,
+      category: normalizedMemories[i].category,
+      workspaceId,
+      sourceMessageId: context.sourceMessageId || undefined,
+      sourceChannelType: toDbChannelType(context.channelType),
+      sourceThreadTs: context.threadTs || undefined,
+      sourceChannelId: context.channelId || undefined,
+      relatedUserIds:
+        normalizedMemories[i].relatedUserIds.length > 0
+          ? normalizedMemories[i].relatedUserIds
+          : [context.userId],
+      embedding: embeddings[i] ?? null,
+      shareable: normalizedMemories[i].shareable ? 1 : 0,
+      importance: normalizedMemories[i].importance,
+      relevanceScore: importanceToRelevance(normalizedMemories[i].importance),
+      extractionSourceRole: memorySourceRole,
+      ...(confidence !== undefined && { confidence }),
+      // Bench replay stamps corpus time on the full temporal triplet so as-of
+      // retrieval can place the memory on the replayed timeline. validFrom is what
+      // the `valid_from <= asOf` filter keys on; without it storeMemories would
+      // default valid_from to wall-clock now and every memory would look "future".
+      ...(context.createdAt && {
+        createdAt: context.createdAt,
+        updatedAt: context.createdAt,
+        validFrom: context.createdAt,
+      }),
     };
   });
 
@@ -1308,9 +1352,12 @@ async function processCreateOperations(
     }
   }
 
-  logger.info(`${source === "reconciliation" ? "Reconciliation" : "Single-exchange extraction"} created ${newMemories.length} memories in ${Date.now() - start}ms`, {
-    types: newMemories.map((m) => m.type),
-  });
+  logger.info(
+    `${source === "reconciliation" ? "Reconciliation" : "Single-exchange extraction"} created ${newMemories.length} memories in ${Date.now() - start}ms`,
+    {
+      types: newMemories.map((m) => m.type),
+    },
+  );
 }
 
 // ── Single-Exchange Fallback Path ────────────────────────────────────────────
@@ -1337,10 +1384,7 @@ async function extractSingleExchange(
     prompt: conversationText,
     telemetry: aiTelemetry("memory-extract"),
   });
-  context.onUsage?.(
-    context.extractionModelId ?? (model as any)?.modelId ?? "extraction",
-    usage,
-  );
+  context.onUsage?.(context.extractionModelId ?? (model as any)?.modelId ?? "extraction", usage);
 
   if (!object || object.memories.length === 0) {
     logger.debug("No memories extracted from exchange");
@@ -1356,7 +1400,9 @@ async function extractSingleExchange(
 
   const discardedCount = object.memories.length - creates.length;
   if (discardedCount > 0) {
-    logger.info(`Filtered out ${discardedCount} low-importance memories (below ${IMPORTANCE_DISCARD_THRESHOLD})`);
+    logger.info(
+      `Filtered out ${discardedCount} low-importance memories (below ${IMPORTANCE_DISCARD_THRESHOLD})`,
+    );
   }
 
   if (creates.length === 0) {
@@ -1364,5 +1410,13 @@ async function extractSingleExchange(
     return;
   }
 
-  await processCreateOperations(creates, context, workspaceId, extractionSourceRole, model, start, "single-exchange");
+  await processCreateOperations(
+    creates,
+    context,
+    workspaceId,
+    extractionSourceRole,
+    model,
+    start,
+    "single-exchange",
+  );
 }

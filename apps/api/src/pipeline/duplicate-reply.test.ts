@@ -107,10 +107,7 @@ describe("isSubstantialDuplicate (issue #1343)", () => {
 
   it("detects a final text fully contained in the posted message", () => {
     expect(
-      isSubstantialDuplicate(
-        "the ranking rule only counts agencies with 3+ listings",
-        [posted],
-      ),
+      isSubstantialDuplicate("the ranking rule only counts agencies with 3+ listings", [posted]),
     ).toBe(true);
   });
 
@@ -125,9 +122,9 @@ describe("isSubstantialDuplicate (issue #1343)", () => {
   });
 
   it("does not flag a short status note that shares few words with the post", () => {
-    expect(
-      isSubstantialDuplicate("Done — let me know if anything looks off.", [posted]),
-    ).toBe(false);
+    expect(isSubstantialDuplicate("Done — let me know if anything looks off.", [posted])).toBe(
+      false,
+    );
   });
 
   it("handles empty inputs safely", () => {
@@ -137,7 +134,8 @@ describe("isSubstantialDuplicate (issue #1343)", () => {
   });
 
   it("normalizes Slack entities and mrkdwn before comparing", () => {
-    expect(normalizeForDuplicateComparison("*Hello* <@U123> — check <https://x.dev|the docs>!"))
-      .toBe("hello check the docs");
+    expect(
+      normalizeForDuplicateComparison("*Hello* <@U123> — check <https://x.dev|the docs>!"),
+    ).toBe("hello check the docs");
   });
 });

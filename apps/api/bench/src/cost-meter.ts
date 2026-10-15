@@ -67,9 +67,7 @@ export function createCostMeter(pricingWorkspaceId = "default"): CostMeter {
 
   return {
     async record(stage, modelId, usage) {
-      const t =
-        usage.totalTokens ??
-        (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
+      const t = usage.totalTokens ?? (usage.inputTokens ?? 0) + (usage.outputTokens ?? 0);
       tokens += t;
       byStage[stage].tokens += t;
       byStage[stage].calls += 1;

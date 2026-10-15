@@ -71,18 +71,13 @@ async function listMarkdownFiles(dir: string): Promise<string[]> {
     entries.map(async (entry) => {
       const fullPath = path.join(dir, entry.name);
       if (entry.isDirectory()) return listMarkdownFiles(fullPath);
-      return fullPath.endsWith(".mdx") || fullPath.endsWith(".md")
-        ? [fullPath]
-        : [];
+      return fullPath.endsWith(".mdx") || fullPath.endsWith(".md") ? [fullPath] : [];
     }),
   );
   return files.flat();
 }
 
-async function readRecordsForType(
-  type: ContentType,
-  dir: string,
-): Promise<ContentRecord[]> {
+async function readRecordsForType(type: ContentType, dir: string): Promise<ContentRecord[]> {
   const files = await listMarkdownFiles(dir);
   const records = await Promise.all(
     files.map(async (absolutePath) => {
@@ -139,18 +134,12 @@ async function maybeGenerateEmbeddings(
     const { embedTexts } = await import("../src/lib/embeddings.js");
     return await embedTexts(records.map((r) => r.embeddingText));
   } catch (error) {
-    console.warn(
-      "Embedding generation failed, continuing without embeddings:",
-      String(error),
-    );
+    console.warn("Embedding generation failed, continuing without embeddings:", String(error));
     return records.map(() => null);
   }
 }
 
-async function upsertRecords(
-  records: ContentRecord[],
-  embeddings: Array<number[] | null>,
-) {
+async function upsertRecords(records: ContentRecord[], embeddings: Array<number[] | null>) {
   const [{ db }, { content }] = await Promise.all([
     import("../src/db/client.js"),
     import("../src/db/schema.js"),

@@ -96,9 +96,7 @@ export async function evaluateQA(
   const memoryBlock = formatMemoriesForPrompt(retrieved, referenceNow);
   const nowLine = `Current date: ${referenceNow.toISOString().slice(0, 10)}`;
   const conversationBlock = formatConversations(config.conversations ?? []);
-  const conversationSection = conversationBlock
-    ? `\n\n${conversationBlock}`
-    : "";
+  const conversationSection = conversationBlock ? `\n\n${conversationBlock}` : "";
   const userPrompt = `${nowLine}\n\nMemories:\n${memoryBlock || "(no memories available)"}${conversationSection}\n\nQuestion: ${benchCase.question}\n\nAnswer:`;
 
   // Context-efficiency signal (mem0 reports quality-per-token). We measure the

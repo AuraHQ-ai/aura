@@ -1,20 +1,13 @@
 import { eq, and, isNull } from "drizzle-orm";
 import { db } from "../db/client.js";
-import {
-  users,
-  addresses,
-  type User,
-} from "@aura/db/schema";
+import { users, addresses, type User } from "@aura/db/schema";
 import { logger } from "./logger.js";
 import { ensureSlackUserEntityLink } from "../users/entity-link.js";
 
 /**
  * Find a user by any address (email, phone, slack ID).
  */
-export async function resolvePersonByAddress(
-  channel: string,
-  value: string,
-): Promise<User | null> {
+export async function resolvePersonByAddress(channel: string, value: string): Promise<User | null> {
   const normalised = normaliseValue(channel, value);
   const rows = await db
     .select({ user: users })
@@ -91,18 +84,22 @@ export async function createPersonWithAddress(
             .set({ userId: adoptedUser.id })
             .where(eq(addresses.id, orphaned[0].id));
         } catch (linkError) {
-          await db.delete(users).where(eq(users.id, adoptedUser.id)).catch(() => {});
+          await db
+            .delete(users)
+            .where(eq(users.id, adoptedUser.id))
+            .catch(() => {});
           throw linkError;
         }
         return adoptedUser;
       }
 
-      throw new Error(
-        `Address conflict but could not resolve user for ${channel}:${value}`,
-      );
+      throw new Error(`Address conflict but could not resolve user for ${channel}:${value}`);
     }
   } catch (error) {
-    await db.delete(users).where(eq(users.id, user.id)).catch(() => {});
+    await db
+      .delete(users)
+      .where(eq(users.id, user.id))
+      .catch(() => {});
     throw error;
   }
 

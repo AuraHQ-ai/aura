@@ -23,23 +23,23 @@ export function createCursorAgentTools(context?: ScheduleContext) {
         "The agent runs in the background (3-30 min), creates a branch, makes changes, opens a PR, and results arrive via webhook DM. " +
         "Returns immediately with the agent ID — don't wait for it or poll in a loop. Save the agent ID in your reply so you can reference it later. Admin-only.",
       inputSchema: z.object({
+        label: z
+          .string()
+          .max(60)
+          .describe(
+            'Human-readable intent for what THIS agent will do, shown on the Slack tool card. Verb-first, no trailing period, never generic. Examples: "fixing stream-age-split bug in respond.ts", "adding snooze to job reminder DMs", "paginating Slack history over 1000 messages", "wiring cursor webhook retries"',
+          ),
         issue_description: z
           .string()
-          .describe(
-            "Detailed description of the issue or task for the agent to work on",
-          ),
+          .describe("Detailed description of the issue or task for the agent to work on"),
         branch_prefix: z
           .string()
           .default("cursor")
-          .describe(
-            "Branch name prefix. The agent creates a branch like cursor/{slug}",
-          ),
+          .describe("Branch name prefix. The agent creates a branch like cursor/{slug}"),
         ref: z
           .string()
           .optional()
-          .describe(
-            "Git ref (branch/tag/SHA) to base work on. Defaults to main",
-          ),
+          .describe("Git ref (branch/tag/SHA) to base work on. Defaults to main"),
         key_files: z
           .array(z.string())
           .optional()
@@ -57,8 +57,8 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           .optional()
           .describe(
             "Cursor model to use, e.g. 'claude-sonnet-4.5', 'gpt-5', 'composer-1.5'. " +
-            "Omit or leave empty to use Cursor's default auto-selection. " +
-            "Defaults to env CURSOR_DEFAULT_MODEL if set.",
+              "Omit or leave empty to use Cursor's default auto-selection. " +
+              "Defaults to env CURSOR_DEFAULT_MODEL if set.",
           ),
         issue: z
           .number()
@@ -67,13 +67,14 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           .optional()
           .describe(
             "GitHub issue number this dispatch implements. When set, the agent is instructed " +
-            "to start the PR body with 'Fixes #N' so the issue auto-closes on merge, and the " +
-            "issue number is recorded in the dispatch tracking note.",
+              "to start the PR body with 'Fixes #N' so the issue auto-closes on merge, and the " +
+              "issue number is recorded in the dispatch tracking note.",
           ),
       }),
       inputExamples: [
         {
           input: {
+            label: "paginating Slack history over 1000 messages",
             issue_description:
               "Fix the crash in apps/api/src/respond.ts when a Slack thread has more than 1000 messages: paginate the history fetch and add a regression test.",
             branch_prefix: "cursor",
@@ -82,21 +83,25 @@ export function createCursorAgentTools(context?: ScheduleContext) {
         },
         {
           input: {
+            label: "adding snooze to job reminder DMs",
             issue_description:
               "Add a 'snooze' action to job reminder DMs: new tool, DB column on jobs, and dashboard toggle.",
             branch_prefix: "cursor",
-            key_files: [
-              "apps/api/src/tools/jobs.ts",
-              "packages/db/src/schema.ts",
-            ],
+            key_files: ["apps/api/src/tools/jobs.ts", "packages/db/src/schema.ts"],
           },
         },
       ],
-      execute: async ({ issue_description, branch_prefix, ref, key_files, repository, model, issue }) => {
+      execute: async ({
+        issue_description,
+        branch_prefix,
+        ref,
+        key_files,
+        repository,
+        model,
+        issue,
+      }) => {
         try {
-          const { launchCursorAgent } = await import(
-            "../lib/cursor-agent.js"
-          );
+          const { launchCursorAgent } = await import("../lib/cursor-agent.js");
 
           const defaultRepo = await getConfig("default_github_repo", "AuraHQ-ai/aura");
           const repo = repository || defaultRepo;
@@ -151,8 +156,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
 
           // Explicit model wins, then env default; otherwise omit → Cursor auto.
           const resolvedModel =
-            (model && model.trim()) ||
-            (process.env.CURSOR_DEFAULT_MODEL?.trim() || undefined);
+            (model && model.trim()) || process.env.CURSOR_DEFAULT_MODEL?.trim() || undefined;
 
           const result = await launchCursorAgent({
             prompt,
@@ -209,11 +213,10 @@ export function createCursorAgentTools(context?: ScheduleContext) {
 
           return {
             ok: true,
+            id: result.id,
             agent_id: result.id,
             branch: branchName,
-            dashboard_url:
-              result.dashboardUrl ||
-              `https://cursor.com/agents/${result.id}`,
+            dashboard_url: result.dashboardUrl || `https://cursor.com/agents/${result.id}`,
             message: `Cursor agent dispatched (${result.id}). Working on branch \`${branchName}\`. Results will arrive via DM when done.`,
           };
         } catch (error: any) {
@@ -229,7 +232,8 @@ export function createCursorAgentTools(context?: ScheduleContext) {
       slack: {
         status: "Dispatching Cursor agent...",
         detail: (i) => i.issue_description?.slice(0, 60),
-        output: (r) => r.ok === false ? r.error : `Agent ${r.agent_id?.slice(0, 12)}… on \`${r.branch}\``,
+        output: (r) =>
+          r.ok === false ? r.error : `Agent ${r.agent_id?.slice(0, 12)}… on \`${r.branch}\``,
       },
     }),
 
@@ -239,15 +243,11 @@ export function createCursorAgentTools(context?: ScheduleContext) {
         "Check the status of a previously dispatched Cursor Cloud Agent. " +
         "Returns the current status, PR URL (if finished), and summary. Use when someone asks for a status update on a dispatched agent.",
       inputSchema: z.object({
-        agent_id: z
-          .string()
-          .describe("The agent ID returned by dispatch_cursor_agent"),
+        agent_id: z.string().describe("The agent ID returned by dispatch_cursor_agent"),
       }),
       execute: async ({ agent_id }) => {
         try {
-          const { getCursorAgentStatus } = await import(
-            "../lib/cursor-agent.js"
-          );
+          const { getCursorAgentStatus } = await import("../lib/cursor-agent.js");
 
           const status = await getCursorAgentStatus(agent_id);
 
@@ -280,7 +280,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
       slack: {
         status: "Checking agent status...",
         detail: (i) => i.agent_id,
-        output: (r) => r.ok === false ? r.error : `${r.status}${r.pr_url ? ' — PR ready' : ''}`,
+        output: (r) => (r.ok === false ? r.error : `${r.status}${r.pr_url ? " — PR ready" : ""}`),
       },
     }),
 
@@ -291,17 +291,19 @@ export function createCursorAgentTools(context?: ScheduleContext) {
         "Use this instead of dispatching a new agent when iterating on the same task.",
       inputSchema: z.object({
         agent_id: z.string().describe("The agent ID to follow up on"),
-        prompt: z
-          .string()
-          .describe("Follow-up instructions for the agent"),
+        prompt: z.string().describe("Follow-up instructions for the agent"),
       }),
       execute: async ({ agent_id, prompt }) => {
         try {
-          const { followupCursorAgent } = await import(
-            "../lib/cursor-agent.js"
-          );
+          const { followupCursorAgent } = await import("../lib/cursor-agent.js");
 
           const result = await followupCursorAgent(agent_id, prompt);
+
+          // The follow-up run will emit its own terminal event. Clear the
+          // dedup locks from the previous run so that notification is not
+          // suppressed as a duplicate. See issue #1408.
+          const { releaseCursorWebhookLocks } = await import("../lib/cursor-webhook-dedup.js");
+          await releaseCursorWebhookLocks(agent_id);
 
           const followupNote = [
             `\n\n## Follow-up (${new Date().toISOString()})`,
@@ -316,9 +318,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
             .limit(1);
 
           if (trackingRows[0]?.content) {
-            const sevenDays = new Date(
-              Date.now() + 7 * 24 * 60 * 60 * 1000,
-            );
+            const sevenDays = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
             await db
               .insert(notes)
               .values({
@@ -360,7 +360,10 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           };
         }
       },
-      slack: { status: "Following up on agent...", output: (r) => r.ok === false ? r.error : 'Follow-up sent' },
+      slack: {
+        status: "Following up on agent...",
+        output: (r) => (r.ok === false ? r.error : "Follow-up sent"),
+      },
     }),
 
     get_cursor_conversation: defineTool({
@@ -372,9 +375,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
       }),
       execute: async ({ agent_id }) => {
         try {
-          const { getCursorConversation } = await import(
-            "../lib/cursor-agent.js"
-          );
+          const { getCursorConversation } = await import("../lib/cursor-agent.js");
 
           const conversation = await getCursorConversation(agent_id);
 
@@ -394,7 +395,10 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           };
         }
       },
-      slack: { status: "Reading agent conversation...", output: (r) => r.ok === false ? r.error : 'Conversation loaded' },
+      slack: {
+        status: "Reading agent conversation...",
+        output: (r) => (r.ok === false ? r.error : "Conversation loaded"),
+      },
     }),
 
     stop_cursor_agent: defineTool({
@@ -405,9 +409,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
       }),
       execute: async ({ agent_id }) => {
         try {
-          const { stopCursorAgent } = await import(
-            "../lib/cursor-agent.js"
-          );
+          const { stopCursorAgent } = await import("../lib/cursor-agent.js");
 
           const result = await stopCursorAgent(agent_id);
 
@@ -432,7 +434,7 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           };
         }
       },
-      slack: { status: "Stopping agent...", output: (r) => r.ok === false ? r.error : 'Stopped' },
+      slack: { status: "Stopping agent...", output: (r) => (r.ok === false ? r.error : "Stopped") },
     }),
 
     list_cursor_agents: defineTool({
@@ -440,16 +442,11 @@ export function createCursorAgentTools(context?: ScheduleContext) {
       description:
         "List Cursor agents. Optionally filter by PR URL to find agents that worked on a specific PR.",
       inputSchema: z.object({
-        pr_url: z
-          .string()
-          .optional()
-          .describe("Filter by PR URL"),
+        pr_url: z.string().optional().describe("Filter by PR URL"),
       }),
       execute: async ({ pr_url }) => {
         try {
-          const { listCursorAgents } = await import(
-            "../lib/cursor-agent.js"
-          );
+          const { listCursorAgents } = await import("../lib/cursor-agent.js");
 
           const agents = await listCursorAgents(pr_url);
 
@@ -468,7 +465,10 @@ export function createCursorAgentTools(context?: ScheduleContext) {
           };
         }
       },
-      slack: { status: "Listing agents...", output: (r) => r.ok === false ? r.error : `${r.agents?.length ?? 0} agents` },
+      slack: {
+        status: "Listing agents...",
+        output: (r) => (r.ok === false ? r.error : `${r.agents?.length ?? 0} agents`),
+      },
     }),
   };
 }

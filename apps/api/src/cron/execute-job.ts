@@ -52,11 +52,7 @@ class ScriptJobError extends Error {
   readonly scriptOutput: ScriptExecutionOutput | null;
   readonly hardFailure: boolean;
 
-  constructor(
-    message: string,
-    scriptOutput: ScriptExecutionOutput | null,
-    hardFailure = false,
-  ) {
+  constructor(message: string, scriptOutput: ScriptExecutionOutput | null, hardFailure = false) {
     super(message);
     this.name = "ScriptJobError";
     this.scriptOutput = scriptOutput;
@@ -131,6 +127,14 @@ You are resuming a multi-step task. Your accumulated progress and context are be
 export const SILENT_SUCCESS_CLAUSE =
   " However, if your playbook or task instructions say to stay silent on success, or this run produced no user-facing deliverable, post NOTHING — do not post status updates, receipts, or confirmations that the job ran." +
   " If your playbook says to stay silent on no-op/no-finding runs and this run has nothing to report: make ZERO Slack-posting tool calls (no send_channel_message, send_thread_reply, send_direct_message, draw_table, draw_chart, draw_cards, or upload_file to a channel) and output exactly `NO_OP` (optionally `NO_OP: <one-line reason>`) as your ENTIRE final message. Never post narration like 'Checked X, nothing new' — the `NO_OP` sentinel is how you report a quiet run.";
+
+/**
+ * Appended when a job has no channel_id so the model cannot invent a Slack
+ * destination (issue #1413). Internal maintenance jobs must not post to
+ * public channels; the work itself is the deliverable.
+ */
+export const NO_CHANNEL_CLAUSE =
+  " This job has no output channel. Make ZERO Slack-posting tool calls (no send_channel_message, send_thread_reply, send_direct_message, draw_table, draw_chart, draw_cards, or upload_file to a channel). The deliverable is the work itself (notes, DB writes, dispatches). If something genuinely urgent must reach a human, DM the job requester and nobody else — never a public channel. Otherwise output exactly `NO_OP` as your ENTIRE final message.";
 
 // ── NO_OP sentinel (hard silent-run contract, issue #1185) ──────────────────
 
@@ -327,9 +331,8 @@ export async function executeJob(
   // Issue #1393: every DB access in the run — claim, traces, tool queries,
   // persistence — is scoped to the job's workspace so RLS constrains it.
   // Jobs carry a NOT NULL workspace_id (default 'default' in Phase 0).
-  return withWorkspace(
-    job.workspaceId || process.env.DEFAULT_WORKSPACE_ID || "default",
-    () => executeJobScoped(job, trigger),
+  return withWorkspace(job.workspaceId || process.env.DEFAULT_WORKSPACE_ID || "default", () =>
+    executeJobScoped(job, trigger),
   );
 }
 
@@ -360,7 +363,10 @@ async function executeJobScoped(
       .returning({ id: jobs.id });
 
     if (claimed.length === 0) {
-      logger.info("executeJob: job already claimed or disabled, skipping", { jobId, jobName: job.name });
+      logger.info("executeJob: job already claimed or disabled, skipping", {
+        jobId,
+        jobName: job.name,
+      });
       return false;
     }
 
@@ -403,14 +409,9 @@ async function executeJobScoped(
     // owner (issue #1344). Credential resolution is deliberately scoped to
     // job.requestedBy; running anyway would silently drop the credential.
     if (credentialIds.length > 0) {
-      const missingCredentials = await findMissingJobCredentials(
-        credentialIds,
-        job.requestedBy,
-      );
+      const missingCredentials = await findMissingJobCredentials(credentialIds, job.requestedBy);
       if (missingCredentials.length > 0) {
-        const detail = missingCredentials
-          .map(describeMissingJobCredential)
-          .join("; ");
+        const detail = missingCredentials.map(describeMissingJobCredential).join("; ");
         const message =
           `Required credential(s) not available to job owner ${job.requestedBy}: ${detail}. ` +
           `Credential resolution is deliberately scoped to the job owner, so the run was ` +
@@ -438,9 +439,7 @@ async function executeJobScoped(
     // narrows the sandbox env (applied below via executionContext + script layer).
     // Jobs default to 'medium' (Sonnet-class); frontier 'main' is opt-in.
     const isTaskMode = job.promptMode === "task";
-    const modelCategory: JobModelCategory = isJobModelCategory(job.model)
-      ? job.model
-      : "medium";
+    const modelCategory: JobModelCategory = isJobModelCategory(job.model) ? job.model : "medium";
     const envAllowlist = job.envAllowlist ?? undefined;
 
     const stablePrefix = isTaskMode ? buildTaskPrefix() : await buildStablePrefix();
@@ -454,7 +453,7 @@ async function executeJobScoped(
         ? `Plan note "${continuationTag.topic}":\n\n${planContent}\n\nNext steps to execute:\n${nextSteps}${credentialNote}`
         : `Plan note "${continuationTag.topic}" not found. Original instructions:\n${nextSteps}${credentialNote}`;
 
-      systemPrompt = stablePrefix + "\n\n" + timeContext + "\n\n" + CONTINUATION_SPECIFIC_INSTRUCTIONS;
+      systemPrompt = `${stablePrefix}\n\n${timeContext}\n\n${CONTINUATION_SPECIFIC_INSTRUCTIONS}`;
 
       logger.info("Heartbeat: executing continuation", {
         jobId,
@@ -473,7 +472,7 @@ async function executeJobScoped(
         prompt += `\n\nPrevious result for context:\n${job.lastResult}`;
       }
 
-      systemPrompt = stablePrefix + "\n\n" + timeContext + "\n\n" + JOB_SPECIFIC_INSTRUCTIONS;
+      systemPrompt = `${stablePrefix}\n\n${timeContext}\n\n${JOB_SPECIFIC_INSTRUCTIONS}`;
 
       logger.info("Heartbeat: executing job", {
         jobId,
@@ -494,6 +493,8 @@ async function executeJobScoped(
       prompt += `\n\nIMPORTANT: Post your results using send_thread_reply(channel="${job.channelId}", thread_ts="${job.threadTs}"). If your response is too long for one message, post the first part with send_thread_reply, then post each continuation ALSO with send_thread_reply(channel="${job.channelId}", thread_ts="${job.threadTs}") — all parts in the same thread. Do NOT call send_direct_message.${SILENT_SUCCESS_CLAUSE}`;
     } else if (job.channelId) {
       prompt += `\n\nIMPORTANT: Post your results to channel "${job.channelId}" using send_channel_message. Do NOT use send_direct_message.${SILENT_SUCCESS_CLAUSE}`;
+    } else {
+      prompt += `\n\nIMPORTANT:${NO_CHANNEL_CLAUSE} The job requester is <@${job.requestedBy}>.`;
     }
 
     // ── Script execution layer ──────────────────────────────────────────────
@@ -504,15 +505,22 @@ async function executeJobScoped(
 
     if (job.script) {
       try {
-        const { getOrCreateSandbox, truncateOutput, getSandboxEnvs, filterEnvsByAllowlist } =
-          await import("../lib/sandbox.js");
+        const {
+          getOrCreateSandbox,
+          truncateOutput,
+          getSandboxEnvs,
+          filterEnvsByAllowlist,
+          resolveSandboxUserId,
+        } = await import("../lib/sandbox.js");
         // Use the job requester's sandbox so the script layer shares state
         // (checkouts, installed deps) with the job's LLM run_command calls.
-        const sandbox = await getOrCreateSandbox(job.requestedBy);
+        // Heartbeat/self jobs run as "aura" (not an omitted userId).
+        const sandboxUserId = resolveSandboxUserId(job.requestedBy);
+        const sandbox = await getOrCreateSandbox(sandboxUserId);
         // Script layer runs outside executionContext.run, so apply the job's
         // env allowlist explicitly here (narrows, never widens).
         const envs = filterEnvsByAllowlist(
-          await getSandboxEnvs(job.requestedBy),
+          await getSandboxEnvs(sandboxUserId),
           envAllowlist ?? null,
         );
 
@@ -602,24 +610,30 @@ async function executeJobScoped(
             const todayStr = now.toISOString().slice(0, 10);
             const isNewDay = job.lastExecutionDate !== todayStr;
 
-            await db.update(jobs).set({
-              status: isRecurring ? "pending" : "completed",
-              ...(isRecurring ? { executeAt: null } : {}),
-              result: resultText.slice(0, 2000),
-              lastResult: resultText.slice(0, 2000),
-              lastExecutedAt: now,
-              executionCount: sql`${jobs.executionCount} + 1`,
-              todayExecutions: isNewDay ? 1 : sql`${jobs.todayExecutions} + 1`,
-              lastExecutionDate: todayStr,
-              retries: 0,
-              updatedAt: now,
-            }).where(eq(jobs.id, jobId));
+            await db
+              .update(jobs)
+              .set({
+                status: isRecurring ? "pending" : "completed",
+                ...(isRecurring ? { executeAt: null } : {}),
+                result: resultText.slice(0, 2000),
+                lastResult: resultText.slice(0, 2000),
+                lastExecutedAt: now,
+                executionCount: sql`${jobs.executionCount} + 1`,
+                todayExecutions: isNewDay ? 1 : sql`${jobs.todayExecutions} + 1`,
+                lastExecutionDate: todayStr,
+                retries: 0,
+                updatedAt: now,
+              })
+              .where(eq(jobs.id, jobId));
 
-            await db.update(jobExecutions).set({
-              status: "completed",
-              finishedAt: now,
-              summary: resultText.slice(0, 500),
-            }).where(eq(jobExecutions.id, executionId));
+            await db
+              .update(jobExecutions)
+              .set({
+                status: "completed",
+                finishedAt: now,
+                summary: resultText.slice(0, 500),
+              })
+              .where(eq(jobExecutions.id, executionId));
 
             const outcomeId = await persistJobOutcome({
               workspaceId: job.workspaceId,
@@ -677,9 +691,7 @@ async function executeJobScoped(
           // stderr and the normal retry/escalation path takes over. The LLM
           // is never invoked for this run.
           const stderrTail = truncateJobFailureText(
-            scriptExecutionOutput?.stderr ||
-              scriptExecutionOutput?.stdout ||
-              scriptErr?.message,
+            scriptExecutionOutput?.stderr || scriptExecutionOutput?.stdout || scriptErr?.message,
           );
           await sendJobOpsNotice({
             jobId,
@@ -738,8 +750,9 @@ async function executeJobScoped(
       jobExecutionId: executionId,
     };
 
-    const { agent, modelId, getStepModelIds, getCompactionTotals } =
-      await executionContext.run(jobExecutionContext, () =>
+    const { agent, modelId, getStepModelIds, getCompactionTotals } = await executionContext.run(
+      jobExecutionContext,
+      () =>
         createHeadlessAgent({
           slackClient,
           context: {
@@ -754,7 +767,7 @@ async function executeJobScoped(
           // respawn from inside this run continues at depth + 1, capped at 3.
           continuationDepth: continuationTag?.depth ?? 0,
         }),
-      );
+    );
 
     // Create a conversation trace for this job execution
     conversationId = await createConversationTrace({
@@ -765,28 +778,22 @@ async function executeJobScoped(
 
     // Phase 1: persist the exact inputs BEFORE calling generate.
     // If the process crashes mid-execution, we still have what was sent.
-    conversationOrderIndex = await persistConversationInputs(
-      conversationId,
-      systemPrompt,
-      prompt,
-    );
+    conversationOrderIndex = await persistConversationInputs(conversationId, systemPrompt, prompt);
 
-    const generateResult = await executionContext.run(
-      jobExecutionContext,
-      () =>
-        withTrace(
-          {
-            traceName: "headless-job",
-            sessionId: job.threadTs || job.channelId || job.id,
-            userId: job.requestedBy,
-            tags: [
-              "channel:scheduled-job",
-              ...(job.channelId ? [`slack-channel:${job.channelId}`] : []),
-            ],
-            metadata: { slackUserId: job.requestedBy, jobId: job.id },
-          },
-          () => agent.generate({ prompt }),
-        ),
+    const generateResult = await executionContext.run(jobExecutionContext, () =>
+      withTrace(
+        {
+          traceName: "headless-job",
+          sessionId: job.threadTs || job.channelId || job.id,
+          userId: job.requestedBy,
+          tags: [
+            "channel:scheduled-job",
+            ...(job.channelId ? [`slack-channel:${job.channelId}`] : []),
+          ],
+          metadata: { slackUserId: job.requestedBy, jobId: job.id },
+        },
+        () => agent.generate({ prompt }),
+      ),
     );
 
     const { text, steps, totalUsage: usage } = generateResult;
@@ -872,13 +879,16 @@ async function executeJobScoped(
           ? { steps: serializedSteps, scratchpad: scratchpadContents }
           : serializedSteps,
         tokenUsage,
-        summary: isCleanNoOp ? noOpMarker.substring(0, 500) : (text || "").substring(0, 500) || null,
+        summary: isCleanNoOp
+          ? noOpMarker.substring(0, 500)
+          : (text || "").substring(0, 500) || null,
       })
       .where(eq(jobExecutions.id, executionId));
 
-    const result = (
-      isCleanNoOp ? noOpMarker : text || "Job completed (no text output)"
-    ).substring(0, 2000);
+    const result = (isCleanNoOp ? noOpMarker : text || "Job completed (no text output)").substring(
+      0,
+      2000,
+    );
     const now = new Date();
     const todayStr = now.toISOString().slice(0, 10);
     const isNewDay = job.lastExecutionDate !== todayStr;

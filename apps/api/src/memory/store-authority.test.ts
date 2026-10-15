@@ -91,7 +91,11 @@ describe("storeMemories temporal fields", () => {
     dbMocks.insert.mockClear();
     dbMocks.values.mockClear();
     dbMocks.returning.mockReset();
-    dbMocks.returning.mockResolvedValue([{ id: "memory-1" }, { id: "memory-2" }, { id: "memory-3" }]);
+    dbMocks.returning.mockResolvedValue([
+      { id: "memory-1" },
+      { id: "memory-2" },
+      { id: "memory-3" },
+    ]);
   });
 
   afterEach(() => {

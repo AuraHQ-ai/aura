@@ -1,37 +1,18 @@
+// biome-ignore-all lint/suspicious/noArrayIndexKey: message parts are append-only, so the part index is a stable identity.
 import { useMemo, useCallback, useState, useEffect, useRef } from "react";
 import { useChat } from "@ai-sdk/react";
 import { WorkflowChatTransport } from "@workflow/ai";
 import type { UIMessage, DynamicToolUIPart, ToolUIPart } from "ai";
-import {
-  X,
-  Plus,
-  Clock,
-  ArrowUpIcon,
-  SquareIcon,
-  PaperclipIcon,
-  Copy,
-  Check,
-} from "lucide-react";
+import { X, Plus, Clock, ArrowUpIcon, SquareIcon, PaperclipIcon, Copy, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
-import {
-  ModelAutocomplete,
-  type ModelAutocompleteOption,
-} from "@/components/model-autocomplete";
+import { ModelAutocomplete, type ModelAutocompleteOption } from "@/components/model-autocomplete";
 import {
   Conversation,
   ConversationContent,
   ConversationScrollButton,
 } from "@/components/ai-elements/conversation";
-import {
-  Message,
-  MessageContent,
-  MessageResponse,
-} from "@/components/ai-elements/message";
-import {
-  Reasoning,
-  ReasoningTrigger,
-  ReasoningContent,
-} from "@/components/ai-elements/reasoning";
+import { Message, MessageContent, MessageResponse } from "@/components/ai-elements/message";
+import { Reasoning, ReasoningTrigger, ReasoningContent } from "@/components/ai-elements/reasoning";
 import {
   Tool,
   ToolHeader,
@@ -255,6 +236,7 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
         <span className="text-[13px] font-medium">Chat with Aura</span>
         <div className="flex items-center gap-1">
           <button
+            type="button"
             onClick={handleNewChat}
             className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
             title="New chat"
@@ -262,6 +244,7 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
             <Plus className="h-3.5 w-3.5" />
           </button>
           <button
+            type="button"
             onClick={() => setShowHistory((v) => !v)}
             className={cn(
               "rounded-md p-1 transition-colors cursor-pointer",
@@ -274,6 +257,7 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
             <Clock className="h-3.5 w-3.5" />
           </button>
           <button
+            type="button"
             onClick={() => exportRef.current()}
             className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
             title={copied ? "Copied!" : "Copy chat as JSON"}
@@ -285,6 +269,7 @@ export function ChatPanel({ onClose, userId, userName }: ChatPanelProps) {
             )}
           </button>
           <button
+            type="button"
             onClick={onClose}
             className="rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground transition-colors cursor-pointer"
           >
@@ -413,9 +398,9 @@ function ActiveChat({
     transport,
   });
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: mount-only — mark the thread as generating if we attached to an in-flight run.
   useEffect(() => {
     if (initialActiveRunId) onRunStateChange(threadId, "generating");
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // T5: the stop button is the ONLY path that cancels generation. Detaches
@@ -494,9 +479,7 @@ function ActiveChat({
             <MessageItem
               key={message.id}
               message={message}
-              isStreaming={
-                isStreaming && message.id === messages[messages.length - 1]?.id
-              }
+              isStreaming={isStreaming && message.id === messages[messages.length - 1]?.id}
             />
           ))}
           {error && (
@@ -550,7 +533,14 @@ function EmptyState({
         your data, notes, or memories.
       </p>
       <div className="w-full">
-        <ChatInput onSubmit={onSubmit} status={status} onStop={onStop} selectedModel={selectedModel} onModelChange={onModelChange} modelOptions={modelOptions} />
+        <ChatInput
+          onSubmit={onSubmit}
+          status={status}
+          onStop={onStop}
+          selectedModel={selectedModel}
+          onModelChange={onModelChange}
+          modelOptions={modelOptions}
+        />
       </div>
     </div>
   );
@@ -661,6 +651,7 @@ function SubmitButton({
 
 function AttachmentStrip() {
   try {
+    // biome-ignore lint/correctness/useHookAtTopLevel: always the first call in render (stable order); try/catch only guards rendering outside the PromptInput provider.
     const { files, remove } = usePromptInputAttachments();
     if (files.length === 0) return null;
 
@@ -668,11 +659,7 @@ function AttachmentStrip() {
       <div className="px-2 pt-1">
         <Attachments variant="inline">
           {files.map((file) => (
-            <Attachment
-              key={file.id}
-              data={file}
-              onRemove={() => remove(file.id)}
-            >
+            <Attachment key={file.id} data={file} onRemove={() => remove(file.id)}>
               <AttachmentPreview />
               <AttachmentRemove />
             </Attachment>
@@ -699,6 +686,7 @@ function ThreadList({
   return (
     <div className="flex flex-1 flex-col overflow-y-auto">
       <button
+        type="button"
         onClick={onNewChat}
         className="flex items-center gap-2 border-b px-3 py-2.5 text-[13px] text-muted-foreground hover:bg-muted transition-colors cursor-pointer"
       >
@@ -712,13 +700,12 @@ function ThreadList({
       )}
       {threads.map((thread) => (
         <button
+          type="button"
           key={thread.threadId}
           onClick={() => onSelect(thread.threadId)}
           className={cn(
             "flex flex-col gap-0.5 border-b px-3 py-2.5 text-left transition-colors cursor-pointer",
-            thread.threadId === currentThreadId
-              ? "bg-muted"
-              : "hover:bg-muted/50",
+            thread.threadId === currentThreadId ? "bg-muted" : "hover:bg-muted/50",
           )}
         >
           <span className="flex items-center gap-1.5 text-[13px]">
@@ -727,12 +714,14 @@ function ThreadList({
                 <Spinner className="size-3 shrink-0 text-muted-foreground" />
               </span>
             )}
-            <span className="truncate">{thread.preview || (thread.runStatus === "generating" ? "Generating..." : "Empty chat")}</span>
+            <span className="truncate">
+              {thread.preview ||
+                (thread.runStatus === "generating" ? "Generating..." : "Empty chat")}
+            </span>
           </span>
           <span className="text-[11px] text-muted-foreground">
             {formatRelativeTime(thread.lastActivityAt)}
-            {thread.messageCount > 1 &&
-              ` · ${thread.messageCount} exchanges`}
+            {thread.messageCount > 1 && ` · ${thread.messageCount} exchanges`}
           </span>
         </button>
       ))}
@@ -740,13 +729,7 @@ function ThreadList({
   );
 }
 
-function MessageItem({
-  message,
-  isStreaming,
-}: {
-  message: UIMessage;
-  isStreaming: boolean;
-}) {
+function MessageItem({ message, isStreaming }: { message: UIMessage; isStreaming: boolean }) {
   return (
     <Message from={message.role}>
       <MessageContent>
@@ -755,19 +738,18 @@ function MessageItem({
             case "text":
               if (!part.text) return null;
               return (
-                <div key={i} style={{ fontSize: 13 }} className="[&_*]:![font-size:inherit] [&_h1]:![font-size:15px] [&_h2]:![font-size:14px] [&_h3]:![font-size:13px]">
-                  <MessageResponse>
-                    {part.text}
-                  </MessageResponse>
+                <div
+                  key={i}
+                  style={{ fontSize: 13 }}
+                  className="[&_*]:![font-size:inherit] [&_h1]:![font-size:15px] [&_h2]:![font-size:14px] [&_h3]:![font-size:13px]"
+                >
+                  <MessageResponse>{part.text}</MessageResponse>
                 </div>
               );
 
             case "reasoning":
               return (
-                <Reasoning
-                  key={i}
-                  isStreaming={isStreaming && part.state === "streaming"}
-                >
+                <Reasoning key={i} isStreaming={isStreaming && part.state === "streaming"}>
                   <ReasoningTrigger />
                   <ReasoningContent>{part.text}</ReasoningContent>
                 </Reasoning>
@@ -790,10 +772,7 @@ function MessageItem({
                   <ToolContent className="max-h-60 overflow-y-auto px-2 py-1.5 space-y-1.5">
                     <ToolInput input={dynPart.input} />
                     {dynPart.output !== undefined && (
-                      <ToolOutput
-                        output={dynPart.output}
-                        errorText={dynPart.errorText}
-                      />
+                      <ToolOutput output={dynPart.output} errorText={dynPart.errorText} />
                     )}
                   </ToolContent>
                 </Tool>
@@ -815,10 +794,7 @@ function MessageItem({
                     <ToolContent className="max-h-60 overflow-y-auto px-2 py-1.5 space-y-1.5">
                       <ToolInput input={toolPart.input} />
                       {toolPart.output !== undefined && (
-                        <ToolOutput
-                          output={toolPart.output}
-                          errorText={toolPart.errorText}
-                        />
+                        <ToolOutput output={toolPart.output} errorText={toolPart.errorText} />
                       )}
                     </ToolContent>
                   </Tool>

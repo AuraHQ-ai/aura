@@ -1,7 +1,7 @@
 import { getAllPosts, getPostBySlug } from "@/lib/blog";
 import { NextResponse } from "next/server";
-import fs from "fs";
-import path from "path";
+import fs from "node:fs";
+import path from "node:path";
 
 export const dynamic = "force-dynamic";
 
@@ -16,9 +16,7 @@ function readDocsDir(dir: string, prefix = ""): string[] {
       } else if (entry.endsWith(".mdx")) {
         const slug = `${prefix}${entry.replace(".mdx", "")}`;
         const content = fs.readFileSync(fullPath, "utf-8").replace(/^---\n[\s\S]*?\n---\n/, "");
-        results.push(
-          `## Docs: ${slug}\nURL: https://aurahq.ai/docs/${slug}\n\n${content}\n\n---`
-        );
+        results.push(`## Docs: ${slug}\nURL: https://aurahq.ai/docs/${slug}\n\n${content}\n\n---`);
       }
     }
   } catch {
@@ -45,7 +43,7 @@ GitHub: https://github.com/AuraHQ-ai/aura
     const full = await getPostBySlug(post.slug);
     if (!full) continue;
     sections.push(
-      `## ${post.title}\nURL: https://aurahq.ai/blog/${post.slug}\nDate: ${post.date}\n\n${full.content}\n\n---`
+      `## ${post.title}\nURL: https://aurahq.ai/blog/${post.slug}\nDate: ${post.date}\n\n${full.content}\n\n---`,
     );
   }
 

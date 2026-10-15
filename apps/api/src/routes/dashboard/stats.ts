@@ -1,13 +1,6 @@
 import { createRoute, z } from "@hono/zod-openapi";
 import { count, desc, eq, gte } from "drizzle-orm";
-import {
-  notes,
-  memories,
-  users,
-  jobs,
-  errorEvents,
-  jobExecutions,
-} from "@aura/db/schema";
+import { notes, memories, users, jobs, errorEvents, jobExecutions } from "@aura/db/schema";
 import { db } from "../../db/client.js";
 import { logger } from "../../lib/logger.js";
 import { errorSchema, createDashboardApp } from "./schemas.js";
@@ -60,10 +53,7 @@ dashboardStatsApp.openapi(getStatsRoute, async (c) => {
       db.select({ value: count() }).from(memories),
       db.select({ value: count() }).from(users),
       db.select({ value: count() }).from(jobs).where(eq(jobs.enabled, 1)),
-      db
-        .select({ value: count() })
-        .from(errorEvents)
-        .where(gte(errorEvents.timestamp, oneDayAgo)),
+      db.select({ value: count() }).from(errorEvents).where(gte(errorEvents.timestamp, oneDayAgo)),
       db
         .select({
           id: errorEvents.id,

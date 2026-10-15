@@ -51,11 +51,12 @@ dashboardNotesApp.openapi(listNotesRoute, async (c) => {
     if (search) conditions.push(ilike(notes.topic, `%${search}%`));
     if (category) conditions.push(eq(notes.category, category));
 
-    const where = conditions.length > 0
-      ? conditions.length === 1
-        ? conditions[0]
-        : sql`${conditions[0]} AND ${conditions[1]}`
-      : undefined;
+    const where =
+      conditions.length > 0
+        ? conditions.length === 1
+          ? conditions[0]
+          : sql`${conditions[0]} AND ${conditions[1]}`
+        : undefined;
 
     const [items, [totalRow]] = await Promise.all([
       db
@@ -223,11 +224,7 @@ dashboardNotesApp.openapi(updateNoteRoute, async (c) => {
     if (body.expiresAt !== undefined)
       updates.expiresAt = body.expiresAt ? new Date(body.expiresAt) : null;
 
-    const [updated] = await db
-      .update(notes)
-      .set(updates)
-      .where(eq(notes.id, id))
-      .returning();
+    const [updated] = await db.update(notes).set(updates).where(eq(notes.id, id)).returning();
 
     if (!updated) return c.json({ error: "Note not found" }, 404);
     return c.json(updated as any, 200);
@@ -268,10 +265,7 @@ const deleteNoteRoute = createRoute({
 dashboardNotesApp.openapi(deleteNoteRoute, async (c) => {
   try {
     const id = c.req.param("id");
-    const [deleted] = await db
-      .delete(notes)
-      .where(eq(notes.id, id))
-      .returning({ id: notes.id });
+    const [deleted] = await db.delete(notes).where(eq(notes.id, id)).returning({ id: notes.id });
 
     if (!deleted) return c.json({ error: "Note not found" }, 404);
     return c.json({ ok: true } as any, 200);

@@ -27,10 +27,7 @@ describe("checkMigrationGuard", () => {
       e("0000_zippy_robin_chapel", 1771062880226),
       e("0081_drop_model_catalog_selections", 1787158001000),
     ];
-    const sqlFiles = new Set([
-      "0000_zippy_robin_chapel",
-      "0081_drop_model_catalog_selections",
-    ]);
+    const sqlFiles = new Set(["0000_zippy_robin_chapel", "0081_drop_model_catalog_selections"]);
     const errors = checkMigrationGuard(MAIN_MAX_WHEN, MAIN_TAGS, prEntries, sqlFiles);
     expect(errors).toHaveLength(0);
   });
@@ -40,10 +37,7 @@ describe("checkMigrationGuard", () => {
       e("0081_drop_model_catalog_selections", 1787158001000),
       e("0082_new_feature", 1800000000000), // clearly above main max
     ];
-    const sqlFiles = new Set([
-      "0081_drop_model_catalog_selections",
-      "0082_new_feature",
-    ]);
+    const sqlFiles = new Set(["0081_drop_model_catalog_selections", "0082_new_feature"]);
     const errors = checkMigrationGuard(MAIN_MAX_WHEN, MAIN_TAGS, prEntries, sqlFiles);
     expect(errors).toHaveLength(0);
   });
@@ -55,12 +49,9 @@ describe("checkMigrationGuard", () => {
       e("0081_drop_model_catalog_selections", 1787158001000),
       e("0082_stale", 1780000000000), // stale branch: when < main max
     ];
-    const sqlFiles = new Set([
-      "0081_drop_model_catalog_selections",
-      "0082_stale",
-    ]);
+    const sqlFiles = new Set(["0081_drop_model_catalog_selections", "0082_stale"]);
     const errors = checkMigrationGuard(MAIN_MAX_WHEN, MAIN_TAGS, prEntries, sqlFiles);
-    expect(errors.filter(e => e.type === "out-of-order")).toHaveLength(1);
+    expect(errors.filter((e) => e.type === "out-of-order")).toHaveLength(1);
     expect(errors[0].message).toContain("0082_stale");
     expect(errors[0].message).toContain("Rebase");
   });
@@ -70,12 +61,9 @@ describe("checkMigrationGuard", () => {
       e("0081_drop_model_catalog_selections", 1787158001000),
       e("0082_collision", MAIN_MAX_WHEN), // equal, not greater
     ];
-    const sqlFiles = new Set([
-      "0081_drop_model_catalog_selections",
-      "0082_collision",
-    ]);
+    const sqlFiles = new Set(["0081_drop_model_catalog_selections", "0082_collision"]);
     const errors = checkMigrationGuard(MAIN_MAX_WHEN, MAIN_TAGS, prEntries, sqlFiles);
-    expect(errors.some(e => e.type === "out-of-order")).toBe(true);
+    expect(errors.some((e) => e.type === "out-of-order")).toBe(true);
   });
 
   it("does NOT flag pre-existing (main) entries as out-of-order", () => {
@@ -83,7 +71,7 @@ describe("checkMigrationGuard", () => {
     const prEntries = [e("0000_zippy_robin_chapel", 1771062880226)];
     const sqlFiles = new Set(["0000_zippy_robin_chapel"]);
     const errors = checkMigrationGuard(MAIN_MAX_WHEN, MAIN_TAGS, prEntries, sqlFiles);
-    expect(errors.filter(e => e.type === "out-of-order")).toHaveLength(0);
+    expect(errors.filter((e) => e.type === "out-of-order")).toHaveLength(0);
   });
 
   // ── Check 2: duplicate when ───────────────────────────────────────────────
@@ -95,16 +83,10 @@ describe("checkMigrationGuard", () => {
       e("0082_first", sameWhen),
       e("0083_second", sameWhen), // collision
     ];
-    const sqlFiles = new Set([
-      "0081_drop_model_catalog_selections",
-      "0082_first",
-      "0083_second",
-    ]);
+    const sqlFiles = new Set(["0081_drop_model_catalog_selections", "0082_first", "0083_second"]);
     const errors = checkMigrationGuard(MAIN_MAX_WHEN, MAIN_TAGS, prEntries, sqlFiles);
-    expect(errors.filter(e => e.type === "duplicate-when")).toHaveLength(1);
-    expect(errors.find(e => e.type === "duplicate-when")?.message).toContain(
-      "0083_second"
-    );
+    expect(errors.filter((e) => e.type === "duplicate-when")).toHaveLength(1);
+    expect(errors.find((e) => e.type === "duplicate-when")?.message).toContain("0083_second");
   });
 
   it("does NOT flag duplicate when on pre-existing entries already on main", () => {
@@ -125,13 +107,8 @@ describe("checkMigrationGuard", () => {
       "0027_api_credentials",
       "0031_hybrid_memory_search",
     ]);
-    const errors = checkMigrationGuard(
-      1787158001000,
-      mainTagsWithDupes,
-      prEntries,
-      sqlFiles
-    );
-    expect(errors.filter(e => e.type === "duplicate-when")).toHaveLength(0);
+    const errors = checkMigrationGuard(1787158001000, mainTagsWithDupes, prEntries, sqlFiles);
+    expect(errors.filter((e) => e.type === "duplicate-when")).toHaveLength(0);
   });
 
   // ── Check 3: missing SQL file ─────────────────────────────────────────────
@@ -140,10 +117,8 @@ describe("checkMigrationGuard", () => {
     const prEntries = [e("0082_no_sql", 1800000000000)];
     const sqlFiles = new Set<string>(); // file doesn't exist
     const errors = checkMigrationGuard(MAIN_MAX_WHEN, MAIN_TAGS, prEntries, sqlFiles);
-    expect(errors.some(e => e.type === "missing-sql")).toBe(true);
-    expect(errors.find(e => e.type === "missing-sql")?.message).toContain(
-      "0082_no_sql"
-    );
+    expect(errors.some((e) => e.type === "missing-sql")).toBe(true);
+    expect(errors.find((e) => e.type === "missing-sql")?.message).toContain("0082_no_sql");
   });
 
   it("flags missing SQL for existing (main) entries too", () => {
@@ -151,7 +126,7 @@ describe("checkMigrationGuard", () => {
     const prEntries = [e("0000_zippy_robin_chapel", 1771062880226)];
     const sqlFiles = new Set<string>(); // file deleted
     const errors = checkMigrationGuard(MAIN_MAX_WHEN, MAIN_TAGS, prEntries, sqlFiles);
-    expect(errors.some(e => e.type === "missing-sql")).toBe(true);
+    expect(errors.some((e) => e.type === "missing-sql")).toBe(true);
   });
 
   // ── Check 4: orphaned SQL file ────────────────────────────────────────────
@@ -160,10 +135,8 @@ describe("checkMigrationGuard", () => {
     const prEntries: JournalEntry[] = []; // empty journal
     const sqlFiles = new Set(["0082_orphan"]);
     const errors = checkMigrationGuard(MAIN_MAX_WHEN, MAIN_TAGS, prEntries, sqlFiles);
-    expect(errors.some(e => e.type === "orphaned-sql")).toBe(true);
-    expect(errors.find(e => e.type === "orphaned-sql")?.message).toContain(
-      "0082_orphan"
-    );
+    expect(errors.some((e) => e.type === "orphaned-sql")).toBe(true);
+    expect(errors.find((e) => e.type === "orphaned-sql")?.message).toContain("0082_orphan");
   });
 
   // ── Multiple errors at once ────────────────────────────────────────────────
@@ -182,7 +155,7 @@ describe("checkMigrationGuard", () => {
       // 0083_no_file intentionally absent
     ]);
     const errors = checkMigrationGuard(MAIN_MAX_WHEN, MAIN_TAGS, prEntries, sqlFiles);
-    const types = new Set(errors.map(e => e.type));
+    const types = new Set(errors.map((e) => e.type));
     expect(types.has("out-of-order")).toBe(true);
     expect(types.has("missing-sql")).toBe(true);
     expect(types.has("orphaned-sql")).toBe(true);
@@ -200,9 +173,9 @@ describe("checkMigrationGuard", () => {
       0,
       new Set(),
       [e("0000_init", 1771062880226)],
-      new Set(["0000_init"])
+      new Set(["0000_init"]),
     );
     // when=1771062880226 > 0 (main max when), so no out-of-order
-    expect(errors.filter(e => e.type === "out-of-order")).toHaveLength(0);
+    expect(errors.filter((e) => e.type === "out-of-order")).toHaveLength(0);
   });
 });

@@ -62,9 +62,18 @@ export async function runWizard(): Promise<WizardResult> {
   const reuse = await select<"fresh" | "reuse-messages" | "reuse-memories">({
     message: "Reuse data from a prior run?",
     choices: [
-      { name: "No, start fresh        — wipe + run all stages (messages→extract→score)", value: "fresh" },
-      { name: "Reuse messages         — re-extract memories + score (--from=extract)", value: "reuse-messages" },
-      { name: "Reuse memories         — only re-run retrieval + QA (--from=score)", value: "reuse-memories" },
+      {
+        name: "No, start fresh        — wipe + run all stages (messages→extract→score)",
+        value: "fresh",
+      },
+      {
+        name: "Reuse messages         — re-extract memories + score (--from=extract)",
+        value: "reuse-messages",
+      },
+      {
+        name: "Reuse memories         — only re-run retrieval + QA (--from=score)",
+        value: "reuse-memories",
+      },
     ],
     default: "fresh",
   });

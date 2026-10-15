@@ -1,8 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  augmentBigQueryErrorMessage,
-  getBigQueryErrorHints,
-} from "../lib/bigquery-errors.js";
+import { augmentBigQueryErrorMessage, getBigQueryErrorHints } from "../lib/bigquery-errors.js";
 
 const queryMock = vi.fn();
 const getMetadataMock = vi.fn();
@@ -72,8 +69,7 @@ describe("BigQuery error hint augmentation", () => {
   });
 
   it("adds dataset/location recovery ladder guidance", () => {
-    const message =
-      "Not found: Dataset some-project:analytics was not found in location EU";
+    const message = "Not found: Dataset some-project:analytics was not found in location EU";
     const hints = getBigQueryErrorHints(message);
 
     expect(hints.length).toBeGreaterThan(0);
@@ -115,6 +111,7 @@ describe("BigQuery row sanitization", () => {
     const result = await (tools.bq_execute_query as any).execute({
       sql: "SELECT CAST(1.23 AS NUMERIC) AS x",
       max_rows: 10,
+      label: "casting a numeric for clone checks",
     });
 
     expect(result).toMatchObject({

@@ -7,8 +7,7 @@ import type { ScheduleContext } from "@aura/db/schema";
 
 const MAX_DOWNLOAD_SIZE = 10 * 1024 * 1024; // 10 MB
 
-const FILE_FIELDS =
-  "files(id,name,mimeType,modifiedTime,owners,size,parents)";
+const FILE_FIELDS = "files(id,name,mimeType,modifiedTime,owners,size,parents)";
 
 async function getDriveClient(userId?: string) {
   const { getOAuth2Client } = await import("../lib/gmail.js");
@@ -19,10 +18,7 @@ async function getDriveClient(userId?: string) {
   return drive({ version: "v3", auth: client });
 }
 
-function getDriveNoAccessError(
-  userName: string | undefined,
-  context?: ScheduleContext,
-): string {
+function getDriveNoAccessError(userName: string | undefined, context?: ScheduleContext): string {
   if (userName) {
     return `No Google Drive access for '${userName}'. They may need to authorize Aura via OAuth first.`;
   }
@@ -58,8 +54,10 @@ export function createDriveTools(context?: ScheduleContext) {
       }),
       execute: async ({ query, limit, user_name }) => {
         try {
-          const { userId: resolvedUserId, error: resolveError } =
-            await resolveEffectiveUserId(user_name, context);
+          const { userId: resolvedUserId, error: resolveError } = await resolveEffectiveUserId(
+            user_name,
+            context,
+          );
           if (resolveError) {
             return { ok: false, error: resolveError };
           }
@@ -107,8 +105,7 @@ export function createDriveTools(context?: ScheduleContext) {
       slack: {
         status: "Searching Google Drive...",
         detail: (i) => i.query?.slice(0, 60),
-        output: (r) =>
-          r.ok === false ? r.error : `${r.files?.length ?? 0} files found`,
+        output: (r) => (r.ok === false ? r.error : `${r.files?.length ?? 0} files found`),
       },
     }),
 
@@ -116,9 +113,7 @@ export function createDriveTools(context?: ScheduleContext) {
       description:
         "Read the content of a file from Google Drive by its file ID. Defaults to the caller's account. Set user_name to access another user's Drive (requires their OAuth access). For Google Docs and Slides, exports as plain text. For Google Sheets, tells you to use the read_google_sheet tool instead. For PDFs and images, returns base64-encoded content. For other file types, returns text content or base64 depending on the mime type. Maximum file size: 10 MB.",
       inputSchema: z.object({
-        file_id: z
-          .string()
-          .describe("The Google Drive file ID to read"),
+        file_id: z.string().describe("The Google Drive file ID to read"),
         user_name: z
           .string()
           .optional()
@@ -128,8 +123,10 @@ export function createDriveTools(context?: ScheduleContext) {
       }),
       execute: async ({ file_id, user_name }) => {
         try {
-          const { userId: resolvedUserId, error: resolveError } =
-            await resolveEffectiveUserId(user_name, context);
+          const { userId: resolvedUserId, error: resolveError } = await resolveEffectiveUserId(
+            user_name,
+            context,
+          );
           if (resolveError) {
             return { ok: false, error: resolveError };
           }
@@ -180,14 +177,10 @@ export function createDriveTools(context?: ScheduleContext) {
               mimeType: "text/plain",
             });
             const content =
-              typeof exported.data === "string"
-                ? exported.data
-                : String(exported.data);
+              typeof exported.data === "string" ? exported.data : String(exported.data);
 
             const label =
-              mimeType === "application/vnd.google-apps.document"
-                ? "Google Doc"
-                : "Google Slides";
+              mimeType === "application/vnd.google-apps.document" ? "Google Doc" : "Google Slides";
             logger.info(`read_drive_file: exported ${label}`, {
               file_id,
               name,
@@ -222,10 +215,7 @@ export function createDriveTools(context?: ScheduleContext) {
 
           const buffer = Buffer.from(downloaded.data as ArrayBuffer);
 
-          if (
-            mimeType === "application/pdf" ||
-            mimeType.startsWith("image/")
-          ) {
+          if (mimeType === "application/pdf" || mimeType.startsWith("image/")) {
             logger.info("read_drive_file: downloaded binary file", {
               file_id,
               name,
@@ -282,7 +272,12 @@ export function createDriveTools(context?: ScheduleContext) {
           return { type: "json" as const, value: output };
         }
         const { content, ...meta } = output;
-        return binaryToModelOutput({ base64: content, mimeType: output.mimeType, filename: output.name, meta });
+        return binaryToModelOutput({
+          base64: content,
+          mimeType: output.mimeType,
+          filename: output.name,
+          meta,
+        });
       },
       slack: {
         status: "Reading file from Drive...",
@@ -302,9 +297,7 @@ export function createDriveTools(context?: ScheduleContext) {
         folder_id: z
           .string()
           .default("root")
-          .describe(
-            "The folder ID to list contents of. Defaults to 'root' (My Drive root).",
-          ),
+          .describe("The folder ID to list contents of. Defaults to 'root' (My Drive root)."),
         drive_id: z
           .string()
           .optional()
@@ -316,9 +309,7 @@ export function createDriveTools(context?: ScheduleContext) {
           .min(1)
           .max(100)
           .default(20)
-          .describe(
-            "Maximum number of files to return (default 20, max 100)",
-          ),
+          .describe("Maximum number of files to return (default 20, max 100)"),
         user_name: z
           .string()
           .optional()
@@ -328,8 +319,10 @@ export function createDriveTools(context?: ScheduleContext) {
       }),
       execute: async ({ folder_id, drive_id, limit, user_name }) => {
         try {
-          const { userId: resolvedUserId, error: resolveError } =
-            await resolveEffectiveUserId(user_name, context);
+          const { userId: resolvedUserId, error: resolveError } = await resolveEffectiveUserId(
+            user_name,
+            context,
+          );
           if (resolveError) {
             return { ok: false, error: resolveError };
           }
@@ -342,8 +335,7 @@ export function createDriveTools(context?: ScheduleContext) {
             };
           }
 
-          const effectiveFolder =
-            drive_id && folder_id === "root" ? drive_id : folder_id;
+          const effectiveFolder = drive_id && folder_id === "root" ? drive_id : folder_id;
 
           if (effectiveFolder !== "root" && !/^[\w-]+$/.test(effectiveFolder)) {
             return { ok: false, error: "Invalid folder ID format." };
@@ -406,8 +398,7 @@ export function createDriveTools(context?: ScheduleContext) {
             : i.folder_id === "root"
               ? "My Drive"
               : i.folder_id?.slice(0, 30),
-        output: (r) =>
-          r.ok === false ? r.error : `${r.files?.length ?? 0} items`,
+        output: (r) => (r.ok === false ? r.error : `${r.files?.length ?? 0} items`),
       },
     }),
 
@@ -424,8 +415,10 @@ export function createDriveTools(context?: ScheduleContext) {
       }),
       execute: async ({ user_name }) => {
         try {
-          const { userId: resolvedUserId, error: resolveError } =
-            await resolveEffectiveUserId(user_name, context);
+          const { userId: resolvedUserId, error: resolveError } = await resolveEffectiveUserId(
+            user_name,
+            context,
+          );
           if (resolveError) {
             return { ok: false, error: resolveError };
           }
@@ -465,8 +458,7 @@ export function createDriveTools(context?: ScheduleContext) {
       },
       slack: {
         status: "Listing shared drives...",
-        output: (r) =>
-          r.ok === false ? r.error : `${r.drives?.length ?? 0} shared drives`,
+        output: (r) => (r.ok === false ? r.error : `${r.drives?.length ?? 0} shared drives`),
       },
     }),
   };

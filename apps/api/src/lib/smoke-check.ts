@@ -69,9 +69,7 @@ function sanitizeError(error: unknown): string {
     const status = (error as { status?: unknown }).status;
     if (typeof status === "number") return httpReason(status);
     // Class name only (e.g. "AuthenticationError") — never the message.
-    return error.name && error.name !== "Error"
-      ? `error_${error.name}`
-      : "error";
+    return error.name && error.name !== "Error" ? `error_${error.name}` : "error";
   }
   return "error";
 }
@@ -178,9 +176,7 @@ async function probeCursor(_signal: AbortSignal): Promise<ProbeOutcome> {
   });
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(
-      `Cursor API GET /agents failed (${res.status}): ${text}`,
-    );
+    throw new Error(`Cursor API GET /agents failed (${res.status}): ${text}`);
   }
   return OK;
 }
@@ -209,9 +205,7 @@ async function runProbe(
 
   try {
     const timeout = new Promise<never>((_, reject) => {
-      controller.signal.addEventListener("abort", () =>
-        reject(new ProbeError("timeout")),
-      );
+      controller.signal.addEventListener("abort", () => reject(new ProbeError("timeout")));
     });
     const outcome = await Promise.race([probe(controller.signal), timeout]);
     return {
@@ -243,9 +237,7 @@ export async function runSmokeChecks(
   const started = Date.now();
 
   const checks = await Promise.all(
-    Object.entries(probes).map(([integration, probe]) =>
-      runProbe(integration, probe, timeoutMs),
-    ),
+    Object.entries(probes).map(([integration, probe]) => runProbe(integration, probe, timeoutMs)),
   );
 
   const report: SmokeReport = {

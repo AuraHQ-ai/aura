@@ -82,6 +82,7 @@
               "tools/subagents",
               "tools/voice",
               "tools/cursor-agent",
+              "tools/mcp",
               "tools/resources",
               "tools/conversations",
               "tools/memories"

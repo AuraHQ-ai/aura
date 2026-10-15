@@ -1,3 +1,4 @@
+// biome-ignore-all lint/suspicious/noArrayIndexKey: static placeholder rows that never reorder.
 import { TableRow, TableCell } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 
@@ -8,7 +9,12 @@ export function TableRowsSkeleton({ columns, rows = 25 }: { columns: number; row
         <TableRow key={i}>
           {Array.from({ length: columns }).map((_, j) => (
             <TableCell key={j}>
-              <div className={cn("h-4 animate-pulse rounded bg-muted", j % 2 === 0 ? "w-3/4" : "w-1/2")} />
+              <div
+                className={cn(
+                  "h-4 animate-pulse rounded bg-muted",
+                  j % 2 === 0 ? "w-3/4" : "w-1/2",
+                )}
+              />
             </TableCell>
           ))}
         </TableRow>

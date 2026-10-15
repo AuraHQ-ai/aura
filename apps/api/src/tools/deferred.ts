@@ -4,6 +4,7 @@ import { deferredToolThreadCache } from "@aura/db/schema";
 import type { ScheduleContext } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
 import { hasDeferredLoading, withoutDeferredLoading } from "./deferred-loading.js";
+import { isMcpToolName } from "../lib/mcp-names.js";
 
 export { hasDeferredLoading, withoutDeferredLoading } from "./deferred-loading.js";
 
@@ -119,9 +120,7 @@ function getThreadCacheKey(context?: ScheduleContext): {
   };
 }
 
-export async function getCachedDeferredToolNames(
-  context?: ScheduleContext,
-): Promise<Set<string>> {
+export async function getCachedDeferredToolNames(context?: ScheduleContext): Promise<Set<string>> {
   const key = getThreadCacheKey(context);
   if (!key) return new Set();
 
@@ -154,7 +153,11 @@ export async function cacheDeferredToolResolutions(
   const key = getThreadCacheKey(context);
   if (!key) return;
 
-  const names = [...new Set([...toolNames].filter((name) => DEFERRED_TOOL_NAMES.has(name)))];
+  const names = [
+    ...new Set(
+      [...toolNames].filter((name) => DEFERRED_TOOL_NAMES.has(name) || isMcpToolName(name)),
+    ),
+  ];
   if (names.length === 0) return;
 
   try {
@@ -210,13 +213,24 @@ export async function applyAnthropicToolDiscovery<T extends Record<string, any>>
   // toolSearchBm25_20251119() returns an Anthropic-native tool object that
   // bypasses defineTool(), so attach the Slack metadata manually.
   const toolSearch = anthropic.tools.toolSearchBm25_20251119();
-  ((toolSearch as unknown) as Record<string, unknown>).slack = {
+  const toolSearchRecord = toolSearch as unknown as Record<string, unknown>;
+  const mcpSearchHint =
+    ' For MCP servers listed in <mcp_servers>, prefix the query with the server slug (e.g. "close_fr aggregation") so mcp__<slug>__* tools load first.';
+  toolSearchRecord.description =
+    (typeof toolSearchRecord.description === "string" && toolSearchRecord.description.trim()
+      ? toolSearchRecord.description
+      : "Search deferred tools by BM25 and load their schemas.") + mcpSearchHint;
+  toolSearchRecord.slack = {
     status: "Searching tools...",
     detail: (i: { query: string }) => i.query,
   };
   mutableTools.toolSearch = toolSearch;
 
-  for (const name of DEFERRED_TOOL_NAMES) {
+  const toDefer = new Set([
+    ...DEFERRED_TOOL_NAMES,
+    ...Object.keys(mutableTools).filter((name) => isMcpToolName(name)),
+  ]);
+  for (const name of toDefer) {
     const existing = mutableTools[name];
     if (!existing) continue;
     if (cachedDeferredTools.has(name)) {
@@ -225,7 +239,7 @@ export async function applyAnthropicToolDiscovery<T extends Record<string, any>>
     }
     const providerOptions =
       existing && typeof existing === "object" && "providerOptions" in existing
-        ? (existing as { providerOptions?: Record<string, any> }).providerOptions ?? {}
+        ? ((existing as { providerOptions?: Record<string, any> }).providerOptions ?? {})
         : {};
     mutableTools[name] = {
       ...existing,
@@ -246,12 +260,10 @@ export function getDeferredToolManifest(
   tools: Record<string, unknown>,
 ): DeferredToolManifestEntry[] {
   return Object.entries(tools)
-    .filter(([, tool]) => hasDeferredLoading(tool))
+    .filter(([name, tool]) => hasDeferredLoading(tool) && !isMcpToolName(name))
     .map(([name, tool]) => ({
       name,
-      description: toOneLineDescription(
-        (tool as { description?: unknown }).description,
-      ),
+      description: toOneLineDescription((tool as { description?: unknown }).description),
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }

@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 
 const migrationSql = readFileSync(
-  new URL("../../../../packages/db/drizzle/0064_enforce_credential_scope_check.sql", import.meta.url),
+  new URL(
+    "../../../../packages/db/drizzle/0064_enforce_credential_scope_check.sql",
+    import.meta.url,
+  ),
   "utf8",
 );
 

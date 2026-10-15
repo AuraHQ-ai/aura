@@ -14,9 +14,7 @@ export function truncateJobFailureText(value: string | null | undefined, maxChar
   return `${text.slice(0, maxChars - 3)}...`;
 }
 
-export function resolveJobFailureDmTarget(
-  requestedBy: string | null | undefined,
-): string | null {
+export function resolveJobFailureDmTarget(requestedBy: string | null | undefined): string | null {
   const requester = requestedBy?.trim();
   if (requester && requester !== "aura") return requester;
   return null;
@@ -65,8 +63,7 @@ export async function resolveOpsNotificationTarget(
   requestedBy: string | null | undefined,
 ): Promise<OpsNoticeTarget | null> {
   const opsChannel =
-    (await getSetting(OPS_CHANNEL_SETTING_KEY))?.trim() ||
-    process.env.AURA_OPS_CHANNEL?.trim();
+    (await getSetting(OPS_CHANNEL_SETTING_KEY))?.trim() || process.env.AURA_OPS_CHANNEL?.trim();
   if (opsChannel) return { kind: "ops_channel", destination: opsChannel };
 
   const founderUserId = await resolveFounderUserId();
