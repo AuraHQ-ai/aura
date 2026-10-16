@@ -25,6 +25,7 @@ import {
 import { retrieveMemories } from "./retrieve.js";
 import { resolveEntities, linkMemoryEntities } from "./entity-resolution.js";
 import { logger } from "../lib/logger.js";
+import { parseAbsoluteDate } from "../lib/temporal.js";
 import { getUserList } from "../tools/slack.js";
 import { extractedEntitySchema, ENTITY_EXTRACTION_RULES } from "./entity-extraction-schema.js";
 import { importanceToRelevance, IMPORTANCE_DISCARD_THRESHOLD } from "./importance.js";
@@ -356,6 +357,12 @@ const extractedMemoriesSchema = z.object({
         .optional()
         .default([])
         .describe("Entities (people, companies, projects, etc.) mentioned in this memory"),
+      validFrom: z
+        .string()
+        .nullish()
+        .describe(
+          "ISO-8601 date (YYYY-MM-DD) when the event occurred, if a specific calendar date was clearly stated. Omit if unknown.",
+        ),
       factClass: z
         .enum(MEMORY_FACT_CLASSES)
         .optional()
@@ -394,6 +401,7 @@ When a message states a specific value -- a number, price, amount, quantity, dur
 - When several distinct values are stated that could later be compared or combined, record EACH as its own fact (e.g. the $800 luxury price AND the $50 budget-store price are two separate, equally worth-keeping facts -- not one vague summary).
 - Never round, generalize, or fold a concrete value into a softer statement ("is mindful of spending"). The precise figure is worth keeping on its own.
 - A concrete personal/world fact carrying a specific stated value is worth AT LEAST importance 40 -- do not discard it as noise just because it seems minor in the moment.
+- When a specific calendar date is stated for an event, keep it verbatim in the content (e.g. "booked the Airbnb in San Francisco on 2024-01-15" -- NOT "booked an Airbnb recently"). If that date is clearly stated, also set validFrom to it as YYYY-MM-DD. Omit validFrom when no specific event date is given.
 
 ## Admission Rules
 
@@ -505,6 +513,12 @@ const createOperationSchema = z.object({
       "Who the fact originated from. Use 'assistant' ONLY for a concrete, grounded result or explicit recommendation Aura surfaced (backed by a tool result/computation), phrased with attribution ('Aura found...', 'Aura recommended...'). Use 'user' for everything a person in the thread stated. Default 'user'.",
     ),
   entities: z.array(extractedEntitySchema).optional().default([]),
+  validFrom: z
+    .string()
+    .nullish()
+    .describe(
+      "ISO-8601 date (YYYY-MM-DD) when the event occurred, if a specific calendar date was clearly stated. Omit if unknown.",
+    ),
   factClass: z
     .enum(MEMORY_FACT_CLASSES)
     .optional()
@@ -570,6 +584,7 @@ When a message states a specific value — a number, price, amount, quantity, du
 - When several distinct values are stated that could later be compared or combined, record EACH as its own fact (e.g. the $800 luxury boots price AND the $50 budget-store price are two separate, equally worth-keeping facts — not one vague summary).
 - Never round, generalize, or fold a concrete value into a softer statement ("is mindful of spending"). The preference and the precise figure are both worth keeping.
 - A concrete personal/world fact that carries a specific stated value is worth AT LEAST importance 40 — do not discard it as noise just because it seems minor in the moment.
+- When a specific calendar date is stated for an event, keep it verbatim in the content (e.g. "booked the Airbnb in San Francisco on 2024-01-15" — NOT "booked an Airbnb recently"). If that date is clearly stated, also set validFrom to it as YYYY-MM-DD. Omit validFrom when no specific event date is given.
 
 Importance (be strict):
 - 90-100: company-level decisions, strategy pivots, OKRs/KPIs that drive planning, critical rules/policies, major incidents.
@@ -1230,6 +1245,14 @@ async function processCreateOperations(
     const memorySourceRole = sourceRoles[i];
     const confidence =
       memorySourceRole === "assistant" ? 0.6 : correctionSignal ? CORRECTION_CONFIDENCE : undefined;
+    // Stated event date from the extractor, when present. Overrides the
+    // session-time default so prompt rendering can count "ago" off event time.
+    // Ignore dates after we learned the fact — a future-dated validFrom would
+    // hide the row from as-of retrieval until that day.
+    const eventFrom = parseAbsoluteDate(normalizedMemories[i].validFrom);
+    const learnedAt = context.createdAt ?? new Date();
+    const usableEventFrom =
+      eventFrom && eventFrom.getTime() <= learnedAt.getTime() ? eventFrom : undefined;
     // Class-based expiry (#1557): the extractor assigns a volatile fact class;
     // this maps class → valid_until. Durable facts (no class) stay open-ended.
     // storeMemories does not synthesize a type-level TTL (#1171).
@@ -1267,6 +1290,7 @@ async function processCreateOperations(
         updatedAt: context.createdAt,
         validFrom: context.createdAt,
       }),
+      ...(usableEventFrom && { validFrom: usableEventFrom }),
     };
   });
 
