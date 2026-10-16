@@ -661,7 +661,10 @@ export async function findContradictionCandidates(
 /**
  * Batch store multiple memories.
  * Automatically sets status='current' and validFrom=now() on all new memories.
- * validUntil is persisted only when explicitly supplied by the caller.
+ * validUntil is persisted only when explicitly supplied by the caller —
+ * never synthesized from memory type here (#1171). Class-based expiry for
+ * volatile facts is assigned by the extractor / nightly contradiction pass
+ * (#1557) before this function is called.
  */
 export async function storeMemories(newMemories: NewMemory[]): Promise<string[]> {
   if (newMemories.length === 0) return [];
