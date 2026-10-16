@@ -88,7 +88,7 @@ describe("formatMemoriesForPrompt", () => {
 describe("formatMemoriesForPrompt verify-before-asserting (#1557)", () => {
   it("flags volatile fact classes so the model does not assert them as current", () => {
     const out = formatMemoriesForPrompt(
-      [mem({ factClass: "access" })],
+      [mem({ content: "Aura's Claap access is broken", factClass: "access" })],
       new Date("2026-10-15T00:00:00.000Z"),
     );
     expect(out).toContain("[verify before asserting: access]");
