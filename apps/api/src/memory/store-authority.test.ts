@@ -145,4 +145,18 @@ describe("storeMemories temporal fields", () => {
     expect(inserted[0].validFrom).toBe(validFrom);
     expect(inserted[0]).not.toHaveProperty("validUntil");
   });
+
+  it("persists extractor-assigned factClass + validUntil without synthesizing a type TTL", async () => {
+    const validUntil = new Date("2026-10-15T00:00:00.000Z");
+    await storeMemories([
+      memory({ type: "fact", factClass: "access", validUntil }),
+      memory({ type: "fact" }),
+    ]);
+
+    const inserted = insertedValues();
+    expect(inserted[0].factClass).toBe("access");
+    expect(inserted[0].validUntil).toBe(validUntil);
+    expect(inserted[1]).not.toHaveProperty("validUntil");
+    expect(inserted[1]).not.toHaveProperty("factClass");
+  });
 });

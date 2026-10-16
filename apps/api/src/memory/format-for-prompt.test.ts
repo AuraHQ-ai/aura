@@ -10,6 +10,7 @@ function mem(overrides: Partial<Memory> = {}): Memory {
     relatedUserIds: ["alex"],
     createdAt: new Date("2024-06-01T12:00:00.000Z"),
     validFrom: new Date("2024-06-01T12:00:00.000Z"),
+    factClass: null,
     ...overrides,
   } as Memory;
 }
@@ -81,5 +82,24 @@ describe("formatMemoriesForPrompt", () => {
     expect(out).toContain("[fact]");
     expect(out).toContain("Airbnb");
     expect(out).toContain("[about: alex]");
+  });
+});
+
+describe("formatMemoriesForPrompt verify-before-asserting (#1557)", () => {
+  it("flags volatile fact classes so the model does not assert them as current", () => {
+    const out = formatMemoriesForPrompt(
+      [mem({ factClass: "access" })],
+      new Date("2026-10-15T00:00:00.000Z"),
+    );
+    expect(out).toContain("[verify before asserting: access]");
+    expect(out).toContain("Claap access is broken");
+  });
+
+  it("does not flag durable unclassified memories", () => {
+    const out = formatMemoriesForPrompt(
+      [mem({ content: "Joan manages the Aura codebase", factClass: null })],
+      new Date("2026-10-15T00:00:00.000Z"),
+    );
+    expect(out).not.toContain("verify before asserting");
   });
 });

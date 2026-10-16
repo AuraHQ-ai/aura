@@ -6,7 +6,7 @@ She reads context, remembers every conversation, initiates work without being as
 
 She also maintains her own knowledge base, writes and executes playbooks, and updates her own system prompt when she learns something important.
 
-Built with TypeScript, Hono, Vercel serverless functions, Vercel AI SDK v6, and PostgreSQL.
+Built with TypeScript, Hono, Vercel serverless functions, Vercel AI SDK v7, and PostgreSQL.
 
 ---
 

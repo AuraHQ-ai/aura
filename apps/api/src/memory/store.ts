@@ -460,6 +460,8 @@ export async function supersedeMemory(
   at?: Date,
 ): Promise<void> {
   const now = at ?? new Date();
+  // A memory can never supersede itself (would create a self-cycle).
+  if (oldMemoryId === newMemoryId) return;
   try {
     await withTransaction(async (tx) => {
       // Clamp valid_until to never precede the row's own valid_from. When a
@@ -481,6 +483,11 @@ export async function supersedeMemory(
           AND status IN ('current', 'disputed')
       `);
 
+      // Only touch the replacement if it is still live. An unconditional
+      // `status = 'current'` here silently REVIVED replacements that had
+      // already been superseded/archived/deleted (replay/backfill ordering),
+      // leaving `current` rows that still carry a superseded_by link and
+      // forming supersession cycles (7 such rows found in prod, Oct 2026).
       await tx.execute(sql`
         UPDATE memories
         SET status = 'current',
@@ -488,6 +495,7 @@ export async function supersedeMemory(
             supersedes_memory_id = ${oldMemoryId}::uuid,
             updated_at = ${now}
         WHERE id = ${newMemoryId}::uuid
+          AND status IN ('current', 'disputed')
       `);
     });
   } catch (error) {
@@ -653,7 +661,10 @@ export async function findContradictionCandidates(
 /**
  * Batch store multiple memories.
  * Automatically sets status='current' and validFrom=now() on all new memories.
- * validUntil is persisted only when explicitly supplied by the caller.
+ * validUntil is persisted only when explicitly supplied by the caller —
+ * never synthesized from memory type here (#1171). Class-based expiry for
+ * volatile facts is assigned by the extractor / nightly contradiction pass
+ * (#1557) before this function is called.
  */
 export async function storeMemories(newMemories: NewMemory[]): Promise<string[]> {
   if (newMemories.length === 0) return [];

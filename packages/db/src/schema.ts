@@ -56,6 +56,19 @@ export const memoryStatusEnum = pgEnum("memory_status", [
   "deleted",
 ]);
 
+/**
+ * Volatile fact classes. Assigned by the extractor / nightly contradiction
+ * pass — never inferred by a type-based formula in storeMemories (#1171).
+ * Only these classes get a default valid_until; durable facts stay open-ended.
+ */
+export const memoryFactClassEnum = pgEnum("memory_fact_class", [
+  "access",
+  "permissions",
+  "pricing",
+  "url",
+  "tool_status",
+]);
+
 export const entityTypeEnum = pgEnum("entity_type", [
   "person",
   "company",
@@ -149,6 +162,7 @@ export const memories = pgTable(
     confidence: real("confidence").default(0.8),
     validFrom: timestamptz("valid_from"),
     validUntil: timestamptz("valid_until"),
+    factClass: memoryFactClassEnum("fact_class"),
     supersedesMemoryId: uuid("supersedes_memory_id"),
     supersededAt: timestamptz("superseded_at"),
     supersededByMemoryId: uuid("superseded_by_memory_id"),
@@ -175,6 +189,7 @@ export const memories = pgTable(
     index("memories_search_vector_idx").using("gin", sql`${table.searchVector}`),
     index("memories_status_idx").on(table.status),
     index("memories_valid_from_idx").on(table.validFrom),
+    index("memories_fact_class_idx").on(table.factClass),
     index("memories_supersedes_idx")
       .on(table.supersedesMemoryId)
       .where(sql`supersedes_memory_id IS NOT NULL`),
@@ -1170,6 +1185,7 @@ export type Message = typeof messages.$inferSelect;
 export type NewMessage = typeof messages.$inferInsert;
 export type Memory = typeof memories.$inferSelect;
 export type NewMemory = typeof memories.$inferInsert;
+export type MemoryFactClass = (typeof memoryFactClassEnum.enumValues)[number];
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 /** @deprecated Use `users` instead */

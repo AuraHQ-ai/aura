@@ -15,7 +15,7 @@ General project conventions and architecture are documented in `CLAUDE.md` at th
 
 - `ELEVENLABS_API_KEY` must be set (even as a placeholder) because the ElevenLabs client is instantiated at module load time in `apps/api/src/webhook/elevenlabs.ts` — without it the API crashes on startup.
 - `DATABASE_URL` is required for the API to start. The Neon serverless driver connects lazily (server starts even with an invalid URL), but DB queries will fail without a real connection string.
-- The `lint` script in `apps/api` references `eslint` but it is not installed as a dependency. Use `pnpm typecheck` as the primary code quality check (enforced by the pre-push hook).
+- Lint and formatting use Biome (`pnpm check`, `pnpm check:fix`; config in `biome.json`). The pre-push hook runs `biome ci .` plus the API and dashboard typechecks, and CI runs the same Biome gate.
 - `pnpm install` warnings about ignored build scripts (esbuild, sharp) are safe to ignore — these packages are approved via `pnpm.onlyBuiltDependencies` in root `package.json`.
 - `@aura/db` must be built before running apps — it exports compiled JS from `dist/`. Run `pnpm --filter @aura/db build` (or `pnpm dev` which does it automatically).
 - The dashboard uses `vite-plus` (alias `vp`) as the dev/build CLI, not raw `vite`.

@@ -1,5 +1,6 @@
 import type { Memory } from "@aura/db/schema";
 import { relativeTime } from "../lib/temporal.js";
+import { needsVerifyBeforeAsserting } from "./fact-class.js";
 
 /**
  * Pick the instant to render next to a memory.
@@ -58,7 +59,13 @@ export function formatMemoriesForPrompt(memories: Memory[], now?: Date): string 
       }
       const when = parts.length > 0 ? ` (${parts.join(", ")})` : "";
       const users = m.relatedUserIds.length > 0 ? ` [about: ${m.relatedUserIds.join(", ")}]` : "";
-      return `- [${m.type}] ${m.content}${when}${users}`;
+      // Volatile classes (access, permissions, pricing, URLs, tool status)
+      // go stale without an explicit correction — tell the model to verify
+      // before asserting them as current (#1557).
+      const verify = needsVerifyBeforeAsserting(m.factClass)
+        ? ` [verify before asserting: ${m.factClass}]`
+        : "";
+      return `- [${m.type}] ${m.content} ${when}${users}${verify}`;
     })
     .join("\n");
 
