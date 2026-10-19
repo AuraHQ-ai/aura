@@ -25,9 +25,12 @@ import {
 import { retrieveMemories } from "./retrieve.js";
 import { resolveEntities, linkMemoryEntities } from "./entity-resolution.js";
 import { logger } from "../lib/logger.js";
+import { parseAbsoluteDate } from "../lib/temporal.js";
 import { getUserList } from "../tools/slack.js";
 import { extractedEntitySchema, ENTITY_EXTRACTION_RULES } from "./entity-extraction-schema.js";
 import { importanceToRelevance, IMPORTANCE_DISCARD_THRESHOLD } from "./importance.js";
+import { expiryFieldsForFactClass, MEMORY_FACT_CLASSES } from "./fact-class.js";
+import { CONTRADICTION_PROMPT, contradictionResultSchema } from "./contradiction.js";
 import { db } from "../db/client.js";
 import { users, memoryEntities } from "@aura/db/schema";
 import { inArray, eq } from "drizzle-orm";
@@ -153,7 +156,8 @@ function formatExistingMemories(existingMemories: Memory[]): {
   const lines = existingMemories.map((m, i) => {
     const ref = `M${i + 1}`;
     refToId.set(ref, m.id);
-    return `[${ref}] ${m.content} (type: ${m.type}, importance: ${m.importance ?? "?"})`;
+    const factClass = m.factClass ? `, class: ${m.factClass}` : "";
+    return `[${ref}] ${m.content} (type: ${m.type}, importance: ${m.importance ?? "?"}${factClass})`;
   });
   return { formatted: lines.join("\n"), refToId };
 }
@@ -353,6 +357,18 @@ const extractedMemoriesSchema = z.object({
         .optional()
         .default([])
         .describe("Entities (people, companies, projects, etc.) mentioned in this memory"),
+      validFrom: z
+        .string()
+        .nullish()
+        .describe(
+          "ISO-8601 date (YYYY-MM-DD) when the event occurred, if a specific calendar date was clearly stated. Omit if unknown.",
+        ),
+      factClass: z
+        .enum(MEMORY_FACT_CLASSES)
+        .optional()
+        .describe(
+          "Volatile fact class. Set ONLY for claims that go stale without an explicit correction: access (does someone currently have access to a system/tool), permissions (ACLs/grants), pricing (current prices/plans), url (current URLs/endpoints), tool_status (tool currently working/broken). Omit for durable facts (roles, preferences, decisions, personal details, historical incidents).",
+        ),
     }),
   ),
 });
@@ -385,10 +401,23 @@ When a message states a specific value -- a number, price, amount, quantity, dur
 - When several distinct values are stated that could later be compared or combined, record EACH as its own fact (e.g. the $800 luxury price AND the $50 budget-store price are two separate, equally worth-keeping facts -- not one vague summary).
 - Never round, generalize, or fold a concrete value into a softer statement ("is mindful of spending"). The precise figure is worth keeping on its own.
 - A concrete personal/world fact carrying a specific stated value is worth AT LEAST importance 40 -- do not discard it as noise just because it seems minor in the moment.
+- When a specific calendar date is stated for an event, keep it verbatim in the content (e.g. "booked the Airbnb in San Francisco on 2024-01-15" -- NOT "booked an Airbnb recently"). If that date is clearly stated, also set validFrom to it as YYYY-MM-DD. Omit validFrom when no specific event date is given.
 
 ## Admission Rules
 
 Save things that would be EXPENSIVE TO REDISCOVER. Unlike a coding agent that can grep the codebase instantly, this agent's retrieval relies on stored memories and whatever is in the conversation context. If finding this fact again would require searching Slack channels, reading email threads, querying databases, or exploring codebases -- store it now. The memory is a cache that saves future tool calls.
+
+## Volatile fact classes (set \`factClass\` — do NOT guess an expiry date)
+
+Some claims go stale unless someone later writes an explicit correction ("works now"). For those, set \`factClass\` so the system can assign a class-based valid_until. Omit factClass for durable facts (roles, preferences, decisions, personal details, historical incidents).
+
+- **access**: whether someone/something currently has access to a system/tool/resource. E.g. "Aura's Claap access is broken", "Joan has staging SSH access."
+- **permissions**: ACLs, grants, who can currently do what in a tool. E.g. "Alice has admin on the billing repo."
+- **pricing**: current prices, plans, billing amounts that can change. E.g. "Claap Business is $30/user/month."
+- **url**: current URLs, endpoints, dashboard links that can move. E.g. "The staging dashboard is at https://staging.example.com."
+- **tool_status**: whether a tool/integration is currently working, broken, or down. E.g. "The Claap MCP server is failing auth."
+
+Do NOT set factClass on durable facts like "Joan manages the Aura codebase" or "The team decided to use Postgres."
 
 ## Durability Test for event/open_thread
 
@@ -484,6 +513,18 @@ const createOperationSchema = z.object({
       "Who the fact originated from. Use 'assistant' ONLY for a concrete, grounded result or explicit recommendation Aura surfaced (backed by a tool result/computation), phrased with attribution ('Aura found...', 'Aura recommended...'). Use 'user' for everything a person in the thread stated. Default 'user'.",
     ),
   entities: z.array(extractedEntitySchema).optional().default([]),
+  validFrom: z
+    .string()
+    .nullish()
+    .describe(
+      "ISO-8601 date (YYYY-MM-DD) when the event occurred, if a specific calendar date was clearly stated. Omit if unknown.",
+    ),
+  factClass: z
+    .enum(MEMORY_FACT_CLASSES)
+    .optional()
+    .describe(
+      "Volatile fact class. Set ONLY for claims that go stale without an explicit correction: access, permissions, pricing, url, tool_status. Omit for durable facts.",
+    ),
 });
 
 const updateOperationSchema = z.object({
@@ -543,6 +584,7 @@ When a message states a specific value — a number, price, amount, quantity, du
 - When several distinct values are stated that could later be compared or combined, record EACH as its own fact (e.g. the $800 luxury boots price AND the $50 budget-store price are two separate, equally worth-keeping facts — not one vague summary).
 - Never round, generalize, or fold a concrete value into a softer statement ("is mindful of spending"). The preference and the precise figure are both worth keeping.
 - A concrete personal/world fact that carries a specific stated value is worth AT LEAST importance 40 — do not discard it as noise just because it seems minor in the moment.
+- When a specific calendar date is stated for an event, keep it verbatim in the content (e.g. "booked the Airbnb in San Francisco on 2024-01-15" — NOT "booked an Airbnb recently"). If that date is clearly stated, also set validFrom to it as YYYY-MM-DD. Omit validFrom when no specific event date is given.
 
 Importance (be strict):
 - 90-100: company-level decisions, strategy pivots, OKRs/KPIs that drive planning, critical rules/policies, major incidents.
@@ -565,6 +607,14 @@ Aggressive scoring guidance:
 - Information already captured in existing memories above (the whole point is to AVOID duplicates)
 - Meta-conversation about the memory system itself
 - Scheduling logistics unless they represent a decision
+
+## Volatile fact classes (set \`factClass\` on create — do NOT guess an expiry date)
+Some claims go stale unless someone later writes an explicit correction. For those, set \`factClass\` so the system can assign a class-based valid_until. Omit factClass for durable facts (roles, preferences, decisions, personal details, historical incidents).
+- **access**: current access to a system/tool/resource ("Aura's Claap access is broken").
+- **permissions**: current ACLs/grants ("Alice has admin on the billing repo").
+- **pricing**: current prices/plans ("Claap Business is $30/user/month").
+- **url**: current URLs/endpoints.
+- **tool_status**: whether a tool/integration is currently working/broken.
 
 ## Durability Test for event/open_thread
 Before creating an **event** or **open_thread**, ask: "Will this still be true and useful in 30 days?" If it is just a transcript of what happened in this thread or current work in progress ("X is preparing Y", "Z requested a report", "A is drafting B"), do NOT create it.
@@ -1009,37 +1059,6 @@ async function runReconciliationCore(
 
 // ── Contradiction Detection ──────────────────────────────────────────────────
 
-const contradictionResultSchema = z.object({
-  results: z.array(
-    z.object({
-      candidateIndex: z.number().int().describe("0-based index of the candidate memory"),
-      contradicts: z
-        .boolean()
-        .describe(
-          "True only if the candidate makes a claim that directly conflicts with the new memory about the same entity/topic",
-        ),
-      reason: z.string().describe("Brief explanation of why this is or is not a contradiction"),
-    }),
-  ),
-});
-
-const CONTRADICTION_PROMPT = `You are a memory contradiction detector. Given a NEW memory and a list of EXISTING candidate memories, determine if any existing memory **directly contradicts** the new one.
-
-A contradiction means: both memories are about the SAME entity/topic, but make OPPOSITE or MUTUALLY EXCLUSIVE claims.
-
-Examples of contradictions:
-- "Alice has read-only access to repo X" vs "Alice has full admin access to repo X"
-- "The team uses PostgreSQL" vs "The team uses MongoDB"
-- "Project Alpha launches in Q1" vs "Project Alpha launches in Q3"
-
-NOT contradictions (do not flag these):
-- Refinements: "Alice works on frontend" → "Alice works on frontend and backend" (addition, not conflict)
-- Different topics: "Alice likes coffee" vs "Alice prefers Slack over email" (unrelated)
-- Temporal updates: "Sprint 5 goal is X" → "Sprint 6 goal is Y" (different time periods)
-- Complementary facts: "Bob manages 3 reports" vs "Bob's team is growing" (compatible)
-
-Be CONSERVATIVE — only flag true contradictions where both facts cannot simultaneously be true.`;
-
 /**
  * Detect contradictions between newly stored memories and existing ones.
  * For each new memory, queries moderate-similarity neighbors (0.50–0.85 cosine)
@@ -1226,6 +1245,19 @@ async function processCreateOperations(
     const memorySourceRole = sourceRoles[i];
     const confidence =
       memorySourceRole === "assistant" ? 0.6 : correctionSignal ? CORRECTION_CONFIDENCE : undefined;
+    // Stated event date from the extractor, when present. Overrides the
+    // session-time default so prompt rendering can count "ago" off event time.
+    // Ignore dates after we learned the fact — a future-dated validFrom would
+    // hide the row from as-of retrieval until that day.
+    const eventFrom = parseAbsoluteDate(normalizedMemories[i].validFrom);
+    const learnedAt = context.createdAt ?? new Date();
+    const usableEventFrom =
+      eventFrom && eventFrom.getTime() <= learnedAt.getTime() ? eventFrom : undefined;
+    // Class-based expiry (#1557): the extractor assigns a volatile fact class;
+    // this maps class → valid_until. Durable facts (no class) stay open-ended.
+    // storeMemories does not synthesize a type-level TTL (#1171).
+    const validFrom = context.createdAt ?? new Date();
+    const expiry = expiryFieldsForFactClass(normalizedMemories[i].factClass, validFrom);
     return {
       content: normalizedMemories[i].content,
       type: normalizedMemories[i].type,
@@ -1245,6 +1277,10 @@ async function processCreateOperations(
       relevanceScore: importanceToRelevance(normalizedMemories[i].importance),
       extractionSourceRole: memorySourceRole,
       ...(confidence !== undefined && { confidence }),
+      ...expiry,
+      // Anchor validFrom to the same instant the class-based TTL was computed
+      // from, when the extractor assigned a volatile class.
+      ...("validUntil" in expiry ? { validFrom } : {}),
       // Bench replay stamps corpus time on the full temporal triplet so as-of
       // retrieval can place the memory on the replayed timeline. validFrom is what
       // the `valid_from <= asOf` filter keys on; without it storeMemories would
@@ -1254,6 +1290,7 @@ async function processCreateOperations(
         updatedAt: context.createdAt,
         validFrom: context.createdAt,
       }),
+      ...(usableEventFrom && { validFrom: usableEventFrom }),
     };
   });
 

@@ -656,22 +656,29 @@
     {
       "idx": 93,
       "version": "7",
-      "when": 1791926401000,
-      "tag": "0093_workspace_id_phase0_backfill",
+      "when": 1792100000000,
+      "tag": "0093_memory_fact_class",
       "breakpoints": true
     },
     {
       "idx": 94,
       "version": "7",
-      "when": 1791926402000,
-      "tag": "0094_workspace_rls_policies",
+      "when": 1792100001000,
+      "tag": "0094_workspace_id_phase0_backfill",
       "breakpoints": true
     },
     {
       "idx": 95,
       "version": "7",
-      "when": 1791926403000,
-      "tag": "0095_aura_app_role",
+      "when": 1792100002000,
+      "tag": "0095_workspace_rls_policies",
+      "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "7",
+      "when": 1792100003000,
+      "tag": "0096_aura_app_role",
       "breakpoints": true
     }
   ]

@@ -59,9 +59,18 @@ export function getWeekCalendar(date: Date, timezone: string): string {
  */
 export function relativeTime(date: Date, now?: Date): string {
   const reference = now || new Date();
-  const diffMs = reference.getTime() - date.getTime();
+  let instant = date;
+  let diffMs = reference.getTime() - instant.getTime();
 
-  if (diffMs < 0) return "in the future";
+  // Clamp timestamps that sit after `reference`. A historical `now` (bench
+  // questionDate, replay) can precede createdAt/validFrom when a later session
+  // is still in-scope; calling that "in the future" mislabels a past fact.
+  // Callers that want the absolute date instead should skip the relative
+  // phrase (see formatMemoriesForPrompt).
+  if (diffMs < 0) {
+    instant = reference;
+    diffMs = 0;
+  }
 
   const seconds = Math.floor(diffMs / 1000);
   const minutes = Math.floor(seconds / 60);
@@ -73,7 +82,7 @@ export function relativeTime(date: Date, now?: Date): string {
   // than the reference instant (an event logged "today" at 8pm, asked about the
   // next morning, is 1 day ago, not 0). Sub-day phrasing still keys off elapsed
   // time so "5 minutes ago"/"3 hours ago" stay accurate within the same day.
-  const days = differenceInCalendarDays(reference, date);
+  const days = differenceInCalendarDays(reference, instant);
   const weeks = Math.floor(days / 7);
   const months = Math.floor(days / 30);
 
@@ -88,10 +97,10 @@ export function relativeTime(date: Date, now?: Date): string {
   if (weeks < 4) return `about ${weeks} weeks ago`;
   if (months <= 1) return "about a month ago";
   if (months < 12) {
-    return `back in ${format(date, "MMMM")}`;
+    return `back in ${format(instant, "MMMM")}`;
   }
 
-  return `back in ${format(date, "MMMM yyyy")}`;
+  return `back in ${format(instant, "MMMM yyyy")}`;
 }
 
 /**
@@ -165,4 +174,24 @@ export function parseRelativeTime(input: string): number | null {
   if (unit.startsWith("w")) return num * 7 * 24 * 60 * 60 * 1000;
 
   return null;
+}
+
+/**
+ * Parse a stated calendar date from extraction output.
+ * Accepts `YYYY-MM-DD` (UTC midnight) or a full ISO-8601 datetime. Returns
+ * null for relative phrases, month names, or other free text so a hallucinated
+ * validFrom cannot backdate a memory.
+ */
+export function parseAbsoluteDate(input: string | null | undefined): Date | null {
+  if (input == null) return null;
+  const trimmed = input.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const d = new Date(`${trimmed}T00:00:00.000Z`);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})?$/.test(trimmed)) {
+    return null;
+  }
+  const d = new Date(trimmed);
+  return Number.isNaN(d.getTime()) ? null : d;
 }

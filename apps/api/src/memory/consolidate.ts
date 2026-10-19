@@ -4,6 +4,7 @@ import { withTransaction } from "../db/tx.js";
 import { memories } from "@aura/db/schema";
 import { logger } from "../lib/logger.js";
 import { DECAY_FACTOR } from "./importance.js";
+import { archiveExpiredCurrentMemories, runNightlyContradictionPass } from "./contradiction.js";
 
 /**
  * Memory consolidation — runs as a daily Vercel Cron job.
@@ -11,7 +12,9 @@ import { DECAY_FACTOR } from "./importance.js";
  * Responsibilities:
  * 1. Decay relevance scores of older memories
  * 2. Find and merge duplicate memories (high cosine similarity)
- * 3. Flag contradictory memories
+ * 3. Nightly contradiction pass: cluster current memories by entity, assign
+ *    volatile fact classes, supersede or dispute conflicting pairs (#1557)
+ * 4. Archive current rows whose class-based valid_until has already passed
  */
 const MIN_SCORE = 0.01;
 
@@ -167,6 +170,13 @@ export async function mergeDuplicateMemories(): Promise<number> {
 export async function runConsolidation(): Promise<{
   decayed: boolean;
   mergedCount: number;
+  contradiction: {
+    clusters: number;
+    classified: number;
+    superseded: number;
+    disputed: number;
+  };
+  archivedExpired: number;
 }> {
   logger.info("Starting memory consolidation");
   const start = Date.now();
@@ -174,9 +184,30 @@ export async function runConsolidation(): Promise<{
   await decayRelevanceScores();
   const mergedCount = await mergeDuplicateMemories();
 
+  let contradiction = { clusters: 0, classified: 0, superseded: 0, disputed: 0 };
+  try {
+    contradiction = await runNightlyContradictionPass(start);
+  } catch (error) {
+    logger.error("Nightly contradiction pass failed (non-fatal)", { error: String(error) });
+  }
+
+  // Retrieval already excludes valid_until-expired rows; archive leftovers so
+  // the expired-but-current baseline drops to 0. Runs after class assignment
+  // so newly-stamped past-due windows are cleaned in the same invocation.
+  let archivedExpired = 0;
+  try {
+    archivedExpired = await archiveExpiredCurrentMemories();
+  } catch (error) {
+    logger.error("Archiving expired current memories failed (non-fatal)", {
+      error: String(error),
+    });
+  }
+
   logger.info(`Consolidation completed in ${Date.now() - start}ms`, {
     mergedCount,
+    contradiction,
+    archivedExpired,
   });
 
-  return { decayed: true, mergedCount };
+  return { decayed: true, mergedCount, contradiction, archivedExpired };
 }
