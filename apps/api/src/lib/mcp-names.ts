@@ -50,14 +50,46 @@ export function isMcpServerAllowlisted(slug: string, envAllowlist: string[] | un
   return envAllowlist.includes(mcpEnvAllowlistName(slug)) || envAllowlist.includes(upper);
 }
 
-const WRITE_NAME_RE =
-  /(create|update|delete|write|send|post|put|patch|remove|insert|drop|grant|revoke|publish|cancel|close|set|add|edit|destroy)/i;
+/**
+ * Leading-token write verbs. Matched as a whole first segment of the tool
+ * name (split on `_`, `-`, and camelCase), never as a substring — so
+ * `get_close_rate` is a read and `close_lead` is a write.
+ */
+const WRITE_VERBS = new Set([
+  "create",
+  "update",
+  "delete",
+  "write",
+  "send",
+  "post",
+  "put",
+  "patch",
+  "remove",
+  "insert",
+  "drop",
+  "grant",
+  "revoke",
+  "publish",
+  "cancel",
+  "close",
+  "set",
+  "add",
+  "edit",
+  "destroy",
+]);
+
+export function leadingToolNameToken(toolName: string): string {
+  const withSeps = toolName.replace(/([a-z0-9])([A-Z])/g, "$1_").replace(/[^A-Za-z0-9]+/g, "_");
+  const token = withSeps.split("_").find((part) => part.length > 0) ?? "";
+  return token.toLowerCase();
+}
 
 export function isWriteLikeMcpTool(
   toolName: string,
-  annotations?: { readOnlyHint?: boolean },
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean },
 ): boolean {
   if (annotations?.readOnlyHint === true) return false;
   if (annotations?.readOnlyHint === false) return true;
-  return WRITE_NAME_RE.test(toolName);
+  if (annotations?.destructiveHint === true) return true;
+  return WRITE_VERBS.has(leadingToolNameToken(toolName));
 }

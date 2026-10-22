@@ -273,6 +273,13 @@ async function runSlackAgentStep(
   const { compactMessages, summarizeEvictedToolResult } = await import(
     "../src/pipeline/compact-messages.js"
   );
+  const {
+    applyMissingToolResultGuard,
+    createUnavailableSurfaceToolApproval,
+    isFailedToolOutput,
+    SURFACE_APPROVAL_DENIED_MESSAGE,
+  } = await import("../src/pipeline/tool-results.js");
+  const { auditDeniedMcpToolCall } = await import("../src/lib/mcp-runtime.js");
   const { createToolMarkupBuffer } = await import("../src/pipeline/sanitize-tool-markup.js");
   const { logger } = await import("../src/lib/logger.js");
 
@@ -640,7 +647,8 @@ async function runSlackAgentStep(
   // the fast tier; evictSummaryCache memoizes by toolCallId so a warm process
   // does not re-summarize the same result on every workflow step.
   pruneEvictSummaryCache();
-  const compaction = await compactMessages(messages, stepIndex, {
+  const guardedIncoming = applyMissingToolResultGuard(messages);
+  const compaction = await compactMessages(guardedIncoming.messages, stepIndex, {
     summarize: summarizeEvictedToolResult,
     summaryCache: evictSummaryCache,
   });
@@ -700,6 +708,7 @@ async function runSlackAgentStep(
           instructions: system as any,
           messages: prunedMessages,
           tools,
+          toolApproval: createUnavailableSurfaceToolApproval(),
           stopWhen: isStepCount(1),
           abortSignal: abortController.signal,
           providerOptions: providerOptions as any,
@@ -785,9 +794,7 @@ async function runSlackAgentStep(
             input: pendingToolInputs.get(chunk.toolCallId) ?? (chunk as any).input,
             output,
           });
-          const isError = Boolean(
-            output && typeof output === "object" && "ok" in output && output.ok === false,
-          );
+          const isError = isFailedToolOutput(output);
           let taskOutput: string | undefined;
           try {
             taskOutput = meta?.output?.(output);
@@ -818,6 +825,58 @@ async function runSlackAgentStep(
           });
           pendingTools.delete(chunk.toolCallId);
           pendingToolInputs.delete(chunk.toolCallId);
+          break;
+        }
+        case "tool-output-denied":
+        case "tool-approval-request": {
+          const deniedId =
+            (chunk as any).toolCallId ?? (chunk as any).toolCall?.toolCallId ?? (chunk as any).id;
+          const deniedName =
+            (chunk as any).toolName ?? (chunk as any).toolCall?.toolName ?? "unknown";
+          if (typeof deniedId !== "string") break;
+          const isAutomatic = (chunk as any).isAutomatic === true;
+          // Automatic deny (toolApproval: denied) also emits tool-output-denied;
+          // skip the request card so we don't double-record. A real pending
+          // approval on this surface is treated as denied without executing.
+          if (chunk.type === "tool-approval-request" && isAutomatic) break;
+          const reason = SURFACE_APPROVAL_DENIED_MESSAGE;
+          const meta = getSlackMeta((tools as any)[deniedName]);
+          await append([
+            {
+              type: "task_update",
+              id: deniedId,
+              title: resolveToolCardTitle({
+                input: pendingToolInputs.get(deniedId) ?? (chunk as any).toolCall?.input,
+                status: meta?.status,
+                fallback: "Denied",
+                toolName: deniedName,
+                launchLabels,
+              }),
+              status: "error",
+              output: truncate(reason, 200),
+            },
+          ]);
+          if (!toolRecords.some((r) => r.name === deniedName && r.is_error)) {
+            toolRecords.push({
+              name: deniedName,
+              input:
+                truncate(
+                  JSON.stringify(
+                    pendingToolInputs.get(deniedId) ?? (chunk as any).toolCall?.input ?? {},
+                  ),
+                  1500,
+                ) ?? "{}",
+              output: truncate(JSON.stringify({ ok: false, error: reason }), 1500) ?? "{}",
+              is_error: true,
+            });
+          }
+          pendingTools.delete(deniedId);
+          pendingToolInputs.delete(deniedId);
+          void auditDeniedMcpToolCall(
+            deniedName,
+            (chunk as any).toolCall?.input ?? (chunk as any).input,
+            reason,
+          );
           break;
         }
         case "tool-error": {
@@ -900,6 +959,9 @@ async function runSlackAgentStep(
     ]);
 
     const hadToolFailure = toolRecords.some((r) => r.is_error);
+    const guardedResponse = applyMissingToolResultGuard(
+      (response.messages as ModelMessage[]) ?? [],
+    );
 
     return {
       superseded: false,
@@ -908,7 +970,7 @@ async function runSlackAgentStep(
         compactedCount: compaction.compactedCount,
         estimatedTokensSaved: compaction.estimatedTokensSaved,
       },
-      responseMessages: response.messages as ModelMessage[],
+      responseMessages: guardedResponse.messages,
       finishReason: String(finishReason),
       text,
       streamState: state,

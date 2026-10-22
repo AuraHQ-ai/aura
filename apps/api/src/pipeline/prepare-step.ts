@@ -4,6 +4,7 @@ import type { ProviderOptions } from "@ai-sdk/provider-utils";
 import { compactMessages, summarizeEvictedToolResult } from "./compact-messages.js";
 import { sanitizeToolCallIds } from "./sanitize-tool-ids.js";
 import { sanitizeAssistantToolMarkup } from "./sanitize-tool-markup.js";
+import { applyMissingToolResultGuard } from "./tool-results.js";
 import { getModelCapabilities } from "../lib/model-catalog.js";
 import { isInvocationCurrent } from "../lib/invocation-lock.js";
 import { logger } from "../lib/logger.js";
@@ -651,7 +652,39 @@ export function createPrepareStep(opts: {
     // drop orphaned tool_results and unpaired tool_uses. The error row is the
     // counter — and it carries the RAW offending ids so we finally learn the
     // actual source instead of guessing.
-    const sanitization = sanitizeToolCallIds(markupSanitization.messages);
+    // --- Missing tool results (untrusted MCP approval, crashed execute, …) ---
+    // Pair every client tool-call with a result BEFORE id sanitization and
+    // the provider call. An unpaired call in the last assistant message is
+    // the AI_MissingToolResultsError that "Try again" used to replay.
+    const filledResults = applyMissingToolResultGuard(markupSanitization.messages);
+    if (filledResults.filled.length > 0) {
+      logger.warn("prepareStep: filled missing tool results before provider call", {
+        stepNumber,
+        filled: filledResults.filled.map((item) => ({
+          toolCallId: item.toolCallId,
+          toolName: item.toolName,
+          kind: item.kind,
+        })),
+      });
+      logError({
+        errorName: "MissingToolResultFilled",
+        errorMessage: `Filled ${filledResults.filled.length} tool call(s) that had no result before the next model step`,
+        errorCode: "missing_tool_result_filled",
+        channelId: opts.channelId,
+        userId: opts.userId,
+        context: {
+          stepNumber,
+          path: opts.turnPath,
+          filled: filledResults.filled.map((item) => ({
+            toolCallId: item.toolCallId,
+            toolName: item.toolName,
+            kind: item.kind,
+          })),
+        },
+      });
+    }
+
+    const sanitization = sanitizeToolCallIds(filledResults.messages);
     if (sanitization.changed) {
       const summary =
         `${sanitization.normalizedIds.length} id(s) normalized, ` +

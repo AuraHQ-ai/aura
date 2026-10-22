@@ -848,3 +848,45 @@ describe("createPrepareStep tool-thrash breaker (issue #1524)", () => {
     ).toBe(false);
   });
 });
+
+describe("createPrepareStep missing tool-result guard", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    invocationLockMocks.isInvocationCurrent.mockResolvedValue(true);
+  });
+
+  it("fills a dangling last-message tool-call before the next provider call", async () => {
+    const prepareStep = createPrepareStep({
+      stablePrefix: "PREFIX",
+      channelId: "C0123456",
+      userId: "U0999",
+    });
+    const messages: ModelMessage[] = [
+      { role: "user", content: "run bash" },
+      {
+        role: "assistant",
+        content: [
+          { type: "tool-call", toolCallId: "toolu_missing", toolName: "app_bash", input: {} },
+        ],
+      } as ModelMessage,
+    ];
+
+    const result = await prepareStep({ stepNumber: 2, steps: [], messages });
+
+    const toolMsg = result?.messages?.find((m) => m.role === "tool");
+    expect(toolMsg).toBeTruthy();
+    expect((toolMsg!.content as any[])[0]).toMatchObject({
+      type: "tool-result",
+      toolCallId: "toolu_missing",
+      toolName: "app_bash",
+    });
+    expect(errorLoggerMocks.logError).toHaveBeenCalledWith(
+      expect.objectContaining({
+        errorName: "MissingToolResultFilled",
+        errorCode: "missing_tool_result_filled",
+        channelId: "C0123456",
+        userId: "U0999",
+      }),
+    );
+  });
+});

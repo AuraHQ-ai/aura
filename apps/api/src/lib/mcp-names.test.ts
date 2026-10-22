@@ -52,4 +52,21 @@ describe("MCP tool namespacing", () => {
     expect(isWriteLikeMcpTool("create_customer", { readOnlyHint: true })).toBe(false);
     expect(isWriteLikeMcpTool("list_customers", { readOnlyHint: false })).toBe(true);
   });
+
+  it("matches write verbs only on the leading name token, not as a substring", () => {
+    expect(isWriteLikeMcpTool("get_close_rate")).toBe(false);
+    expect(isWriteLikeMcpTool("list_settings")).toBe(false);
+    expect(isWriteLikeMcpTool("close_lead")).toBe(true);
+    expect(isWriteLikeMcpTool("set_status")).toBe(true);
+    expect(isWriteLikeMcpTool("addItem")).toBe(true);
+    expect(isWriteLikeMcpTool("create-issue")).toBe(true);
+  });
+
+  it("respects destructiveHint when no readOnlyHint is present", () => {
+    expect(isWriteLikeMcpTool("get_close_rate", { destructiveHint: true })).toBe(true);
+    expect(isWriteLikeMcpTool("close_lead", { destructiveHint: false })).toBe(true);
+    expect(
+      isWriteLikeMcpTool("get_close_rate", { readOnlyHint: true, destructiveHint: true }),
+    ).toBe(false);
+  });
 });

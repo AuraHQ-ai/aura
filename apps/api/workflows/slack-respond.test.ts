@@ -163,6 +163,10 @@ vi.mock("../src/db/client.js", () => ({
   db: {},
 }));
 
+vi.mock("../src/lib/mcp-runtime.js", () => ({
+  auditDeniedMcpToolCall: vi.fn(async () => {}),
+}));
+
 import {
   slackRespondWorkflow,
   evaluateTurnDeadlines,
@@ -391,6 +395,57 @@ describe("slackRespondWorkflow turn wall-clock budget (issue #1320)", () => {
     expect(result).toEqual({ interrupted: false, text: "final summary" });
     expect(dynamicContextOfCall(1)).toContain(TURN_HARD_DEADLINE_MESSAGE_WITHOUT_CONTINUATION);
     expect(dynamicContextOfCall(1)).not.toContain(TURN_HARD_DEADLINE_MESSAGE_WITH_CONTINUATION);
+  });
+
+  it("pairs a dangling tool-call before the follow-up model call", async () => {
+    const seenMessages: unknown[][] = [];
+    aiMocks.streamText.mockImplementation((opts: { messages?: unknown[] }) => {
+      seenMessages.push(opts.messages ?? []);
+      const script = aiMocks.scripts.shift() ?? { finishReason: "stop", text: "done" };
+      clock.now += script.advanceMs ?? 0;
+      const dangling = seenMessages.length === 1;
+      return {
+        stream: (async function* () {
+          if (script.text) {
+            yield { type: "text-delta", text: script.text };
+          }
+        })(),
+        response: Promise.resolve({
+          messages: dangling
+            ? [
+                {
+                  role: "assistant",
+                  content: [
+                    {
+                      type: "tool-call",
+                      toolCallId: "toolu_mcp",
+                      toolName: "mcp__mako__app_bash",
+                      input: { command: "ls" },
+                    },
+                  ],
+                },
+              ]
+            : [{ role: "assistant", content: script.text ?? "done" }],
+          modelId: "test-model",
+        }),
+        finishReason: Promise.resolve(script.finishReason),
+        usage: Promise.resolve({ inputTokens: 1, outputTokens: 2, totalTokens: 3 }),
+      };
+    });
+    aiMocks.scripts = [
+      { finishReason: "tool-calls", advanceMs: 10_000 },
+      { finishReason: "stop", text: "that tool needs approval", advanceMs: 10_000 },
+    ];
+
+    const result = await slackRespondWorkflow(buildInput());
+
+    expect(result.text).toBe("that tool needs approval");
+    expect(aiMocks.streamText).toHaveBeenCalledTimes(2);
+    const second = seenMessages[1] as Array<{ role: string; content: unknown }>;
+    const parts = second.flatMap((m) => (Array.isArray(m.content) ? m.content : []));
+    expect(parts.some((p: any) => p.type === "tool-result" && p.toolCallId === "toolu_mcp")).toBe(
+      true,
+    );
   });
 });
 

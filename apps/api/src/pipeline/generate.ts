@@ -13,6 +13,7 @@ import { getDeferredToolManifest } from "../tools/deferred.js";
 import { appendDeferredToolsBlock } from "../personality/system-prompt.js";
 import { aiTelemetry, withTrace } from "../lib/langfuse.js";
 import { closeMcpClients } from "../tools/mcp.js";
+import { createUnavailableSurfaceToolApproval } from "./tool-results.js";
 
 /**
  * Channel-agnostic agentic stream.
@@ -104,6 +105,7 @@ export function createAgenticStream(options: AgenticStreamOptions) {
         messages: options.messages,
         tools: options.tools,
         experimental_repairToolCall: repairLeakedToolCall,
+        toolApproval: createUnavailableSurfaceToolApproval(),
         prepareStep,
         stopWhen: isStepCount(options.maxSteps ?? 250),
         telemetry: aiTelemetry("agent-chat", {
