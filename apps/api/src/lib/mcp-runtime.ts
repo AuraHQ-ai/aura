@@ -12,7 +12,7 @@ import { logger } from "./logger.js";
 import { actionLog } from "@aura/db/schema";
 import { executionContext } from "./tool.js";
 import { sanitizeMcpInstructions } from "./mcp-hints.js";
-import { isWriteLikeMcpTool, namespaceMcpTool } from "./mcp-names.js";
+import { isWriteLikeMcpTool, namespaceMcpTool, parseNamespacedMcpTool } from "./mcp-names.js";
 import { DbOAuthClientProvider } from "./mcp-oauth.js";
 import { assertPublicHttpsUrl } from "./mcp-ssrf.js";
 
@@ -188,6 +188,22 @@ export function hasLiveConnection(server: McpServer, connection?: McpConnection 
   return connection?.status === "connected" && Boolean(connection.encryptedTokens);
 }
 
+export async function auditDeniedMcpToolCall(
+  toolName: string,
+  input: unknown,
+  reason: string,
+): Promise<void> {
+  const parsed = parseNamespacedMcpTool(toolName);
+  if (!parsed) return;
+  await auditMcpCall(
+    toolName,
+    parsed.slug,
+    input,
+    { ok: false, error: reason, deniedBy: "approval" },
+    reason,
+  );
+}
+
 async function auditMcpCall(
   toolName: string,
   slug: string,
@@ -210,7 +226,9 @@ async function auditMcpCall(
         jobId: ctx.jobId ?? null,
         credentialName: `mcp:${slug}`,
         status: failed ? "failed" : "executed",
-        result: (failed ? { error: failed } : result) as any,
+        result: (failed
+          ? { ...(result && typeof result === "object" ? (result as object) : {}), error: failed }
+          : result) as any,
       })
       .returning({ id: actionLog.id });
     void logEntry;
