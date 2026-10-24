@@ -37,9 +37,12 @@ RUN apt-get update -qq && apt-get install -y --no-install-recommends \
 # Python packages
 RUN pip3 install --quiet --no-cache-dir psycopg2-binary google-cloud-bigquery
 
-# Node.js 22 LTS
+# Node.js 22 LTS, pinned. An unpinned install hides behind the build cache:
+# a rebuild after the Oct 2026 security release still shipped 22.23.3.
+# Bump on every Node security release (https://nodejs.org/en/blog/vulnerability).
+ARG NODE_DEB_VERSION=22.23.4-1nodesource1
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y nodejs \
+    && apt-get install -y nodejs=${NODE_DEB_VERSION} \
     && rm -rf /var/lib/apt/lists/*
 
 # GitHub CLI
