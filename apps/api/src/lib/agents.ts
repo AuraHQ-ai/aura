@@ -23,6 +23,10 @@ import {
   HEADLESS_STEP_LIMIT,
 } from "../pipeline/prepare-step.js";
 import { resolveTurnDeadlines } from "../pipeline/turn-deadline.js";
+import {
+  applyMissingToolResultGuard,
+  createUnavailableSurfaceToolApproval,
+} from "../pipeline/tool-results.js";
 import { aiTelemetry } from "./langfuse.js";
 
 // ── Interactive Agent ────────────────────────────────────────────────────────
@@ -96,6 +100,7 @@ export async function createInteractiveAgent(
     instructions: systemMessages,
     // Issue #1515: never execute a ChatML XML blob as a tool name.
     experimental_repairToolCall: repairLeakedToolCall,
+    toolApproval: createUnavailableSurfaceToolApproval(),
     stopWhen: isStepCount(STEP_LIMIT),
     telemetry: aiTelemetry("slack-chat", {
       modelId,
@@ -193,6 +198,7 @@ export async function createHeadlessAgent(options: HeadlessAgentOptions) {
     tools,
     instructions: withCacheControl(systemPrompt),
     experimental_repairToolCall: repairLeakedToolCall,
+    toolApproval: createUnavailableSurfaceToolApproval(),
     stopWhen: isStepCount(HEADLESS_STEP_LIMIT),
     telemetry: aiTelemetry("headless-job", {
       modelId,
@@ -254,7 +260,11 @@ export function createSubAgent(options: SubagentAgentOptions) {
     tools: options.tools,
     instructions: systemPrompt,
     experimental_repairToolCall: repairLeakedToolCall,
+    toolApproval: createUnavailableSurfaceToolApproval(),
     stopWhen: isStepCount(options.maxSteps ?? 50),
     telemetry: aiTelemetry("subagent"),
+    prepareStep: async ({ messages }) => ({
+      messages: applyMissingToolResultGuard(messages).messages,
+    }),
   });
 }

@@ -18,6 +18,7 @@ import {
   isMsgTooLong,
 } from "../lib/slack-messaging.js";
 import { getDetachedCommandSuspendState, getSlackMeta } from "../lib/tool.js";
+import { auditDeniedMcpToolCall } from "../lib/mcp-runtime.js";
 import { rememberLaunchLabelFromCall, resolveToolCardTitle } from "../lib/tool-card-title.js";
 import {
   startTurnMarker,
@@ -28,6 +29,7 @@ import { createInteractiveAgent } from "../lib/agents.js";
 import { getMainModel, buildCachedSystemMessages } from "../lib/ai.js";
 import { aiTelemetry } from "../lib/langfuse.js";
 import { InvocationSupersededError } from "./prepare-step.js";
+import { isFailedToolOutput, SURFACE_APPROVAL_DENIED_MESSAGE } from "./tool-results.js";
 import {
   formatToolThrashUserMessage,
   isToolThrashError,
@@ -1730,8 +1732,7 @@ export async function generateResponse(options: RespondOptions): Promise<LLMResp
               input: pending ? parsePendingToolInput(pending.input) : (chunk as any).input,
               output,
             });
-            const isError =
-              output && typeof output === "object" && "ok" in output && output.ok === false;
+            const isError = isFailedToolOutput(output);
 
             // Capture native Slack blocks from draw_table/draw_chart/
             // raise_alert/draw_cards tools.
@@ -1875,6 +1876,58 @@ export async function generateResponse(options: RespondOptions): Promise<LLMResp
               }
             }
             await splitForStreamAge();
+            break;
+          }
+
+          case "tool-output-denied":
+          case "tool-approval-request": {
+            const deniedId =
+              (chunk as any).toolCallId ?? (chunk as any).toolCall?.toolCallId ?? (chunk as any).id;
+            const deniedName =
+              (chunk as any).toolName ?? (chunk as any).toolCall?.toolName ?? "unknown";
+            if (typeof deniedId !== "string") break;
+            if (chunk.type === "tool-approval-request" && (chunk as any).isAutomatic === true) {
+              break;
+            }
+            const reason = SURFACE_APPROVAL_DENIED_MESSAGE;
+            const title = resolveCardTitle({
+              toolName: deniedName,
+              input: parsePendingToolInput(pendingToolInputs.get(deniedId)?.input),
+              toolCallId: deniedId,
+              fallback: "Denied",
+            });
+            const deniedPayload = asAppendPayload({
+              chunks: [
+                toTaskUpdateChunk({
+                  id: deniedId,
+                  title,
+                  status: "error",
+                  output: truncate(reason, 200),
+                }),
+              ],
+            });
+            currentStreamLength += estimateAppendSize(deniedPayload);
+            if (!streamingFailed) {
+              await tryStreamAppend(deniedPayload);
+              if (streamingFailed) {
+                fallbackStartIdx = accumulatedText.length;
+              }
+            }
+            if (!toolCallRecords.some((r) => r.name === deniedName && r.is_error)) {
+              toolCallRecords.push({
+                name: deniedName,
+                input: pendingToolInputs.get(deniedId)?.input ?? "{}",
+                output: truncateToBytes(JSON.stringify({ ok: false, error: reason }), 1500),
+                is_error: true,
+              });
+            }
+            pendingToolInputs.delete(deniedId);
+            optimisticToolCards.delete(deniedId);
+            void auditDeniedMcpToolCall(
+              deniedName,
+              (chunk as any).toolCall?.input ?? (chunk as any).input,
+              reason,
+            );
             break;
           }
 
