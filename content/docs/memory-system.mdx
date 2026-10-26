@@ -46,6 +46,7 @@ CREATE TABLE memories (
   confidence REAL DEFAULT 0.8,
   valid_from TIMESTAMPTZ,
   valid_until TIMESTAMPTZ,
+  fact_class memory_fact_class,           -- access | permissions | pricing | url | tool_status (volatile facts only)
   supersedes_memory_id UUID,
   superseded_at TIMESTAMPTZ,
   superseded_by_memory_id UUID,
@@ -195,6 +196,22 @@ Each memory carries a `confidence` score (0.0 -- 1.0, default 0.8) representing 
 
 Memories can have `valid_from` and `valid_until` timestamps to represent time-bounded facts. For example, "Joan is on vacation until March 15" gets a `valid_until` of March 15. By default, `valid_from` is set to the memory's creation time.
 
+When the extractor sees a clearly stated calendar date for an event (e.g. "booked the Airbnb on 2024-01-15"), it keeps the date verbatim in the memory content and writes it to `valid_from` — unless the date is later than when Aura learned the fact. At prompt time, memories render with an ISO date plus a relative time ("3 months ago"), anchored on `valid_from` when it differs from `created_at` by at least a calendar day (event time rather than mention time). Relative labels never say "in the future" for a past fact; the prompt falls back to the absolute date alone.
+
+### Volatile fact classes
+
+Some claims go stale without anyone explicitly correcting them ("Claap access is broken"). The extractor (and the nightly consolidation pass) can tag these with a `fact_class`; code then sets `valid_until` from `valid_from` using a per-class window:
+
+| Class | Meaning | `valid_until` |
+|-------|---------|---------------|
+| `tool_status` | Whether a tool or integration is working, broken, or down | 7 days |
+| `access` | Whether someone/something currently has access to a system | 14 days |
+| `permissions` | ACLs, grants, who can do what in a tool | 14 days |
+| `pricing` | Current prices, plans, billing amounts | 30 days |
+| `url` | Current URLs, endpoints, dashboard links | 30 days |
+
+Durable facts have no class and no `valid_until` — there is no type-level TTL on `event` or `open_thread` memories. Memories with a volatile class are tagged `[verify before asserting: <class>]` in the prompt's memory block, so the model checks before presenting them as current. The class is also exposed as `fact_class` in the memory tool output and in the dashboard memories API.
+
 ### Supersession chains
 
 When a new memory replaces an old one (e.g., "the project deadline moved from April to May"), the old memory is marked `superseded` with:
@@ -224,7 +241,10 @@ A nightly consolidation job (4 AM UTC) maintains memory quality:
 - **Merge** — memories with >95% cosine similarity are consolidated. The more recent (or higher-relevance) one is kept; the loser is marked `superseded` with a proper supersession chain linking to the winner.
 - **Entity summaries** — regenerate summaries for entities with new linked memories since last run. Entity summaries are the single source of truth for human profiles (the legacy `users.known_facts` blob is deprecated and no longer written)
 
-Time-bounded memories are not expired by the cron: `valid_until` is enforced at retrieval time, so an expired memory simply stops surfacing.
+- **Contradiction pass** — clusters `current`/`disputed` memories by shared entity, asks the extractor-class model to assign missing volatile fact classes and flag directly contradicting pairs, then supersedes or disputes them under the same authority guard as live extraction. Failures are logged and non-fatal.
+- **Expired-row archival** — `current` memories whose `valid_until` has already passed are flipped to `archived`.
+
+`valid_until` is still enforced at retrieval time (expired memories never surface), so archival is cleanup rather than the thing that hides them.
 
 ## Rebuilding memories
 
