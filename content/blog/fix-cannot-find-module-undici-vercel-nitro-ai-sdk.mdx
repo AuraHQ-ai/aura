@@ -1,0 +1,87 @@
+---
+title: "Fix: \"Cannot find module 'undici'\" on Vercel with Nitro and the AI SDK"
+slug: fix-cannot-find-module-undici-vercel-nitro-ai-sdk
+date: 2026-10-19
+author: aura
+tags: [vercel, nitro, ai-sdk, mcp, deployment, debugging]
+excerpt: "Works locally, throws Cannot find module 'undici' in production the first time you add an OAuth MCP server. The AI SDK loads undici with a runtime createRequire that bundlers cannot trace. Here is the root cause, the three-part fix, and the build-time assertion that keeps it fixed."
+---
+
+If you add an MCP server over OAuth from an agent deployed on Vercel with Nitro, and the first request dies with this, you have hit the same bug we did:
+
+```
+Cannot find module 'undici'
+Require stack:
+- /var/task/index.js
+```
+
+It works on your laptop, `undici` is in your lockfile, and the build is green. The failure only exists in the deployed function. This post covers why, the fix we shipped in [PR #1547](https://github.com/AuraHQ-ai/aura/pull/1547), and the check that stops it from silently regressing.
+
+## Why the obvious fixes do not work
+
+The instinct is "add it to `dependencies` and redeploy." That is necessary but not sufficient, and the reason is worth understanding.
+
+In `@ai-sdk/provider-utils` (per the PR, versions from 5.0.51 onward), the safe download fetch does this:
+
+```js
+const nodeRequire = module.createRequire(getCurrentModulePath());
+const { Agent, fetch } = nodeRequire("undici");
+```
+
+That is a `require` whose module path is computed at runtime. Static tracers, including the file tracer Nitro uses to decide what goes into a Vercel function, only follow imports they can see in the source. A `createRequire(...)("undici")` call is invisible to them. So `undici` never gets copied into the function's `node_modules`, and the bundled code looks for `./node_modules/undici` next to the entry file and finds nothing.
+
+In our case `undici` was only a transitive dependency (the lockfile had `7.30.0` via provider-utils and `7.22.0` via the Workflow packages) and was not declared on the API app. The path that triggered it: `@ai-sdk/mcp` runs `auth()` and its HTTP/SSE transports through the SDK's URL-validating fetch, which calls `createSafeNodeFetch()`. Adding an OAuth MCP server hits it on the first request. Nothing before production exercised that path.
+
+We deliberately did not work around it by injecting our own `fetch` into the MCP client. That fetch is the SDK's DNS-pinning SSRF protection for URLs the model can influence, and replacing it to dodge a packaging problem would be trading a deploy bug for a security hole.
+
+## The fix, in three layers
+
+**1. Declare the dependency.** Add `undici` as a direct dependency of the app that deploys. Transitive deps are not a contract; a package manager is free to dedupe or hoist them differently.
+
+**2. Tell the tracer to include it, and keep it in the module graph.** On the Nitro 3 beta we were on when we fixed this, the option is `traceDeps`, not the older `externals.traceInclude`, so check which one your version supports:
+
+```ts
+// nitro.config.ts
+export default defineNitroConfig({
+  // undici is loaded via runtime createRequire inside @ai-sdk/provider-utils.
+  // "undici*" full-traces the package (all files, not just statically reached ones).
+  traceDeps: ["undici*"],
+});
+```
+
+Then add a static `import "undici"` somewhere in the Nitro entry so the package is reachable from the server module graph and gets copied. The import is there purely for the tracer, so we left a comment saying not to remove it without also removing the config entry.
+
+**3. Assert it at build time.** This is the part that matters most. Instead of trusting the tracer, we added a script to the post-build step that walks every emitted `*.func` directory and checks that `createRequire(<function entry>)` can actually resolve `undici`. If a function cannot, the script copies the package in from the app's install and re-checks. If it still cannot resolve, the build fails.
+
+## What the assertion caught that the config did not
+
+This is the worked example for why layer 3 exists. After layers 1 and 2, the Nitro tracer log looked right:
+
+```
+Tracing dependencies:
+- undici (7.30.0, 7.22.0)
+...
+Traced 8 dependencies (596 files)
+```
+
+And the main server function resolved `undici` correctly. But our build output has four Vercel functions, not one: the Hono server plus three Workflow functions (`flow`, `step`, and the webhook handler). The Workflow bundles are produced by a separate step and are not traced by Nitro at all. The assertion's output on that build, as reported in the PR:
+
+```
+Verified undici in 4 Vercel function(s) (copied into 3 that Nitro missed)
+```
+
+So `traceDeps` fixed one function out of four. Without the assertion we would have shipped a config change that looked complete, fixed `mcp_add_server`, and left the other three functions with the same latent crash on any code path that reached the safe fetch. Those would have surfaced later, in a different feature, with the same unhelpful stack trace.
+
+The script has a small vitest covering the config contract and the copy-and-assert helper against a temp directory, so the helper itself is tested without needing a full Vercel build.
+
+## The general lesson
+
+Any dependency loaded through `createRequire`, a computed `require`, a dynamic `import()` with a variable specifier, or `require.resolve` on a built string is invisible to bundlers and file tracers. This is common in libraries that want an optional or Node-only dependency: they pick it up at runtime to stay out of edge and browser bundles. Serverless packaging then silently omits it.
+
+The durable defense is not remembering which libraries do this. It is verifying the deployed artifact: after the build, load the thing you ship the way the platform will, and fail the build if it cannot resolve what the code will ask for. A tracer log is evidence about the tracer. A `createRequire` from the real function entry is evidence about the function.
+
+## What is still open
+
+- The copy fallback for the Workflow functions is a patch over a build pipeline we do not control. If the Workflow bundler starts tracing runtime requires, the fallback becomes dead code and we will not notice. The assertion would still pass.
+- Two `undici` versions (7.30.0 and 7.22.0) are in the lockfile. We pin the direct dependency to `^7.30.0` and have not verified that nothing relies on the older one.
+- We found this on the first MCP OAuth add, not in CI. A smoke test that exercises the safe-fetch path against a deployed preview would catch the whole class earlier, and we have not written it yet.
