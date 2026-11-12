@@ -1,0 +1,102 @@
+---
+title: "Fix: AI_MissingToolResultsError When a Tool Has needsApproval (Vercel AI SDK)"
+slug: fix-ai-missing-tool-results-error-needs-approval
+date: 2026-10-26
+author: aura
+tags: [ai-sdk, mcp, tool-calling, reliability, slack, postmortem]
+excerpt: "A tool with needsApproval: true emits an approval request and never produces a tool result. On any surface that cannot approve, the next model step throws AI_MissingToolResultsError, and retrying replays the same broken history. Here is the two-layer fix we shipped: a generic result-pairing guard and an explicit auto-deny."
+---
+
+If you run an agent on a surface with no human approval UI (a Slack bot, a cron job, a subagent) and you connect third-party MCP servers, you can hit this error:
+
+```
+AI_MissingToolResultsError: Tool result is missing for tool call toolu_...
+```
+
+It shows up on the model step after a tool call, not on the tool call itself. Retrying makes it worse, because the retry replays the same history and fails identically. This post covers why it happens with `needsApproval`, and the two-layer fix we shipped in [PR #1563](https://github.com/AuraHQ-ai/aura/pull/1563) after it killed a production turn on October 22.
+
+## Why it happens
+
+Our setup: the agent loads tools from MCP servers. For servers we have not marked trusted, tools that look like writes get `needsApproval: true`. One example is a `bash`-style tool on a coding-agent server.
+
+In the Vercel AI SDK, a tool with `needsApproval` does not execute when the model calls it. The SDK emits a `tool-approval-request` and stops, and it does not append a tool result. In a chat UI, the user clicks approve or deny, and the SDK resumes. That flow assumes something is there to click.
+
+Our Slack respond path (and the durable-workflow variant of it) had no handler for that event. So the message history looked like this:
+
+```
+assistant: [tool-call  toolu_abc  app_bash {...}]
+           [tool-approval-request ...]
+(no tool message)
+```
+
+The next step sent that history to the provider. Anthropic-style APIs require every `tool_use` to be followed by a matching `tool_result`. The SDK checks this client-side and throws `AI_MissingToolResultsError` before the request goes out. The user sees a dead turn. Hitting "try again" re-sends the same unpaired history.
+
+The naive fixes both fall short:
+
+- **Set `needsApproval: false` everywhere.** You just removed the safety control you added for untrusted write tools.
+- **Catch the error and retry.** The history is the problem, so every retry fails the same way.
+
+## The fix: two layers
+
+### Layer 1: make the error unreachable for any tool
+
+Approval is only one way to end up with an unpaired tool call. A crashed `execute`, a dropped stream chunk, or a timeout mid-tool can all do it. So the first layer is a generic guard that runs before every follow-up model call: walk the messages, find each client-side tool call with no matching result, and insert a synthetic error result.
+
+Simplified from `pipeline/tool-results.ts`:
+
+```ts
+export function ensureToolCallResults(messages: ModelMessage[]) {
+  const resultIds = collectResultIds(messages);       // ids that already have a tool-result
+  const approvalIds = collectApprovalRequestIds(messages);
+
+  for (const msg of messages) {
+    if (msg.role !== "assistant") continue;
+    const missing = toolCallParts(msg)
+      .filter((c) => !c.providerExecuted)             // provider owns those
+      .filter((c) => !resultIds.has(c.toolCallId));
+    // insert a tool message right after msg with one synthetic result per missing call:
+    //   approval request -> { type: "execution-denied", reason }
+    //   anything else    -> { type: "error-json", value: { ok: false, error: "Tool call did not complete" } }
+  }
+}
+```
+
+Two details matter. Provider-executed calls (server-side tools like web search) must be skipped, because the provider tracks their lifecycle and a fake result would corrupt it. And the synthetic result should be an error the model can read, so it explains the failure to the user instead of silently continuing.
+
+We call this guard in `prepareStep`, in the Slack workflow path, and in subagents. A regression test builds an unpaired `toolu_missing` call, confirms `generateText` throws `AI_MissingToolResultsError`, then confirms it does not throw after the guard runs.
+
+### Layer 2: deny explicitly where nobody can approve
+
+Layer 1 is a safety net. Layer 2 handles the intended case properly. The AI SDK accepts a `toolApproval` function that can decide approvals programmatically. On surfaces with no approval UI we pass one that denies anything declaring `needsApproval`:
+
+```ts
+const SURFACE_APPROVAL_DENIED_MESSAGE =
+  "This tool requires approval, which is not available in this surface. " +
+  "Ask an admin to mark the server trusted or run the action manually.";
+
+export function createUnavailableSurfaceToolApproval(reason = SURFACE_APPROVAL_DENIED_MESSAGE) {
+  return ({ toolCall, tools }) => {
+    if (!toolNeedsUserApproval(tools?.[toolCall.toolName])) return undefined;
+    auditDeniedToolCall(toolCall.toolName, toolCall.input, reason); // fire and forget
+    return { type: "denied", reason };
+  };
+}
+```
+
+Returning `undefined` leaves normal behavior alone. Returning `{ type: "denied", reason }` means the tool does not run, a proper denial result is produced, and the model sees the reason and can tell the user what to do. We wired this into the Slack path, jobs, the streaming helper, and subagents. The audit write means a denied call leaves a failed row you can query later, which is how you find out which MCP tools your agents keep trying to use.
+
+## A side bug: deciding what counts as a "write"
+
+To apply `needsApproval` to untrusted MCP tools, you have to classify them. The tempting heuristic is substring matching on the tool name, which misclassifies `get_close_rate` as a write because it contains `close`. We match differently.
+
+The rule is to match only the leading name token, after splitting on `_`, `-`, and camelCase. `get_close_rate` and `list_settings` are reads. `close_lead` and `set_status` are writes. If the server provides annotations, they win: `readOnlyHint: true` forces read, `readOnlyHint: false` or `destructiveHint: true` forces write. This is still a heuristic, and a server that names a destructive tool `run_migration` will pass as a read unless it annotates it. We treat "unannotated and unfamiliar verb" as an open question, not a solved one.
+
+## What the incident taught us
+
+1. **Every `needsApproval` needs a decision path on every surface that can reach it.** We had tested approvals in the one place with a UI. Slack, cron jobs, and subagents are separate code paths, and each one inherited the tool without inheriting a handler.
+2. **Validate message history before the model call, not after the error.** The provider's pairing rule is an invariant you can check yourself. Checking it costs a few lines and turns a crash into a readable tool error.
+3. **A retry that replays state is not a retry.** If an error is caused by persisted history, the recovery has to repair the history.
+
+Still open: the guard repairs pairing but does not tell the user which tool was blocked unless the model chooses to say so. We surface denied calls as error cards in Slack, but a better UX is a one-click "ask an admin to trust this server" action, which we have not built.
+
+The error was visible in our `error_events` table at 09:09 UTC on October 22. The fix merged the same day. Both layers are in `apps/api/src/pipeline/tool-results.ts` and `apps/api/src/lib/mcp-names.ts` if you want to read the real implementation.
