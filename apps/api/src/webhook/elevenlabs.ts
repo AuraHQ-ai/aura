@@ -315,7 +315,7 @@ elevenlabsWebhookApp.post("/post-call", async (c) => {
           metadata: strippedMetadata,
         })
         .onConflictDoUpdate({
-          target: voiceCalls.conversationId,
+          target: [voiceCalls.workspaceId, voiceCalls.conversationId],
           set: {
             status: callStatus,
             durationSeconds: duration ?? null,

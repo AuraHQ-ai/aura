@@ -17,6 +17,7 @@ import { dashboardEntitiesApp } from "./entities.js";
 import { dashboardEvalApp } from "./eval.js";
 import { dashboardMcpApp } from "./mcp.js";
 import { createDashboardApp } from "./schemas.js";
+import { withWorkspace } from "../../db/workspace.js";
 import { errors, jwtVerify } from "jose";
 
 export const dashboardApp = createDashboardApp();
@@ -62,6 +63,15 @@ dashboardApp.use("*", async (c, next) => {
 
   return c.json({ error: "Unauthorized" }, 401);
 });
+
+// Multi-tenancy Phase 0 (issue #1393): every authenticated dashboard route
+// runs inside withWorkspace(), so RLS scopes all of its DB access to one
+// tenant. Registered after auth so unauthenticated requests never consume a
+// pinned connection. Phase 1 replaces the static default with per-session
+// workspace resolution.
+dashboardApp.use("*", (c, next) =>
+  withWorkspace(process.env.DEFAULT_WORKSPACE_ID || "default", () => next()),
+);
 
 dashboardApp.route("/auth", dashboardAuthApp);
 dashboardApp.route("/chat", dashboardChatApp);

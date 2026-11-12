@@ -172,7 +172,7 @@ export async function recordVoiceNoteUsage({
           durationEstimate,
         },
       })
-      .onConflictDoNothing({ target: voiceCalls.conversationId });
+      .onConflictDoNothing({ target: [voiceCalls.workspaceId, voiceCalls.conversationId] });
   } catch (dbError: any) {
     logger.error("send_voice_note DB insert failed (voice note was sent)", {
       error: dbError.message,
@@ -745,7 +745,9 @@ export function createVoiceTools(
                     }
                   : {}),
               })
-              .onConflictDoNothing({ target: voiceCalls.conversationId });
+              .onConflictDoNothing({
+                target: [voiceCalls.workspaceId, voiceCalls.conversationId],
+              });
           } catch (dbError: any) {
             logger.error("place_call DB insert failed (call was placed)", {
               error: dbError.message,
